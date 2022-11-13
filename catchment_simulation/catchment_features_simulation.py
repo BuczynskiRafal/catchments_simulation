@@ -10,9 +10,9 @@ from pyswmm import Simulation, Subcatchments
 class FeaturesSimulation:
     """Class FeaturesSimulation contains all methods."""
 
-    def __init__(self, subcatchemnt_id, raw_file):
+    def __init__(self, subcatchment_id, raw_file):
         self.raw_file = raw_file
-        self.subcatchemnt_id = subcatchemnt_id
+        self.subcatchment_id = subcatchment_id
         self.file = FeaturesSimulation.copy_file(self, copy=self.raw_file)
         self.model = swmmio.Model(self.file)
 
@@ -44,11 +44,11 @@ class FeaturesSimulation:
     def calculate(self) -> dict:
         """
         > The function `calculate` takes a `self` argument, and returns the
-        statistics of the subcatchment with the ID `self.subcatchemnt_id` in the SWMM model file.
+        statistics of the subcatchment with the ID `self.subcatchment_id` in the SWMM model file.
         :return: The statistics of the subcatchment.
         """
         with Simulation(self.file) as sim:
-            subcatchment = Subcatchments(sim)[self.subcatchemnt_id]
+            subcatchment = Subcatchments(sim)[self.subcatchment_id]
             for _ in sim:
                 pass
             return subcatchment.statistics
@@ -83,7 +83,7 @@ class FeaturesSimulation:
         for percent in percent_impervious:
             # subcatchment = swmmio.utils.dataframes.dataframe_from_inp(self.file, '[SUBCATCHMENTS]')
             subcatchment = self.model.inp.subcatchments
-            subcatchment.loc[self.subcatchemnt_id, feature] = percent
+            subcatchment.loc[self.subcatchment_id, feature] = percent
             swmmio.utils.modify_model.replace_inp_section(
                 self.model.inp.path, "[SUBCATCHMENTS]", subcatchment
             )
@@ -223,7 +223,7 @@ class FeaturesSimulation:
         }
         for n in manning_n:
             subareas = self.model.inp.subareas
-            subareas.loc[self.subcatchemnt_id, "N-" + param] = n
+            subareas.loc[self.subcatchment_id, "N-" + param] = n
             self.model.inp.subareas = subareas
             swmmio.utils.modify_model.replace_inp_section(
                 self.file, "[SUBAREAS]", subareas
@@ -274,7 +274,7 @@ class FeaturesSimulation:
         }
         for n in typical_values:
             subareas = self.model.inp.subareas
-            subareas.loc[self.subcatchemnt_id, "S-" + param] = n
+            subareas.loc[self.subcatchment_id, "S-" + param] = n
             self.model.inp.subareas = subareas
             swmmio.utils.modify_model.replace_inp_section(
                 self.file, "[SUBAREAS]", subareas
@@ -326,7 +326,7 @@ class FeaturesSimulation:
         }
         for percent in percent_impervious:
             subareas = self.model.inp.subareas
-            subareas.loc[self.subcatchemnt_id, "PctZero"] = percent
+            subareas.loc[self.subcatchment_id, "PctZero"] = percent
             self.model.inp.subareas = subareas
             swmmio.utils.modify_model.replace_inp_section(
                 self.file, "[SUBAREAS]", subareas
