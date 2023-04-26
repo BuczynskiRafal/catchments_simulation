@@ -78,9 +78,9 @@ class FeaturesSimulation:
             "infiltration": [],
             "evaporation": [],
         }
-        percent_impervious = np.arange(start, stop + 0.001, step)
+        scope = np.arange(start, stop + 0.001, step)
 
-        for percent in percent_impervious:
+        for percent in scope:
             # subcatchment = swmmio.utils.dataframes.dataframe_from_inp(self.file, '[SUBCATCHMENTS]')
             subcatchment = self.model.inp.subcatchments
             subcatchment.loc[self.subcatchment_id, feature] = percent
@@ -90,7 +90,7 @@ class FeaturesSimulation:
             subcatchemnt_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(subcatchemnt_stats[key])
-        catchment_data[feature] = percent_impervious
+        catchment_data[feature] = scope
         return pd.DataFrame(data=catchment_data)
 
     def simulate_area(
