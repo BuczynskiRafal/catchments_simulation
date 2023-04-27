@@ -1,11 +1,9 @@
 import os
-from django.conf import settings
-
 import pandas as pd
 import plotly.express as px
-from django.shortcuts import render
-from django.shortcuts import get_object_or_404
-from django.http import HttpResponseRedirect
+from django.conf import settings
+from django.shortcuts import render, redirect, get_object_or_404
+from django.http import HttpResponseRedirect, FileResponse, JsonResponse
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 
@@ -13,11 +11,14 @@ from main.forms import ContactForm
 from main.forms import UserProfileForm
 
 from . import services
-from .forms import ContactForm
+from .forms import ContactForm, SimulationForm
+
+from catchment_simulation.catchment_features_simulation import FeaturesSimulation
 
 
-def plot(path, x, y="runoff", xaxes=False, start=0, stop=100, title=None, rename_labels=False, x_name=None, y_name=None):
-    df = pd.read_excel(path)
+def plot(x, y="runoff", path=None, df=None, xaxes=False, start=0, stop=100, title=None, rename_labels=False, x_name=None, y_name=None):
+    if path is not None:
+        df = pd.read_excel(path)
     fig = px.line(df, x, y, title=title)
     if xaxes:
         fig.update_xaxes(range=[start, stop])
@@ -63,9 +64,6 @@ def contact(request):
         form = ContactForm()
     return render(request, 'main/contact.html', {'form': form})
 
-def simulation(request):
-    return render(request, 'main/simulation.html')
-
 
 def user_profile(request, user_id):
     user = get_object_or_404(get_user_model(), id=user_id)
@@ -88,3 +86,80 @@ def user_profile(request, user_id):
                 form.fields[field].disabled = True
             form.helper.inputs = []
     return render(request, 'main/userprofile.html', {'form': form})
+
+def upload(request):
+    if request.method == 'POST':
+        uploaded_file = request.FILES['file']
+        filename, file_extension = os.path.splitext(uploaded_file.name)
+
+        if file_extension.lower() == '.inp':
+            file_path = os.path.join('uploaded_files', filename + file_extension)
+            print(f"file_path:: {file_path}")
+            with open(file_path, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+
+            # Przechowuj ścieżkę do pliku w sesji
+            request.session['uploaded_file_path'] = file_path
+
+            return JsonResponse({'message': 'File was sent.'})
+        else:
+            return JsonResponse({'error': 'Invalid file type. Please upload a .inp file.'})
+    return JsonResponse({'error': 'Error occurred while sending file.'})
+
+def simulation_view(request):
+    show_download_button = False
+    user_plot = None
+    if request.method == 'POST':
+        form = SimulationForm(request.POST)
+        if form.is_valid():
+            method_name = form.cleaned_data['option']
+            start = form.cleaned_data['start']
+            stop = form.cleaned_data['stop']
+            step = form.cleaned_data['step']
+            catchment_name = form.cleaned_data['catchment_name']
+
+            # Pobierz ścieżkę do pliku z sesji
+            uploaded_file_path = request.session.get('uploaded_file_path', os.path.abspath('catchment_simulation/example.inp'))
+
+            model = FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path)
+
+            method = getattr(model, method_name)
+            df = method(start=start, stop=stop, step=step)
+
+            fetaure = {
+                'simulate_percent_slope': "PercSlope",
+                'simulate_area': "Area",
+                'simulate_width': "Width",
+                'simulate_percent_impervious': "PercImperv",
+                'simulate_percent_zero_imperv': "Zero-Imperv",
+            }
+
+            show_download_button = True
+
+            output_file_path = 'output_files/simulation_result.xlsx'
+            df.to_excel(output_file_path, index=False)
+
+            user_plot = plot(df=df, x=fetaure[method_name], xaxes=False, title=f"Dependence of runoff on subcatchment {fetaure[method_name]}.")
+            
+        
+            # Przekieruj do innego widoku lub zaktualizuj stronę z wynikami symulacji
+            return redirect('main:simulation')  # Przekieruj do widoku 'simulation'
+
+    else:
+        form = SimulationForm()
+
+    return render(request, 'main/simulation.html', {'form': form, 'show_download_button': show_download_button, "user_plot": user_plot})
+
+
+
+
+def download_result(request):
+    output_file_path = 'output_files/simulation_result.xlsx'
+
+    if os.path.exists(output_file_path):
+        response = FileResponse(open(output_file_path, 'rb'), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename=simulation_result.xlsx'
+        return response
+    else:
+        return HttpResponseNotFound("File not found.")

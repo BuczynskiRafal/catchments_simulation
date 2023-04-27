@@ -3,5 +3,64 @@
 {% block title %}Catchment Simulations{% endblock %}
 
 {% block content %}
-    <h1>O projekcie</h1>
+
+
+<div class="d-flex justify-content-center">
+    <form action="/upload/" method="post" enctype="multipart/form-data" class="dropzone" id="my-dropzone">
+        {% csrf_token %}
+        <div class="fallback">
+            <!-- Dodaj klasę 'custom-file-input' do elementu input -->
+            <input name="file" type="file" multiple class="custom-file-input" />
+            <input type="submit" value="Upload" class="btn btn-primary mt-3" />
+        </div>
+    </form>
+</div>
+
+{% load crispy_forms_tags %}
+
+<form method="post">
+    {% csrf_token %}
+        <div class="container">
+            <div class="row d-flex justify-content-center">
+                <div class="col-md-2">
+                    {{ form.option|as_crispy_field }}
+                </div>
+                <div class="col-md-2">
+                    {{ form.start|as_crispy_field }}
+                </div>
+                <div class="col-md-2">
+                    {{ form.stop|as_crispy_field }}
+                </div>
+                <div class="col-md-2">
+                    {{ form.step|as_crispy_field }}
+                </div>
+                <div class="col-md-2">
+                    {{ form.catchment_name|as_crispy_field }}
+                </div>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-md-12 d-flex justify-content-center">
+                <button type="submit" class="btn btn-primary">Run Simulation</button>
+            </div>
+        </div>
+
+
+
+        {% if show_download_button %}
+            <!-- User plot-->
+            {{ user_plot|safe }}
+
+            <div class="row mt-3">
+                <div class="col-md-12 d-flex justify-content-center">
+                    <a href="{% url 'main:download_result' %}" class="btn btn-success">Download Results</a>
+                </div>
+            </div>
+        {% endif %}
+
+
+    </div>
+</form>
+
+
 {% endblock %}

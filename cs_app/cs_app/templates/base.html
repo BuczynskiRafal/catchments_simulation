@@ -15,6 +15,7 @@
 
     <!-- Color codesnipet  -->
     <link href="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/themes/prism.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://unpkg.com/dropzone@5.9.3/dist/dropzone.css">
 
     <title>
         {% block title %} {% endblock %}
@@ -27,8 +28,15 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.2/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/prism.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/components/prism-python.min.js"></script>
+    <script src="https://unpkg.com/dropzone@5.9.3/dist/dropzone.js"></script>
 
     <style>
+        .dropzone {
+        border-radius: 0.5rem;
+        }
+        .dz-message {
+            border-radius: 0.25rem;
+        }
         html,
         body {
             height: 100%;
@@ -37,6 +45,7 @@
             min-height: calc(90% - 100px);
         }
     </style>
+
 
     {% block style %} {% endblock %}
 </head>
