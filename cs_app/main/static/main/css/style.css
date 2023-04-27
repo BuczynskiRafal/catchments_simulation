@@ -10,4 +10,15 @@ h1 {
 p {
     font-family: Verdana;
     font-size: 20px;
+}    
+.code-snippet {
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 1em;
+    white-space: pre-wrap;
+    font-family: monospace;
+    background-color: #f0f0f0;
+}
+pre[class*="code-snippet"] {
+    background-color: #f0f0f0; /* Zmień na preferowany odcień szarości */
 }

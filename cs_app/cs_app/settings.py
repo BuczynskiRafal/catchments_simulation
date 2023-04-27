@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     'django_extensions',
     'import_export',
     'crispy_forms',
+    "crispy_bootstrap4",
 
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
@@ -106,6 +107,7 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = '/media/'
 
 STATIC_URL = '/static/'
+
 STATICFILES_DIRS = [
     BASE_DIR / "static"
 ]
