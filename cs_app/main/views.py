@@ -205,3 +205,7 @@ def download_result(request):
         return response
     else:
         return HttpResponseNotFound("File not found.")
+
+
+def calculations(request):
+    return render(request, 'main/calculations.html')

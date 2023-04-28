@@ -1,0 +1,64 @@
+{% extends 'base.html' %}
+
+{% block title %}Catchment Calculations{% endblock %}
+
+{% block content %}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-6">
+            <!-- Lewa kolumna: Tekst -->
+            <div class="bg-light p-3" style="min-height: 100%;">
+                <h3 style="text-align: center;">Catchment Area Neural Network Model</h3>
+                <p  style="text-align: justify;">The Catchment Area Neural Network Model is a machine learning model designed to analyze and predict the behavior of water flow in catchment areas. The model takes into account various features of the catchment area, such as the land surface, slope, imperviousness, and infiltration properties. By understanding the relationships between these features, the model can provide valuable insights for water resource management, flood control, and environmental conservation efforts.</p>
+                <p>
+                    <h4 style="text-align: center;">Features</h4><br>
+                    <p>The model utilizes the following features as inputs:</p>
+                    <ul style="list-style-type: disc;">
+                        <li>Area (ha): The actual area of the catchment</li>
+                        <li>Width (m): The characteristic width of the overland flow path for surface runoff</li>
+                        <li>Slope (%): The average percentage slope of the catchment</li>
+                        <li>Imperv (%): The percentage of land surface (excluding any LID) that is impervious</li>
+                        <li>N-Imperv (-): Manning's n coefficient for overland flow through the impervious portion of the partial catchment</li>
+                        <li>N-Perv (-): Manning's n coefficient for overland flow through the pervious portion of the partial catchment</li>
+                        <li>Dstore-Imperv (m): Depth of depression storage on the impervious portion of the partial catchment (inches or millimeters)</li>
+                        <li>Dstore-Perv (m): Depth of depression storage on the pervious portion of the partial catchment (inches or millimeters)</li>
+                        <li>Zero-Imperv (%): Percentage of impervious area without depression storage</li>
+                        <li>Infiltration Data (-): Infiltration model (Horton, Modified Horton, Green-Ampt, Modified Green-Ampt, Curve Number (SCS))</li>
+                    </ul>
+                    <br>
+                    <h4 style="text-align: center;">Model Architecture:</h4>
+                    The model is a fully connected neural network with the following architecture:<br>
+                    <br>
+                    <ul>
+                        <li>Input layer with 16 neurons and ReLU activation function<br></li>
+                        <li>Hidden layer with 8 neurons and ReLU activation function<br></li>
+                        <li>Output layer with 1 neuron and ReLU activation function<br></li>
+                        <li>The model is compiled using the Adam optimizer and Mean Squared Error (MSE) as the loss function. Additional metrics used for evaluation are Mean Absolute Error (MAE) and Mean Squared Error (MSE).<br></li>
+                    </ul>
+                    <br>
+                    <h4  style="text-align: center;">Applications</h4>
+                    This model can be used for various applications, including:<br>
+                    <br>
+                    <ul>
+                    <li>Water resource management: By predicting the behavior of water flow in catchment areas, the model can help inform decision-making for water allocation and conservation efforts.<br></li>
+                    <li>Flood control: Understanding the factors that contribute to flooding can help identify areas at risk and inform the design of effective flood mitigation measures.<br></li>
+                    <li>Environmental conservation: Predicting the impact of changes in land use, climate, or other factors on catchment areas can help inform conservation strategies and preserve valuable ecosystems.</li>
+                    </ul>
+                </p>
+
+            </div>
+        </div>
+        <div class="col-md-6">
+            <!-- Prawa kolumna: Tekst i zdjęcie -->
+            {% load static %}
+            <div class="bg-light p-3" style="min-height: 100%;">
+                <h3 style="text-align: center;">Model Architecture</h3>
+                <img src="{% static 'main/img/nn.png' %}" alt="Opis obrazu" class="img-fluid" style="display: block; width: 100%; height: auto;">
+            </div>
+        </div>
+        
+    </div>
+</div>
+
+{% endblock %}
