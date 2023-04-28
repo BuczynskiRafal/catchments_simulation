@@ -1,8 +1,7 @@
-# Use the official Python base image
 FROM python:3.8-slim
 
 # Set the working directory
-WORKDIR /app
+WORKDIR /code
 
 # Copy requirements.txt into the container
 COPY requirements.txt requirements.txt
@@ -14,7 +13,7 @@ RUN pip install --trusted-host pypi.python.org -r requirements.txt
 COPY . .
 
 # Expose the port the app runs on
-EXPOSE 8050
+EXPOSE 8000
 
 # Start the application
-CMD ["python", "app/app.py"]
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
