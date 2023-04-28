@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     'import_export',
     'crispy_forms',
     "crispy_bootstrap4",
+    'storages',
 
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
@@ -60,6 +61,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "cs_app.wsgi.application"
 
+DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
 DATABASES = {
     "default": {

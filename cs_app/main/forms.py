@@ -42,7 +42,7 @@ class SimulationForm(forms.Form):
     )
     option = forms.ChoiceField(choices=OPTIONS, widget=forms.Select(attrs={'class': 'form-select'}))
     start = forms.IntegerField(min_value=1, max_value=100, initial=1, widget=forms.NumberInput(attrs={'class': 'form-control'}))
-    stop = forms.IntegerField(min_value=1, max_value=100, initial=1, widget=forms.NumberInput(attrs={'class': 'form-control'}))
+    stop = forms.IntegerField(min_value=1, max_value=100, initial=10, widget=forms.NumberInput(attrs={'class': 'form-control'}))
     step = forms.IntegerField(min_value=1, max_value=100, initial=1, widget=forms.NumberInput(attrs={'class': 'form-control'}))
     catchment_name = forms.CharField(max_length=100, widget=forms.TextInput(attrs={'class': 'form-control'}))
 

@@ -48,15 +48,41 @@
 
 
         {% if show_download_button %}
-            <!-- User plot-->
-            {{ user_plot|safe }}
-
-            <div class="row mt-3">
-                <div class="col-md-12 d-flex justify-content-center">
-                    <a href="{% url 'main:download_result' %}" class="btn btn-success">Download Results</a>
-                </div>
+        <!-- User plot-->
+        {{ user_plot|safe }}
+    
+        <div class="row mt-3">
+            <div class="col-md-12 d-flex justify-content-center">
+                <a href="{{ output_file_url }}" download="{{ output_file_name }}" class="btn btn-success">Download Results</a>
             </div>
-        {% endif %}
+        </div>
+    
+        <!-- Tabela z wynikami -->
+        <div class="row mt-3">
+            <div class="col-md-12">
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>Index</th>
+                            <th>{{ feature_name }}</th>
+                            <th>Runoff</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in results_data %}
+                            <tr>
+                                <td>{{ forloop.counter }}</td>
+                                <td>{{ row.0 }}</td>
+                                <td>{{ row.1 }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+    
+    
 
 
     </div>
