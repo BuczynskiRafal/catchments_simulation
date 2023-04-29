@@ -2,11 +2,13 @@ import os
 import datetime
 import pandas as pd
 import plotly.express as px
+import swmmio
 from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponseRedirect, FileResponse, JsonResponse, HttpResponse, HttpResponseNotFound
 from django.core.files.storage import default_storage
 from django.urls import reverse
+from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 
@@ -15,8 +17,11 @@ from main.forms import UserProfileForm
 
 from . import services
 from .forms import ContactForm, SimulationForm
+from .predictor import predict_runoff
 
 from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+from pyswmm import Simulation
+
 
 
 def plot(x, y="runoff", path=None, df=None, xaxes=False, start=0, stop=100, title=None, rename_labels=False, x_name=None, y_name=None):
@@ -144,7 +149,7 @@ def get_session_variables(request):
 
 
 def clear_session_variables(request):
-    for variable in ['show_download_button', 'user_plot', 'results_data', 'feature_name', 'output_file_name', 'output_file_url']:  # Dodaj 'output_file_url'
+    for variable in ['show_download_button', 'user_plot', 'results_data', 'feature_name', 'output_file_name', 'output_file_url']:
         if variable in request.session:
             del request.session[variable]
 
@@ -206,6 +211,35 @@ def download_result(request):
     else:
         return HttpResponseNotFound("File not found.")
 
-
 def calculations(request):
-    return render(request, 'main/calculations.html')
+    df = None
+
+    if request.method == 'POST':
+        uploaded_file_path = request.session.get('uploaded_file_path', None)
+
+        if not uploaded_file_path:
+            messages.error(request, 'Please upload a file first.')
+        else:
+            try:
+                model = swmmio.Model(uploaded_file_path)
+                ann_predictions = predict_runoff(model).transpose()
+
+                with Simulation(uploaded_file_path) as sim:
+                    for _ in sim:
+                        pass
+                        
+                df = pd.DataFrame(
+                    data={
+                        "Name": model.subcatchments.dataframe.index,
+                        "SWMM_Runoff_m3": model.subcatchments.dataframe["TotalRunoffMG"].values,
+                        "ANN_Runoff_m3": ann_predictions,
+                    },
+                )
+
+            except Exception as e:
+                messages.error(request, 'Error occurred while performing calculations: {}'.format(str(e)))
+    
+    df_is_empty = df is None or df.empty
+
+    return render(request, 'main/calculations.html', {'df': df, 'df_is_empty': df_is_empty})
+

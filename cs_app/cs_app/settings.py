@@ -73,7 +73,8 @@ DATABASES = {
         'NAME': 'django_cs',
         'USER': 'django_cs',
         'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD'),
-        'HOST': 'db',
+        # 'HOST': 'db',
+        'HOST': 'localhost',
         'PORT': '5432',
     }
 }
@@ -93,6 +94,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+LOGIN_URL="/accounts/login/"
 
 LANGUAGE_CODE = "en-us"
 

@@ -7,8 +7,9 @@
 <div class="container-fluid">
     <div class="row">
         <div class="col-md-6">
-            <!-- Lewa kolumna: Tekst -->
+            <!-- Left column -->
             <div class="bg-light p-3" style="min-height: 100%;">
+                {% load static %}
                 <h3 style="text-align: center;">Catchment Area Neural Network Model</h3>
                 <p  style="text-align: justify;">The Catchment Area Neural Network Model is a machine learning model designed to analyze and predict the behavior of water flow in catchment areas. The model takes into account various features of the catchment area, such as the land surface, slope, imperviousness, and infiltration properties. By understanding the relationships between these features, the model can provide valuable insights for water resource management, flood control, and environmental conservation efforts.</p>
                 <p>
@@ -30,6 +31,8 @@
                     <h4 style="text-align: center;">Model Architecture:</h4>
                     The model is a fully connected neural network with the following architecture:<br>
                     <br>
+                    <img src="{% static 'main/img/nn.png' %}" alt="Opis obrazu" class="img-fluid" style="display: block; width: 60%; height: auto; margin-left: auto; margin-right: auto;">
+
                     <ul>
                         <li>Input layer with 16 neurons and ReLU activation function<br></li>
                         <li>Hidden layer with 8 neurons and ReLU activation function<br></li>
@@ -50,11 +53,64 @@
             </div>
         </div>
         <div class="col-md-6">
-            <!-- Prawa kolumna: Tekst i zdjęcie -->
-            {% load static %}
+            <!-- Roght column -->
             <div class="bg-light p-3" style="min-height: 100%;">
-                <h3 style="text-align: center;">Model Architecture</h3>
-                <img src="{% static 'main/img/nn.png' %}" alt="Opis obrazu" class="img-fluid" style="display: block; width: 100%; height: auto;">
+           
+                <h3 style="text-align: center;">Comparison of SWMM and ANN in runoff calculation.</h3>
+
+                <!-- Drop file -->
+                <div class="d-flex justify-content-center">
+                    <form action="/upload/" method="post" enctype="multipart/form-data" class="dropzone" id="my-dropzone">
+                        {% csrf_token %}
+                        <div class="fallback">
+                            <input name="file" type="file" multiple class="custom-file-input" />
+                            <input type="submit" value="Upload" class="btn btn-primary mt-3" />
+                        </div>
+                    </form>
+                </div>
+                <!-- Run calculations button -->
+                <form method="post" >
+                    {% csrf_token %}
+                    <div class="row mt-3">
+                        <div class="col-md-12 d-flex justify-content-center">
+                            <button type="submit" class="btn btn-primary">Run Calculations</button>
+                        </div>
+                    </div>
+                </form>
+                
+                <br>
+                <h4 style="text-align: center;">Results Comparison</h4>
+
+                
+
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th class="text-center">Name</th>
+                            <th class="text-center">SWMM Runoff [m3]</th>
+                            <th class="text-center">ANN Runoff [m3]</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if not df_is_empty %}
+                            {% for index, row in df.iterrows %}
+                                <tr>
+                                    <td class="text-center">{{ row.name }}</td>
+                                    <td class="text-center">{{ row.SWMM_Runoff_m3 }}</td>
+                                    <td class="text-center">{{ row.ANN_Runoff_m3 }}</td>
+                                </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td class="text-center">-</td>
+                                <td class="text-center">-</td>
+                                <td class="text-center">-</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>                    
+                </table>
+
+
             </div>
         </div>
         

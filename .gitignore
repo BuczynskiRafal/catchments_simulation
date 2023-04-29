@@ -68,6 +68,7 @@ instance/
 # Scrapy stuff:
 .scrapy
 
+
 # Sphinx documentation
 docs/_build/
 
@@ -127,3 +128,13 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+cs_app/data/db/
+
+cs_app/media/
+.idea/misc.xml
+.idea/dbnavigator.xml
+.idea/vcs.xml
+.idea/inspectionProfiles/profiles_settings.xml
+.idea/modules.xml
+.idea/inspectionProfiles/Project_Default.xml
+.idea/catchments_simulation.iml
