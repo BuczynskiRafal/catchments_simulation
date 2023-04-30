@@ -16,3 +16,4 @@ plotly==5.5.0
 tensorflow==2.11.0
 scikit-learn==1.2.2
 dj-database-url==2.0.0
+whitenoise==6.4.0

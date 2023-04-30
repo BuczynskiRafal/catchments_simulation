@@ -11,7 +11,10 @@ SECRET_KEY = os.environ.get("SECRET_KEY", default="KEY")
 
 DEBUG = False
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['https://catchment-simulations.onrender.com']
+RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME:    
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 
 INSTALLED_APPS = [
@@ -41,6 +44,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    'whitenoise.middleware.WhiteNoiseMiddleware',
 ]
 
 ROOT_URLCONF = "cs_app.urls"
@@ -78,13 +82,13 @@ DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DJANGO_CS_NAME', ''),
-        'USER': os.environ.get('DJANGO_CS_USER', ''),
-        'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD', ''),
-        'HOST': os.environ.get('POSTGRES_HOST', 'db'),  # Use the Render Database host here
-        'PORT': os.environ.get('POSTGRES_PORT', ''),
-        'default': dj_database_url.config(default=os.environ.get('DATABASE_URL'))
+        'default': dj_database_url.config(default=os.environ.get('DATABASE_URL')),
+        # 'ENGINE': 'django.db.backends.postgresql',
+        # 'NAME': os.environ.get('DJANGO_CS_NAME', ''),
+        # 'USER': os.environ.get('DJANGO_CS_USER', ''),
+        # 'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD', ''),
+        # 'HOST': os.environ.get('POSTGRES_HOST', ''),
+        # 'PORT': os.environ.get('POSTGRES_PORT', ''),
 
     }
 }
@@ -114,9 +118,6 @@ USE_I18N = True
 
 USE_TZ = True
 
-
-STATIC_URL = "static/"
-
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CRISPY_TEMPLATE_PACK = 'bootstrap4'
@@ -127,10 +128,21 @@ LOGOUT_REDIRECT_URL = "/"
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = '/media/'
 
-STATIC_URL = '/static/'
-
 STATICFILES_DIRS = [
-    BASE_DIR / "static"
+    os.path.join(BASE_DIR, 'static'),
 ]
 
 TIME_ZONE = 'UTC'
+
+if DEBUG:
+    STATIC_ROOT = os.path.join(BASE_DIR, 'static_dev')
+else:
+    # Tell Django to copy statics to the `staticfiles` directory
+    # in your application directory on Render.
+    STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+    # Turn on WhiteNoise storage backend that takes care of compressing static files
+    # and creating unique names for each version so they can safely be cached forever.
+    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+STATIC_URL = '/static/'
