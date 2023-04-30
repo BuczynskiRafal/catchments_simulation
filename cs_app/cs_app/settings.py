@@ -1,4 +1,5 @@
 import os
+import dj_database_url
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -8,7 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.environ.get("SECRET_KEY", default="KEY")
 
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = []
 
@@ -83,6 +84,8 @@ DATABASES = {
         'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD', ''),
         'HOST': os.environ.get('POSTGRES_HOST', 'db'),  # Use the Render Database host here
         'PORT': os.environ.get('POSTGRES_PORT', ''),
+        'default': dj_database_url.config(default=os.environ.get('DATABASE_URL'))
+
     }
 }
 
