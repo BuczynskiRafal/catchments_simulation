@@ -42,19 +42,6 @@
     <!-- Plot slope data-->
     {{ plot_slope|safe }}
 
-    <!-- Plot impervious-->
-    <h3 style="text-align: center;">Simulate catchment impervious in selected range.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_percent_impervious(start=1, stop: = 100, step = 1)
-    </code></pre>
-    {{ plot_impervious|safe }}
-
-
 
     <!-- Plot area-->
     <h3 style="text-align: center;">Simulate catchment area in selected range.</h3>
@@ -68,86 +55,5 @@
     </code></pre>
     {{ plot_area|safe }}
 
-
-    <!-- Plot width-->
-    <h3 style="text-align: center;">Simulate catchment width in selected range.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_width(start=1, stop: = 1000, step = 1)
-    </code></pre>
-    {{ plot_width|safe }}
-
-
-
-    <!-- Plot manning impervious-->
-    <h3 style="text-align: center;">Simulate Mannings impervious for available values.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_n_imperv(param="Imperv")
-    </code></pre>
-    {{ manning_impervious|safe }}
-
-
-
-    <!-- Plot manning pervious-->
-    <h3 style="text-align: center;">Simulate Mannings pervious for available values.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_n_perv(param="Perv")
-    </code></pre>
-    {{ manning_pervious|safe }}
-
-
-
-
-    <!-- Plot destore impervious-->
-    <h3 style="text-align: center;">Simulate destore impervious for available values.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_s_imperv(param="Imperv")
-    </code></pre>
-    {{ destore_impervious|safe }}
-
-
-    <!-- Plot destore pervious-->
-    <h3 style="text-align: center;">Simulate destore pervious for available values.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_s_imperv(param="Perv")
-    </code></pre>
-    {{ destore_pervious|safe }}
-    
-
-    <!-- Plot zero imperv-->
-    <h3 style="text-align: center;">Simulate catchment zero impervious in selected range.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_percent_zero_imperv(start=0, stop=100, step=10)
-    </code></pre>
-    {{ zero_impervious|safe }}
 
 {% endblock %}
