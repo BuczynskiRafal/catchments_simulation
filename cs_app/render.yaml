@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: catchment-simulations
+    env: docker
+    buildCommand: "docker build -t catchment-simulations ."
+    startCommand: "docker run -p 8000:8000 catchment-simulations"
+    healthCheckPath: "/"
+    envVars:
+      - key: DJANGO_CS_PASSWORD
+        value: mysecretpassword
+
+databases:
+  - name: catchment-simulations-db
+    plan: "starter"
+    user: "django_cs"
+    password: "mysecretpassword"
+    database: "django_cs"

@@ -1,6 +1,7 @@
 import os
 import datetime
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import swmmio
 from django.conf import settings
@@ -95,7 +96,6 @@ def user_profile(request, user_id):
             form.helper.inputs = []
     return render(request, 'main/userprofile.html', {'form': form})
 
-@login_required
 def upload(request):
     if request.method == 'POST':
         uploaded_file = request.FILES['file']
@@ -107,12 +107,12 @@ def upload(request):
                 for chunk in uploaded_file.chunks():
                     destination.write(chunk)
 
-            # Przechowuj ścieżkę do pliku w sesji
             request.session['uploaded_file_path'] = file_path
 
             return JsonResponse({'message': 'File was sent.'})
         else:
             return JsonResponse({'error': 'Invalid file type. Please upload a .inp file.'})
+
     return JsonResponse({'error': 'Error occurred while sending file.'})
 
 
@@ -154,7 +154,7 @@ def clear_session_variables(request):
             del request.session[variable]
 
 
-@login_required
+# @login_required
 def simulation_view(request):
     show_download_button = False
     user_plot = None
@@ -170,7 +170,6 @@ def simulation_view(request):
             catchment_name = form.cleaned_data['catchment_name']
 
             uploaded_file_path = request.session.get('uploaded_file_path', os.path.abspath('catchment_simulation/example.inp'))
-
             model = FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path)
             feature_name = get_feature_name(method_name)
 
@@ -222,17 +221,17 @@ def calculations(request):
         else:
             try:
                 model = swmmio.Model(uploaded_file_path)
-                ann_predictions = predict_runoff(model).transpose()
 
                 with Simulation(uploaded_file_path) as sim:
                     for _ in sim:
                         pass
+                ann_predictions = predict_runoff(model).transpose()
                         
                 df = pd.DataFrame(
                     data={
                         "Name": model.subcatchments.dataframe.index,
                         "SWMM_Runoff_m3": model.subcatchments.dataframe["TotalRunoffMG"].values,
-                        "ANN_Runoff_m3": ann_predictions,
+                        "ANN_Runoff_m3": np.round(ann_predictions, 2)
                     },
                 )
 

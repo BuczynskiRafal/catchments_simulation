@@ -1,16 +1,20 @@
+import os
 import pickle
 import swmmio
 from tensorflow.keras.models import load_model 
 
 
+current_directory = os.path.dirname(os.path.abspath(__file__))
+scaler_file_path = os.path.join(current_directory, '..', 'swmm_model', 'scaler.pkl')
+model_path = os.path.join(current_directory, '..', 'swmm_model')
+
 
 # insert scaler 
-with open(r"C:\Users\Dell\Documents\Git\catchments_simulation\cs_app\swmm_model\scaler.pkl", "rb") as f:
+with open(scaler_file_path, "rb") as f:
     loaded_scaler = pickle.load(f)
 
 
-# insert ann model
-model = load_model(r"C:\Users\Dell\Documents\Git\catchments_simulation\cs_app\swmm_model")
+model = load_model(model_path)
 
 
 def predict_runoff(swmmio_model: swmmio.Model):

@@ -43,9 +43,6 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "cs_app.urls"
-# C:\Users\Dell\Documents\Git\catchments_simulation\cs_app/cs_app/templates
-# C:\Users\Dell\Documents\Git\catchments_simulation\cs_app\cs_app\templates\
-# print(f"dir: {str(BASE_DIR) + '/cs_app/templates'}")
 
 TEMPLATES = [
     {
@@ -73,8 +70,7 @@ DATABASES = {
         'NAME': 'django_cs',
         'USER': 'django_cs',
         'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD'),
-        # 'HOST': 'db',
-        'HOST': 'localhost',
+        'HOST': 'db',
         'PORT': '5432',
     }
 }

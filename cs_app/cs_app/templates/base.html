@@ -94,8 +94,27 @@
             </div>
         </div>
     </footer>
-
+    
     {% block additional_scripts %}{% endblock %}
 
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const runSimulationButton = document.getElementById('run-simulation-button');
+            const runCalculationsButton = document.getElementById('run-calculations-button');
+            const buttons = [runSimulationButton, runCalculationsButton];
+    
+            buttons.forEach(function(button) {
+                if (button) {
+                    button.addEventListener('click', function(event) {
+                        const isAuthenticated = button.getAttribute('data-authenticated') === 'True';
+                        if (!isAuthenticated) {
+                            event.preventDefault();
+                            window.location.href = '/accounts/login/';
+                        }
+                    });
+                }
+            });
+        });
+    </script>
 </body>
 </html>

@@ -9,7 +9,6 @@
     <form action="/upload/" method="post" enctype="multipart/form-data" class="dropzone" id="my-dropzone">
         {% csrf_token %}
         <div class="fallback">
-            <!-- Dodaj klasę 'custom-file-input' do elementu input -->
             <input name="file" type="file" multiple class="custom-file-input" />
             <input type="submit" value="Upload" class="btn btn-primary mt-3" />
         </div>
@@ -41,7 +40,7 @@
         </div>
         <div class="row mt-3">
             <div class="col-md-12 d-flex justify-content-center">
-                <button type="button" class="btn btn-info" onclick="location.href='/calculations/'">Run Calculations</button>
+                <button type="submit" class="btn btn-primary" id="run-simulation-button" data-authenticated="{{ request.user.is_authenticated }}">Run Simulation</button>
             </div>
         </div>
 
@@ -80,12 +79,7 @@
             </div>
         </div>
     {% endif %}
-    
-    
-
-
     </div>
 </form>
-
 
 {% endblock %}
