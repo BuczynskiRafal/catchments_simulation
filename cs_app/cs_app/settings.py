@@ -64,14 +64,25 @@ WSGI_APPLICATION = "cs_app.wsgi.application"
 
 DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'django_cs',
+#         'USER': 'django_cs',
+#         'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD'),
+#         'HOST': 'db',
+#         'PORT': '5432',
+#     }
+# }
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'django_cs',
-        'USER': 'django_cs',
-        'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD'),
-        'HOST': 'db',
-        'PORT': '5432',
+        'NAME': os.environ.get('DJANGO_CS_NAME', ''),
+        'USER': os.environ.get('DJANGO_CS_USER', ''),
+        'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD', ''),
+        'HOST': os.environ.get('POSTGRES_HOST', 'db'),  # Use the Render Database host here
+        'PORT': os.environ.get('POSTGRES_PORT', ''),
     }
 }
 
