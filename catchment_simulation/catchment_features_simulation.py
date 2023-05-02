@@ -18,6 +18,7 @@ class FeaturesSimulation:
     raw_file : str
         The path to the raw SWMM input file.
     """
+
     def __init__(self, subcatchment_id: str, raw_file: str) -> None:
         self.raw_file = raw_file
         self.subcatchment_id = subcatchment_id
@@ -124,7 +125,7 @@ class FeaturesSimulation:
         return pd.DataFrame(data=catchment_data)
 
     def simulate_area(
-            self, start: float = 1, stop: float = 10, step: float = 1
+        self, start: float = 1, stop: float = 10, step: float = 1
     ) -> pd.DataFrame:
         """
         Simulate the area of the subcatchment within a specified range of values.

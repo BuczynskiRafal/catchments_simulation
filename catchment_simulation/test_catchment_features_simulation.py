@@ -64,10 +64,14 @@ def test_simulate_subcatchment(simulation_instance):
     Test the simulate_subcatchment method.
     """
     feature = "Area"
-    df = simulation_instance.simulate_subcatchment(feature=feature, start=1, stop=10, step=1)
+    df = simulation_instance.simulate_subcatchment(
+        feature=feature, start=1, stop=10, step=1
+    )
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 10
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", feature])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", feature]
+    )
 
 
 def test_simulate_area(simulation_instance):
@@ -77,7 +81,9 @@ def test_simulate_area(simulation_instance):
     df = simulation_instance.simulate_area(start=1, stop=10, step=1)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 10
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Area"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Area"]
+    )
 
 
 def test_simulate_percent_impervious(simulation_instance):
@@ -87,7 +93,9 @@ def test_simulate_percent_impervious(simulation_instance):
     df = simulation_instance.simulate_percent_impervious(start=0, stop=100, step=10)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 11
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "PercImperv"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "PercImperv"]
+    )
 
 
 def test_simulate_percent_slope(simulation_instance):
@@ -97,7 +105,9 @@ def test_simulate_percent_slope(simulation_instance):
     df = simulation_instance.simulate_percent_slope(start=0, stop=100, step=10)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 11
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "PercSlope"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "PercSlope"]
+    )
 
 
 def test_simulate_width(simulation_instance):
@@ -107,7 +117,9 @@ def test_simulate_width(simulation_instance):
     df = simulation_instance.simulate_width(start=0, stop=100, step=10)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 11
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Width"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Width"]
+    )
 
 
 def test_simulate_curb_length(simulation_instance):
@@ -117,7 +129,9 @@ def test_simulate_curb_length(simulation_instance):
     df = simulation_instance.simulate_curb_length(start=0, stop=100, step=10)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 11
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "CurbLength"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "CurbLength"]
+    )
 
 
 def test_simulate_n_imperv(simulation_instance):
@@ -126,7 +140,9 @@ def test_simulate_n_imperv(simulation_instance):
     """
     df = simulation_instance.simulate_n_imperv()
     assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "N-Imperv"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "N-Imperv"]
+    )
 
 
 def test_simulate_n_perv(simulation_instance):
@@ -135,7 +151,9 @@ def test_simulate_n_perv(simulation_instance):
     """
     df = simulation_instance.simulate_n_perv()
     assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "N-Perv"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "N-Perv"]
+    )
 
 
 def test_simulate_destore_imperv(simulation_instance):
@@ -144,7 +162,9 @@ def test_simulate_destore_imperv(simulation_instance):
     """
     df = simulation_instance.simulate_destore(param="Imperv")
     assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Imperv"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Imperv"]
+    )
 
 
 def test_simulate_destore_perv(simulation_instance):
@@ -153,7 +173,9 @@ def test_simulate_destore_perv(simulation_instance):
     """
     df = simulation_instance.simulate_destore(param="Perv")
     assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Perv"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Perv"]
+    )
 
 
 def test_simulate_s_imperv(simulation_instance):
@@ -162,7 +184,9 @@ def test_simulate_s_imperv(simulation_instance):
     """
     df = simulation_instance.simulate_s_imperv()
     assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Imperv"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Imperv"]
+    )
 
 
 def test_simulate_s_perv(simulation_instance):
@@ -171,7 +195,9 @@ def test_simulate_s_perv(simulation_instance):
     """
     df = simulation_instance.simulate_s_perv()
     assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Perv"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Perv"]
+    )
 
 
 def test_simulate_percent_zero_imperv(simulation_instance):
@@ -180,4 +206,6 @@ def test_simulate_percent_zero_imperv(simulation_instance):
     """
     df = simulation_instance.simulate_percent_zero_imperv(start=0, stop=100, step=10)
     assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Zero-Imperv"])
+    assert set(df.columns) == set(
+        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Zero-Imperv"]
+    )
