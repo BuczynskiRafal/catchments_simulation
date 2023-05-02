@@ -8,21 +8,37 @@ from pyswmm import Simulation, Subcatchments
 
 
 class FeaturesSimulation:
-    """Class FeaturesSimulation contains all methods."""
+    """
+    A class to simulate subcatchments with different features using the Storm Water Management Model (SWMM).
 
-    def __init__(self, subcatchment_id, raw_file):
+    Parameters
+    ----------
+    subcatchment_id : str
+        The identifier of the subcatchment being simulated.
+    raw_file : str
+        The path to the raw SWMM input file.
+    """
+    def __init__(self, subcatchment_id: str, raw_file: str) -> None:
         self.raw_file = raw_file
         self.subcatchment_id = subcatchment_id
         self.file = FeaturesSimulation.copy_file(self, copy=self.raw_file)
         self.model = swmmio.Model(self.file)
 
-    def copy_file(self, copy=None, suffix="copy"):
+    def copy_file(self, copy: str = None, suffix: str = "copy") -> str:
         """
-        > This function takes a SWMM input file and creates a copy of it with a suffix added to the end of the file name
+        Create a copy of a SWMM input file with a suffix added to the end of the file name.
 
-        :param copy: the path to the file you want to copy. If you don't specify one, it will use the raw_file
-        :param suffix: the suffix to add to the end of the file name, defaults to copy (optional)
-        :return: The new path of the copied file.
+        Parameters
+        ----------
+        copy : str, optional
+            The path to the file you want to copy. If not specified, it will use the raw_file.
+        suffix : str, optional
+            The suffix to add to the end of the file name, defaults to 'copy'.
+
+        Returns
+        -------
+        str
+            The new path of the copied file.
         """
         if copy is None:
             copy = self.raw_file
@@ -33,19 +49,29 @@ class FeaturesSimulation:
 
     def get_section(self, section: str = "subcatchments") -> pd.DataFrame:
         """
-        > The function `get_section` takes a SWMM input file and returns a pandas dataframe of the specified section
+        Get a specified section from a SWMM input file as a pandas DataFrame.
 
-        :param section: the name of the section you want to get, defaults to subcatchments (optional)
-        :type section: str (optional)
-        :return: The section of the inp file.
+        Parameters
+        ----------
+        section : str, optional
+            The name of the section you want to get, defaults to 'subcatchments'.
+
+        Returns
+        -------
+        pd.DataFrame
+            The section of the inp file as a pandas DataFrame.
         """
         return getattr(swmmio.Model(self.file).inp, section)
 
     def calculate(self) -> dict:
         """
-        > The function `calculate` takes a `self` argument, and returns the
-        statistics of the subcatchment with the ID `self.subcatchment_id` in the SWMM model file.
-        :return: The statistics of the subcatchment.
+        Run a simulation using the SWMM model and return the statistics of the subcatchment with the
+        ID `self.subcatchment_id`.
+
+        Returns
+        -------
+        dict
+            The statistics of the subcatchment.
         """
         with Simulation(self.file) as sim:
             subcatchment = Subcatchments(sim)[self.subcatchment_id]
@@ -54,22 +80,26 @@ class FeaturesSimulation:
             return subcatchment.statistics
 
     def simulate_subcatchment(
-        self, feature, start: float = 0, stop: float = 100, step: float = 10
+        self, feature: str, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
         """
-        > This function takes a SWMM model, a subcatchment ID,
-        and a feature (e.g. percent impervious) and runs the model
-        for a range of values for that feature
-        The function returns a `pandas.DataFrame` with catchment statistics and analysed feature
+        Simulate a subcatchment with varying feature values using the SWMM model.
 
-        :param feature: the name of the parameter you want to change
-        :param start: the starting value of the parameter, defaults to 0 (optional), defaults to 0
-        :type start: float (optional)
-        :param stop: the maximum value of the parameter you want to test, defaults to 100 (optional), defaults to 100
-        :type stop: float (optional)
-        :param step: the step size for the simulation, defaults to 10 (optional), defaults to 10
-        :type step: float (optional)
-        :return: A dataframe with the results of the simulation.
+        Parameters
+        ----------
+        feature : str
+            The name of the parameter to be varied in the simulation.
+        start : float, optional
+            The starting value of the parameter, defaults to 0.
+        stop : float, optional
+            The maximum value of the parameter to be simulated, defaults to 100.
+        step : float, optional
+            The step size for the simulation, defaults to 10.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the results of the simulation.
         """
         self.file = self.copy_file(self.raw_file)
         catchment_data = {
@@ -94,18 +124,24 @@ class FeaturesSimulation:
         return pd.DataFrame(data=catchment_data)
 
     def simulate_area(
-        self, start: float = 1, stop: float = 10, step: float = 1
+            self, start: float = 1, stop: float = 10, step: float = 1
     ) -> pd.DataFrame:
         """
-        This function simulates the area of the subcatchment in selected range of area
+        Simulate the area of the subcatchment within a specified range of values.
 
-        :param start: the starting value of the parameter to be varied, defaults to 1 (optional), defaults to 1
-        :type start: float (optional)
-        :param stop: The maximum value of the parameter to be simulated, defaults to 10 (optional), defaults to 10
-        :type stop: float (optional)
-        :param step: the step size for the simulation, defaults to 1 (optional), defaults to 1
-        :type step: float (optional)
-        :return: A dataframe with the results of the simulation.
+        Parameters
+        ----------
+        start : float, optional
+            The starting value of the area to be varied, defaults to 1.
+        stop : float, optional
+            The maximum value of the area to be simulated, defaults to 10.
+        step : float, optional
+            The step size for the simulation, defaults to 1.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the results of the simulation.
         """
         return self.simulate_subcatchment(
             feature="Area", start=start, stop=stop, step=step
@@ -115,15 +151,21 @@ class FeaturesSimulation:
         self, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
         """
-        This function simulates the percent impervious of a subcatchment and returns a dataframe with the results
+        Simulate the percent impervious of a subcatchment within a specified range of values.
 
-        :param start: the starting value for the parameter, defaults to 0 (optional), defaults to 0
-        :type start: float (optional)
-        :param stop: the maximum value of the parameter to simulate, defaults to 100 (optional), defaults to 100
-        :type stop: float (optional)
-        :param step: the step size for the simulation, defaults to 10 (optional), defaults to 10
-        :type step: float (optional)
-        :return: A dataframe with the results of the simulation.
+        Parameters
+        ----------
+        start : float, optional
+            The starting value of the percent impervious to be varied, defaults to 0.
+        stop : float, optional
+            The maximum value of the percent impervious to be simulated, defaults to 100.
+        step : float, optional
+            The step size for the simulation, defaults to 10.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the results of the simulation.
         """
         return self.simulate_subcatchment(
             feature="PercImperv", start=start, stop=stop, step=step
@@ -133,16 +175,21 @@ class FeaturesSimulation:
         self, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
         """
-        > This function simulates the subcatchment's percent slope in default
-        from 0 to 100 percent in increments of 10 percent
+        Simulate the percent slope of a subcatchment within a specified range of values.
 
-        :param start: the starting value of the parameter, defaults to 0
-        :type start: float (optional)
-        :param stop: the maximum value of the parameter to simulate, defaults to 100
-        :type stop: float (optional)
-        :param step: the step size for the range of values to simulate, defaults to 10
-        :type step: float (optional)
-        :return: A dataframe with the results of the simulation.
+        Parameters
+        ----------
+        start : float, optional
+            The starting value of the percent slope to be varied, defaults to 0.
+        stop : float, optional
+            The maximum value of the percent slope to be simulated, defaults to 100.
+        step : float, optional
+            The step size for the simulation, defaults to 10.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the results of the simulation.
         """
         return self.simulate_subcatchment(
             feature="PercSlope", start=start, stop=stop, step=step
@@ -152,15 +199,21 @@ class FeaturesSimulation:
         self, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
         """
-        > This function simulates the width of the subcatchment and returns a dataframe with the results
+        Simulate the width of a subcatchment within a specified range of values.
 
-        :param start: the starting value of the parameter, defaults to 0
-        :type start: float (optional)
-        :param stop: the maximum value of the parameter to be simulated, defaults to 100
-        :type stop: float (optional)
-        :param step: the step size for the simulation, defaults to 10
-        :type step: float (optional)
-        :return: A dataframe with the results of the simulation.
+        Parameters
+        ----------
+        start : float, optional
+            The starting value of the width to be varied, defaults to 0.
+        stop : float, optional
+            The maximum value of the width to be simulated, defaults to 100.
+        step : float, optional
+            The step size for the simulation, defaults to 10.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the results of the simulation.
         """
         return self.simulate_subcatchment(
             feature="Width", start=start, stop=stop, step=step
@@ -170,15 +223,21 @@ class FeaturesSimulation:
         self, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
         """
-        > This function simulates the curb length of a subcatchment
+        Simulate the curb length of a subcatchment within a specified range of values.
 
-        :param start: the starting value of the parameter, defaults to 0
-        :type start: float (optional)
-        :param stop: the maximum value of the parameter to simulate, defaults to 100
-        :type stop: float (optional)
-        :param step: the step size for the simulation, defaults to 10
-        :type step: float (optional)
-        :return: A dataframe with the results of the simulation.
+        Parameters
+        ----------
+        start : float, optional
+            The starting value of the curb length to be varied, defaults to 0.
+        stop : float, optional
+            The maximum value of the curb length to be simulated, defaults to 100.
+        step : float, optional
+            The step size for the simulation, defaults to 10.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the results of the simulation.
         """
         return self.simulate_subcatchment(
             feature="CurbLength", start=start, stop=stop, step=step
@@ -186,12 +245,17 @@ class FeaturesSimulation:
 
     def simulate_manning_n(self, param: str) -> pd.DataFrame:
         """
-        > This function takes a SWMM model file and a subcatchment ID and returns a dataframe with the results
-        of running the model with different Manning's n values
+        Simulate a subcatchment using various Manning's n values.
 
-        :param param: type feature name
-        :type param: str
-        :return: A dataframe with the results of the simulation.
+        Parameters
+        ----------
+        param : str
+            The name of the feature for which Manning's n values should be varied.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame containing the results of the simulation.
         """
         self.file = self.copy_file(self.raw_file)
         # Source: McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC.
@@ -236,26 +300,39 @@ class FeaturesSimulation:
 
     def simulate_n_imperv(self) -> pd.DataFrame:
         """
-        > This function simulates the Manning's n for impervious area
-        :return: A dataframe with the simulated values of Manning's n for the impervious area.
+        Simulate Manning's n for impervious area.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with the simulated values of Manning's n for the impervious area.
         """
         return self.simulate_manning_n(param="Imperv")
 
     def simulate_n_perv(self) -> pd.DataFrame:
         """
-        > This function simulates the Manning's n for the pervious area.
-        :return: A dataframe with the simulated values of Manning's n for the pervious area.
+        Simulate Manning's n for pervious area.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with the simulated values of Manning's n for the pervious area.
         """
         return self.simulate_manning_n(param="Perv")
 
     def simulate_destore(self, param: str) -> pd.DataFrame:
         """
-        > This function takes a parameter name for depth of depression storage on area, and then runs the model
-        for each typical value.
+        Simulate the model for various depths of depression storage on the given area.
 
-        :param param: "N-Imperv"
-        :type: str
-        :return: A dataframe with the following columns:
+        Parameters
+        ----------
+        param : str
+            The name of the feature for which the depth of depression storage should be varied.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with the following columns:
             - runoff
             - peak_runoff_rate
             - infiltration
@@ -288,33 +365,45 @@ class FeaturesSimulation:
 
     def simulate_s_imperv(self) -> pd.DataFrame:
         """
-        > This function simulates the impervious depth of depression storage on area.
-        :return: A dataframe with the simulated values of the impervious surface area.
+        Simulate the impervious depth of depression storage on area.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with the simulated values of the impervious surface area.
         """
         return self.simulate_destore(param="Imperv")
 
     def simulate_s_perv(self) -> pd.DataFrame:
         """
-        > This function simulates the pervious depth of depression storage on area.
-        :return: A dataframe with the simulated values of the S_perv variable.
+        Simulate the pervious depth of depression storage on area.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with the simulated values of the S_perv variable.
         """
         return self.simulate_destore(param="Perv")
 
     def simulate_percent_zero_imperv(
         self, start: float = 0, stop: float = 100, step: float = 10
-    ):
+    ) -> pd.DataFrame:
         """
-        > This function runs a series of simulations, each with a different
-        percent impervious area with no depression,
-        and returns a dataframe with the results
+        Run a series of simulations with different percentages of impervious area with no depression storage.
 
-        :param start: the starting value for the percent impervious, defaults to 0
-        :type start: float (optional)
-        :param stop: the maximum percent impervious to test, defaults to 100
-        :type stop: float (optional)
-        :param step: the step size for the percent impervious, defaults to 10
-        :type step: float (optional)
-        :return: A dataframe with the results of the simulation.
+        Parameters
+        ----------
+        start : float, optional
+            The starting value for the percent impervious, defaults to 0.
+        stop : float, optional
+            The maximum percent impervious to test, defaults to 100.
+        step : float, optional
+            The step size for the percent impervious, defaults to 10.
+
+        Returns
+        -------
+        pd.DataFrame
+            A DataFrame with the results of the simulation.
         """
         self.file = self.copy_file(self.raw_file)
         percent_impervious = np.arange(start, stop + 0.001, step)
