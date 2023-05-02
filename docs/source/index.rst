@@ -7,8 +7,7 @@ Welcome to Catchment Simulation's documentation!
 
    catchment_simulation
    cs_app_main
-
-
+   cs_app_register
 
 Indices and tables
 ==================

@@ -1,5 +1,5 @@
-CS Web Main App 
-================
+Catchment Simulation App
+=======================
 
 Submodules
 ----------

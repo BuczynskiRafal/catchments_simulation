@@ -1,3 +1,5 @@
+[![Documentation Status](https://readthedocs.org/projects/catchments-simulation/badge/?version=latest)](https://catchments-simulation.readthedocs.io/en/latest/?badge=latest)
+
 # Catchment simulation
 Package include method for simulate subcatchment with different features values from Storm Water Management Model
 
