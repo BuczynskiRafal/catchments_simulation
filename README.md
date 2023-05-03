@@ -7,7 +7,8 @@
 
 
 # Catchment simulation
-Package include method for simulate subcatchment with different features values from Storm Water Management Model
+Package include method for simulate subcatchment with different features values from Storm Water Management Model.
+Currently, some of the 'catchment simulation' functionality available in the app - [catchment simulation](https://catchment-simulations.onrender.com/)
 
 ## Examples of How To Use 
 
@@ -167,3 +168,35 @@ raw_file = "catchment_simulation/example.inp"
 model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
 df = model.simulate_percent_zero_imperv(start=0, stop=100, step=10)
 ```
+
+
+# Bugs
+
+If you encounter any bugs or issues while using our software, please feel free to report them on the project's [issue tracker](https://github.com/BuczynskiRafal/catchments_simulation/issues). When reporting a bug, please provide as much information as possible to help us reproduce and resolve the issue, including:
+
+* A clear and concise description of the issue
+* Steps to reproduce the problem
+* Expected behavior and actual behavior
+* Any error messages or logs that may be relevant
+
+Your feedback is invaluable and will help us improve the software for all users.
+
+# Contributing
+
+We welcome and appreciate contributions from the community! If you're interested in contributing to this project, please follow these steps:
+
+1. Fork the repository on GitHub.
+2. Create a new branch for your changes.
+3. Make your changes, including updates to documentation if needed.
+4. Write tests to ensure your changes are working as expected.
+5. Ensure all tests pass and there are no linting or code style issues.
+6. Commit your changes and create a pull request, providing a detailed description of your changes.
+
+We will review your pull request as soon as possible and provide feedback. Once your contribution is approved, it will be merged into the main branch.
+
+For more information about contributing to the project, please see our [contributing guide](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/CONTRIBUTING.md).
+
+# License
+
+License
+This project is licensed under the [MIT License](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/LICENSE). By using, distributing, or contributing to this project, you agree to the terms and conditions of the license. Please refer to the [LICENSE.md](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/LICENSE) file for the full text of the license.
