@@ -138,3 +138,9 @@ cs_app/media/
 .idea/modules.xml
 .idea/inspectionProfiles/Project_Default.xml
 .idea/catchments_simulation.iml
+
+*.inp
+*.out
+*.bak
+*.rpt
+*.ipynb
