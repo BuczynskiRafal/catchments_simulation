@@ -1,5 +1,5 @@
 import os
-import dj_database_url
+# import dj_database_url
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -9,9 +9,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.environ.get("SECRET_KEY", default="KEY")
 
-DEBUG = False
+DEBUG = True
 
-ALLOWED_HOSTS = ['https://catchment-simulations.onrender.com']
+# ALLOWED_HOSTS = ['https://catchment-simulations.onrender.com']
+ALLOWED_HOSTS = ['*']
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME:    
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
@@ -44,7 +45,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    'whitenoise.middleware.WhiteNoiseMiddleware',
+    # 'whitenoise.middleware.WhiteNoiseMiddleware',
 ]
 
 ROOT_URLCONF = "cs_app.urls"
@@ -65,33 +66,33 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "cs_app.wsgi.application"
+# WSGI_APPLICATION = "cs_app.wsgi.application"
 
 DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'django_cs',
-#         'USER': 'django_cs',
-#         'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD'),
-#         'HOST': 'db',
-#         'PORT': '5432',
-#     }
-# }
-
 DATABASES = {
     'default': {
-        'default': dj_database_url.config(default=os.environ.get('DATABASE_URL')),
-        # 'ENGINE': 'django.db.backends.postgresql',
-        # 'NAME': os.environ.get('DJANGO_CS_NAME', ''),
-        # 'USER': os.environ.get('DJANGO_CS_USER', ''),
-        # 'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD', ''),
-        # 'HOST': os.environ.get('POSTGRES_HOST', ''),
-        # 'PORT': os.environ.get('POSTGRES_PORT', ''),
-
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'django_cs',
+        'USER': 'django_cs',
+        'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD'),
+        'HOST': 'db',
+        'PORT': '5432',
     }
 }
+
+# DATABASES = {
+#     'default': {
+#         'default': dj_database_url.config(default=os.environ.get('DATABASE_URL')),
+#         # 'ENGINE': 'django.db.backends.postgresql',
+#         # 'NAME': os.environ.get('DJANGO_CS_NAME', ''),
+#         # 'USER': os.environ.get('DJANGO_CS_USER', ''),
+#         # 'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD', ''),
+#         # 'HOST': os.environ.get('POSTGRES_HOST', ''),
+#         # 'PORT': os.environ.get('POSTGRES_PORT', ''),
+
+#     }
+# }
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -128,21 +129,19 @@ LOGOUT_REDIRECT_URL = "/"
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 MEDIA_URL = '/media/'
 
+STATIC_URL = '/static/'
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, 'static'),
 ]
 
 TIME_ZONE = 'UTC'
 
-if DEBUG:
-    STATIC_ROOT = os.path.join(BASE_DIR, 'static_dev')
-else:
+
+if not DEBUG:
     # Tell Django to copy statics to the `staticfiles` directory
     # in your application directory on Render.
     STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
     # Turn on WhiteNoise storage backend that takes care of compressing static files
     # and creating unique names for each version so they can safely be cached forever.
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-
-STATIC_URL = '/static/'
+    # STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
