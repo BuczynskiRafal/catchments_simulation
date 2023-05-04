@@ -87,8 +87,8 @@ def plot(
         fig.update_xaxes(range=[start, stop])
 
     if rename_labels:
-        fig.update_xaxes(title_text=x_name)  # Dodaj tę linię
-        fig.update_yaxes(title_text=y_name)  # Zaktualizuj tę linię
+        fig.update_xaxes(title_text=x_name)
+        fig.update_yaxes(title_text=y_name)
     fig.update_layout(
         title=dict(
             text=title,
