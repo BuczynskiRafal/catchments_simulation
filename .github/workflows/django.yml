@@ -1,6 +1,6 @@
 name: Django CI
 
-on: [push, pull_request]
+on: [pull_request]
 
 jobs:
   build:
@@ -23,5 +23,5 @@ jobs:
         pip install -r requirements.txt
     - name: Run Tests
       run: |
-        cd cs_app
-        python manage.py test
+        python cs_app/manage.py test main
+        python cs_app/manage.py test register

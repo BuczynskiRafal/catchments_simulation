@@ -25,7 +25,6 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    'django_extensions',
     'import_export',
     'crispy_forms',
     "crispy_bootstrap4",
@@ -69,27 +68,16 @@ WSGI_APPLICATION = "cs_app.wsgi.application"
 
 DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'django_cs',
-#         'USER': 'django_cs',
-#         'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD'),
-#         'HOST': 'db',
-#         'PORT': '5432',
-#     }
-# }
 
 DATABASES = {
     'default': {
         'default': dj_database_url.config(default=os.environ.get('DATABASE_URL')),
-        # 'ENGINE': 'django.db.backends.postgresql',
-        # 'NAME': os.environ.get('DJANGO_CS_NAME', ''),
-        # 'USER': os.environ.get('DJANGO_CS_USER', ''),
-        # 'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD', ''),
-        # 'HOST': os.environ.get('POSTGRES_HOST', ''),
-        # 'PORT': os.environ.get('POSTGRES_PORT', ''),
-
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('DJANGO_CS_NAME', ''),
+        'USER': os.environ.get('DJANGO_CS_USER', ''),
+        'PASSWORD': os.environ.get('DJANGO_CS_PASSWORD', ''),
+        'HOST': os.environ.get('POSTGRES_HOST', ''),
+        'PORT': os.environ.get('POSTGRES_PORT', ''),
     }
 }
 
