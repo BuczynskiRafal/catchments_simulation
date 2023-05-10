@@ -3,6 +3,7 @@ This module contains views and helper functions for rendering and managing
 the main view, about page, contact form, and user profiles, as well as
 functions for creating interactive plots.
 """
+import logging
 import datetime
 import os
 from typing import Optional, Union
@@ -28,10 +29,13 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from pyswmm import Simulation
 
-from . import services
-from .forms import ContactForm, SimulationForm, UserProfileForm
-from .predictor import predict_runoff
+from main.services import send_message
+from main.forms import ContactForm, SimulationForm, UserProfileForm
+from main.predictor import predict_runoff
 from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+
+
+logger = logging.getLogger(__name__)
 
 
 def plot(
@@ -124,7 +128,6 @@ def main_view(request: HttpRequest) -> HttpResponse:
             x_name="Percent Slope [-]",
             y_name="Runoff [m3]",
         ),
-        # "plot_impervious": plot(path=os.path.join(settings.BASE_DIR, "data", "df_percent_imprevious.xlsx"), x="percent_impervious", xaxes=True, title="Dependence of runoff on subcatchment imprevious.", rename_labels=True, x_name="Imprevious [%]", y_name="Runoff [m3]"),
         "plot_area": plot(
             path=os.path.join(settings.BASE_DIR, "data", "df_area.xlsx"),
             x="area",
@@ -134,12 +137,16 @@ def main_view(request: HttpRequest) -> HttpResponse:
             x_name="Area [ha]",
             y_name="Runoff [m3]",
         ),
-        # "plot_width": plot(path=os.path.join(settings.BASE_DIR, "data", "df_width.xlsx"), x="width", xaxes=True,  stop=1000, title="Dependence of runoff on subcatchment width.", rename_labels=True, x_name="Width [m]", y_name="Runoff [m3]"),
-        # "manning_impervious": plot(path=os.path.join(settings.BASE_DIR, "data", "df_n_impervious.xlsx"), x="N-Imperv", xaxes=False,  title="Dependence of runoff on Manning's impervious.", rename_labels=True, x_name="Manning's N-Imperv [-]", y_name="Runoff [m3]"),
-        # "manning_pervious": plot(path=os.path.join(settings.BASE_DIR, "data", "df_n_perv.xlsx"), x="N-Perv", xaxes=False,  title="Dependence of runoff on Manning's pervious.", rename_labels=True, x_name="Manning's N-Perv [-]", y_name="Runoff [m3]"),
-        # "destore_impervious": plot(path=os.path.join(settings.BASE_DIR, "data", "df_s_imperv.xlsx"), x="Destore-Imperv", xaxes=False,  title="Dependence of runoff on Destore impervious.", rename_labels=True, x_name="Destore Impervious [inches]", y_name="Runoff [m3]"),
-        # "destore_pervious": plot(path=os.path.join(settings.BASE_DIR, "data", "df_s_perv.xlsx"), x="Destore-Perv", xaxes=False,  title="Dependence of runoff on Destore pervious.", rename_labels=True, x_name="Destore Pervious [inches]", y_name="Runoff [m3]"),
-        # "zero_impervious": plot(path=os.path.join(settings.BASE_DIR, "data", "df_zero_imperv.xlsx"), x="Zero-Imperv", xaxes=False,  title="Dependence of runoff on zero impervious area.", rename_labels=True, x_name="Zero Impervious [-]", y_name="Runoff [m3]"),
+        "plot_width": plot(
+            path=os.path.join(settings.BASE_DIR, "data", "df_width.xlsx"),
+            x="width",
+            xaxes=True,
+            stop=1000,
+            title="Dependence of runoff on subcatchment width.",
+            rename_labels=True,
+            x_name="Width [m]",
+            y_name="Runoff [m3]",
+        )
     }
     return render(request, "main/main_view.html", context)
 
@@ -178,7 +185,7 @@ def contact(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = ContactForm(data=request.POST)
         if form.is_valid():
-            services.send_message(form.cleaned_data)
+            send_message(form.cleaned_data)
             return HttpResponseRedirect(reverse("contact"))
     else:
         form = ContactForm()
@@ -349,6 +356,7 @@ def clear_session_variables(request: HttpRequest) -> None:
         "feature_name",
         "output_file_name",
         "output_file_url",
+        "uploaded_file_path",
     ]:
         if variable in request.session:
             del request.session[variable]
@@ -417,19 +425,20 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             request.session["feature_name"] = feature_name
 
             save_output_file(request, df, output_file_name)
-
             return redirect("main:simulation")
-
     else:
         form = SimulationForm()
         session_data = get_session_variables(request)
         clear_session_variables(request)
 
-    return render(
-        request,
-        "main/simulation.html",
-        {"form": form, **session_data, "output_file_name": output_file_name},
-    )
+    try:
+        return render(
+            request,
+            "main/simulation.html",
+            {"form": form, **session_data, "output_file_name": output_file_name},
+        )
+    finally:
+        clear_session_variables(request)
 
 
 def download_result(request: HttpRequest) -> HttpResponse:
