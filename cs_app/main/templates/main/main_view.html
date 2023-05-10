@@ -42,7 +42,7 @@
     <!-- Plot slope data-->
     {{ plot_slope|safe }}
 
-
+    
     <!-- Plot area-->
     <h3 style="text-align: center;">Simulate catchment area in selected range.</h3>
     <pre class="code-snippet"><code class="language-python">
@@ -55,5 +55,17 @@
     </code></pre>
     {{ plot_area|safe }}
 
+
+    <!-- Plot width-->
+    <h3 style="text-align: center;">Simulate catchment width in selected range.</h3>
+    <pre class="code-snippet"><code class="language-python">
+        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+
+        subcatchment_id = "S1"
+        raw_file = "catchment_simulation/example.inp"
+        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
+        df = model.simulate_width(start=1, stop: = 1000, step = 1)
+    </code></pre>
+    {{ plot_width|safe }}
 
 {% endblock %}

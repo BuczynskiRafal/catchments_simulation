@@ -61,17 +61,17 @@
                 <table class="table table-bordered">
                     <thead>
                         <tr>
-                            <th>Index</th>
-                            <th>{{ feature_name }}</th>
-                            <th>Runoff</th>
+                            <th class="text-center">Index</th>
+                            <th class="text-center">{{ feature_name }}</th>
+                            <th class="text-center">Runoff</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in results_data %}
                             <tr>
-                                <td>{{ forloop.counter }}</td>
-                                <td>{{ row.0 }}</td>
-                                <td>{{ row.1 }}</td>
+                                <td class="text-center">{{ forloop.counter }}</td>
+                                <td class="text-center">{{ row.0|floatformat:2  }}</td>
+                                <td class="text-center">{{ row.1|floatformat:2  }}</td>
                             </tr>
                         {% endfor %}
                     </tbody>
