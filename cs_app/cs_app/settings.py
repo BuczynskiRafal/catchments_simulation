@@ -26,7 +26,6 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    'django_extensions',
     'import_export',
     'crispy_forms',
     "crispy_bootstrap4",
@@ -136,7 +135,7 @@ STATICFILES_DIRS = [
 
 TIME_ZONE = 'UTC'
 
-
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 if not DEBUG:
     # Tell Django to copy statics to the `staticfiles` directory
     # in your application directory on Render.
