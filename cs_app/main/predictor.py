@@ -6,7 +6,6 @@ The predict_runoff function takes a SWMM model object as input and returns an ar
 predicted runoff values for each subcatchment.
 """
 import os
-import pickle
 import swmmio
 from tensorflow.keras.models import load_model
 
@@ -15,17 +14,6 @@ current_directory = os.path.dirname(os.path.abspath(__file__))
 scaler_file_path = os.path.join(current_directory, "..", "swmm_model", "scaler.pkl")
 model_path = os.path.join(current_directory, "..", "swmm_model")
 
-
-# Load scaler
-try:
-    with open(scaler_file_path, "rb") as f:
-        loaded_scaler = pickle.load(f)
-except FileNotFoundError:
-    print(f"Cannot load scaler file: {scaler_file_path}")
-    raise
-
-
-# Load model
 try:
     model = load_model(model_path)
 except FileNotFoundError:
@@ -65,5 +53,4 @@ def predict_runoff(swmmio_model: swmmio.Model):
             "PctZero",
         ]
     ]
-    data = loaded_scaler.transform(data)
     return model.predict(data).flatten()
