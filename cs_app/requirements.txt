@@ -12,6 +12,7 @@ django-import-export==3.2.0
 django-storages==1.13.2
 psycopg2-binary==2.9.6
 plotly==5.5.0
-tensorflow==2.11.0
+tensorflow==2.12.0
 dj-database-url==2.0.0
 whitenoise==6.4.0
+gunicorn==20.1.0

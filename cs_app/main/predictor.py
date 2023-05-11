@@ -15,7 +15,7 @@ scaler_file_path = os.path.join(current_directory, "..", "swmm_model", "scaler.p
 model_path = os.path.join(current_directory, "..", "swmm_model")
 
 try:
-    model = load_model(model_path)
+    predict_model = load_model(model_path)
 except FileNotFoundError:
     print(f"Cannot load model: {model_path}")
     raise
@@ -53,4 +53,4 @@ def predict_runoff(swmmio_model: swmmio.Model):
             "PctZero",
         ]
     ]
-    return model.predict(data).flatten()
+    return predict_model.predict(data).flatten()

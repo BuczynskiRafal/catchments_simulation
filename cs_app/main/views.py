@@ -483,7 +483,6 @@ def calculations(request: HttpRequest) -> HttpResponse:
         The HTTP response with the rendered calculations template.
     """
     df = None
-
     if request.method == "POST":
         uploaded_file_path = request.session.get("uploaded_file_path", None)
 
@@ -491,17 +490,16 @@ def calculations(request: HttpRequest) -> HttpResponse:
             messages.error(request, "Please upload a file first.")
         else:
             try:
-                model = swmmio.Model(uploaded_file_path)
+                swmmio_model = swmmio.Model(uploaded_file_path)
 
                 with Simulation(uploaded_file_path) as sim:
                     for _ in sim:
                         pass
-                ann_predictions = predict_runoff(model).transpose()
-
+                ann_predictions = predict_runoff(swmmio_model).transpose()
                 df = pd.DataFrame(
                     data={
-                        "Name": model.subcatchments.dataframe.index,
-                        "SWMM_Runoff_m3": model.subcatchments.dataframe[
+                        "Name": swmmio_model.subcatchments.dataframe.index,
+                        "SWMM_Runoff_m3": swmmio_model.subcatchments.dataframe[
                             "TotalRunoffMG"
                         ].values,
                         "ANN_Runoff_m3": np.round(ann_predictions, 2),
@@ -509,6 +507,7 @@ def calculations(request: HttpRequest) -> HttpResponse:
                 )
 
             except Exception as e:
+                logger.error(e)
                 messages.error(
                     request,
                     "Error occurred while performing calculations: {}".format(str(e)),
