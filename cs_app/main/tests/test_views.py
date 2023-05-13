@@ -17,30 +17,31 @@ def test_main_view(client):
 
 @pytest.mark.django_db
 def test_about_view(client):
-    response = client.get(reverse('main:about'))
+    response = client.get(reverse("main:about"))
     assert response.status_code == 200
-    assert 'main/about.html' in [template.name for template in response.templates]
+    assert "main/about.html" in [template.name for template in response.templates]
 
 
 @pytest.mark.django_db
 def test_contact_view_GET(client):
-    response = client.get(reverse('main:contact'))
+    response = client.get(reverse("main:contact"))
     assert response.status_code == 200
-    assert 'main/contact.html' in [template.name for template in response.templates]
+    assert "main/contact.html" in [template.name for template in response.templates]
 
 
 @pytest.mark.django_db
 def test_contact_view_POST_no_data(client):
-    response = client.post(reverse('main:contact'))
+    response = client.post(reverse("main:contact"))
     assert response.status_code == 200
 
 
 @pytest.mark.django_db
 def test_user_profile_view(client, create_user, test_password):
-    client.login(username='testuser', password=test_password)
-    response = client.get(reverse('main:userprofile', args=[create_user.id]))
+    client.login(username="testuser", password=test_password)
+    response = client.get(reverse("main:userprofile", args=[create_user.id]))
     assert response.status_code == 200
-    assert 'main/userprofile.html' in [template.name for template in response.templates]
+    assert "main/userprofile.html" in [template.name for template in response.templates]
+
 
 # @pytest.mark.django_db
 # def test_upload_file(client, uploaded_file):
@@ -70,14 +71,14 @@ def test_user_profile_view(client, create_user, test_password):
 def test_simulation_view(user):
     factory = RequestFactory()
     request = factory.post(
-        'simulation',
+        "simulation",
         {
             "option": "slope",
             "start": "1",
             "stop": "100",
             "step": "1",
             "catchment_name": "S1",
-        }
+        },
     )
     middleware = SessionMiddleware(lambda req: None)
     middleware.process_request(request)
@@ -88,10 +89,11 @@ def test_simulation_view(user):
 
     assert response.status_code == 200
 
+
 @pytest.mark.django_db
 def test_simulation_view_GET(user):
     factory = RequestFactory()
-    request = factory.get('simulation')
+    request = factory.get("simulation")
     middleware = SessionMiddleware(lambda req: None)
     middleware.process_request(request)
     request.session.save()
@@ -101,14 +103,16 @@ def test_simulation_view_GET(user):
 
     assert response.status_code == 200
 
+
 @pytest.mark.django_db
 def test_download_result():
     factory = RequestFactory()
-    request = factory.get('simulation')
+    request = factory.get("simulation")
 
     response = download_result(request)
 
     assert response.status_code == 404
+
 
 # @pytest.mark.django_db
 # def test_calculations():
@@ -123,10 +127,11 @@ def test_download_result():
 
 #     assert response.status_code == 200
 
+
 @pytest.mark.django_db
 def test_calculations_GET():
     factory = RequestFactory()
-    request = factory.get('calculations')
+    request = factory.get("calculations")
     request.user = AnonymousUser()
 
     response = calculations(request)

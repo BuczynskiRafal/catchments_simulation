@@ -23,5 +23,5 @@ jobs:
         pip install -r requirements.txt
     - name: Run Tests
       run: |
-          export DJANGO_SETTINGS_MODULE=cs_app.test_settings
+        export DJANGO_SETTINGS_MODULE=cs_app.test_settings
         pytest cs_app/main/tests/

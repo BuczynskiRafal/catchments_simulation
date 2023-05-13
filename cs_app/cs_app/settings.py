@@ -11,9 +11,9 @@ SECRET_KEY = os.environ.get("SECRET_KEY", default="KEY")
 
 DEBUG = True
 
-ALLOWED_HOSTS = ['https://catchment-simulations.onrender.com']
-RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
-if RENDER_EXTERNAL_HOSTNAME:    
+ALLOWED_HOSTS = ["https://catchment-simulations.onrender.com"]
+RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 
@@ -24,13 +24,11 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
-    'import_export',
-    'crispy_forms',
+    "import_export",
+    "crispy_forms",
     "crispy_bootstrap4",
-    'storages',
+    "storages",
     "psycopg2",
-
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
 ]
@@ -43,7 +41,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    'whitenoise.middleware.WhiteNoiseMiddleware',
+    "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
 
 ROOT_URLCONF = "cs_app.urls"
@@ -51,7 +49,7 @@ ROOT_URLCONF = "cs_app.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        'DIRS': [os.path.join(BASE_DIR, 'cs_app', 'templates')],
+        "DIRS": [os.path.join(BASE_DIR, "cs_app", "templates")],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -66,11 +64,11 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "cs_app.wsgi.application"
 
-DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
 
 
 DATABASES = {
-    'default': dj_database_url.parse(os.environ.get('DATABASE_URL'), conn_max_age=600),
+    "default": dj_database_url.parse(os.environ.get("DATABASE_URL"), conn_max_age=600),
 }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -88,7 +86,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-LOGIN_URL="/accounts/login/"
+LOGIN_URL = "/accounts/login/"
 
 LANGUAGE_CODE = "en-us"
 
@@ -100,29 +98,29 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CRISPY_TEMPLATE_PACK = 'bootstrap4'
+CRISPY_TEMPLATE_PACK = "bootstrap4"
 
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"
 
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+MEDIA_URL = "/media/"
 
 STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'static'),
+    os.path.join(BASE_DIR, "static"),
 ]
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = "UTC"
 
 if DEBUG:
-    STATIC_ROOT = os.path.join(BASE_DIR, 'static_dev')
+    STATIC_ROOT = os.path.join(BASE_DIR, "static_dev")
 else:
     # Tell Django to copy statics to the `staticfiles` directory
     # in your application directory on Render.
-    STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+    STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 
     # Turn on WhiteNoise storage backend that takes care of compressing static files
     # and creating unique names for each version so they can safely be cached forever.
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+    STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-STATIC_URL = '/static/'
+STATIC_URL = "/static/"

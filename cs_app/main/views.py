@@ -146,7 +146,7 @@ def main_view(request: HttpRequest) -> HttpResponse:
             rename_labels=True,
             x_name="Width [m]",
             y_name="Runoff [m3]",
-        )
+        ),
     }
     return render(request, "main/main_view.html", context)
 

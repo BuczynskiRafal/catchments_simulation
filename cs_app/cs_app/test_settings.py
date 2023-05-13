@@ -3,12 +3,12 @@ import django
 from .settings import *
 
 
-INSTALLED_APPS += ['pytest_django']
+INSTALLED_APPS += ["pytest_django"]
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': ':memory:',
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": ":memory:",
     }
 }
 
