@@ -380,6 +380,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     show_download_button = False
     user_plot = None
     output_file_name = None
+    session_data = {}
 
     if request.method == "POST":
         form = SimulationForm(request.POST)
