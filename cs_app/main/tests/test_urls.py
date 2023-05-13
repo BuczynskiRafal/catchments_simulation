@@ -1,14 +1,5 @@
 import pytest
 from django.urls import reverse, resolve
-from main.views import (
-    main_view,
-    about,
-    contact,
-    user_profile,
-    simulation_view,
-    upload,
-    calculations,
-)
 
 
 pytestmark = pytest.mark.django_db
