@@ -2,9 +2,6 @@ import pytest
 from django.urls import reverse, resolve
 
 
-pytestmark = pytest.mark.django_db
-
-
 def test_main_view_url():
     path = reverse("main:main_view")
     assert resolve(path).view_name == "main:main_view"
