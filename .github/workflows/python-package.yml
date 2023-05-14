@@ -29,7 +29,10 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest
+        pip install pytest-cov
+        pytest catchment_simulation/test_catchment_features_simulation.py --cov=./
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v3
 
   build_wheels:
     needs: build

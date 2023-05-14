@@ -6,7 +6,7 @@ functions for creating interactive plots.
 import logging
 import datetime
 import os
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -146,7 +146,7 @@ def main_view(request: HttpRequest) -> HttpResponse:
             rename_labels=True,
             x_name="Width [m]",
             y_name="Runoff [m3]",
-        )
+        ),
     }
     return render(request, "main/main_view.html", context)
 
@@ -380,6 +380,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     show_download_button = False
     user_plot = None
     output_file_name = None
+    session_data = {}
 
     if request.method == "POST":
         form = SimulationForm(request.POST)

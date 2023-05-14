@@ -3,7 +3,7 @@
 [![PyPI version fury.io](https://badge.fury.io/py/ansicolortags.svg)](https://pypi.org/project/catchment-simulation/)
 [![GitHub Actions Build Status](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml/badge.svg?branch=master)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml)
 [![GitHub Actions Build Status](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/django.yml/badge.svg?branch=master)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/django.yml)
-
+[![codecov](https://codecov.io/gh/BuczynskiRafal/catchments_simulation/branch/main/graph/badge.svg?token=40S5AYWXK6)](https://codecov.io/gh/BuczynskiRafal/catchments_simulation)
 
 
 # Catchment simulation

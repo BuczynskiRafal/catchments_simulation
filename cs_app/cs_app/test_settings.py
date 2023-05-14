@@ -1,5 +1,5 @@
 import os
-import dj_database_url
+import django
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -11,11 +11,7 @@ SECRET_KEY = os.environ.get("SECRET_KEY", default="KEY")
 
 DEBUG = True
 
-ALLOWED_HOSTS = ["https://catchment-simulations.onrender.com"]
-RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-if RENDER_EXTERNAL_HOSTNAME:
-    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
-
+ALLOWED_HOSTS = []
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -29,6 +25,7 @@ INSTALLED_APPS = [
     "crispy_bootstrap4",
     "storages",
     "psycopg2",
+    "pytest_django",
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
 ]
@@ -41,7 +38,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
 
 ROOT_URLCONF = "cs_app.urls"
@@ -66,10 +62,13 @@ WSGI_APPLICATION = "cs_app.wsgi.application"
 
 DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
 
-
 DATABASES = {
-    "default": dj_database_url.parse(os.environ.get("DATABASE_URL"), conn_max_age=600),
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": ":memory:",
+    }
 }
+
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -98,6 +97,7 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+
 CRISPY_TEMPLATE_PACK = "bootstrap4"
 
 LOGIN_REDIRECT_URL = "/"
@@ -124,3 +124,9 @@ else:
     STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 STATIC_URL = "/static/"
+
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "cs_app.test_settings")
+django.setup()
+
+from django.core.management import call_command
