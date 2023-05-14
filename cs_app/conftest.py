@@ -40,7 +40,7 @@ def test_user():
 def uploaded_file():
     from django.core.files.uploadedfile import SimpleUploadedFile
 
-    return SimpleUploadedFile("file.inp", b"file_content", content_type="text/plain")
+    return SimpleUploadedFile("example.inp", b"file_content", content_type="text/plain")
 
 
 @pytest.fixture
