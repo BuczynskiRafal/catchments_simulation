@@ -20,3 +20,5 @@ sphinx_rtd_theme==1.2.0
 sphinx-autobuild==2021.3.14
 recommonmark==0.7.1
 gunicorn==20.1.0
+pytest_django==4.5.2
+pytest==7.3.1
