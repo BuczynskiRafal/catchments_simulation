@@ -1,8 +1,8 @@
 [![Documentation Status](https://readthedocs.org/projects/catchments-simulation/badge/?version=latest)](https://catchments-simulation.readthedocs.io/en/latest/?badge=latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/LICENSE)
 [![PyPI version fury.io](https://badge.fury.io/py/ansicolortags.svg)](https://pypi.org/project/catchment-simulation/)
-[![GitHub Actions Build Status](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml/badge.svg?branch=master)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml)
-[![GitHub Actions Build Status](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/django.yml/badge.svg?branch=master)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/django.yml)
+[![GitHub Actions Build Status](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml/badge.svg?branch=main)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml)
+[![GitHub Actions Build Status](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/django.yml/badge.svg?branch=main)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/django.yml)
 [![codecov](https://codecov.io/gh/BuczynskiRafal/catchments_simulation/branch/main/graph/badge.svg?token=40S5AYWXK6)](https://codecov.io/gh/BuczynskiRafal/catchments_simulation)
 
 
