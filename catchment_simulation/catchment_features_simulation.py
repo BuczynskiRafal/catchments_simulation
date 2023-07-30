@@ -76,8 +76,6 @@ class FeaturesSimulation:
         """
         with Simulation(self.file) as sim:
             subcatchment = Subcatchments(sim)[self.subcatchment_id]
-            for _ in sim:
-                pass
             return subcatchment.statistics
 
     def simulate_subcatchment(
@@ -288,7 +286,7 @@ class FeaturesSimulation:
         }
         for n in manning_n:
             subareas = self.model.inp.subareas
-            subareas.loc[self.subcatchment_id, "N-" + param] = n
+            subareas.loc[self.subcatchment_id, f"N-{param}"] = n
             self.model.inp.subareas = subareas
             swmmio.utils.modify_model.replace_inp_section(
                 self.file, "[SUBAREAS]", subareas
@@ -296,7 +294,7 @@ class FeaturesSimulation:
             catchment_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
-        catchment_data["N-" + param] = manning_n
+        catchment_data[f"N-{param}"] = manning_n
         return pd.DataFrame(data=catchment_data)
 
     def simulate_n_imperv(self) -> pd.DataFrame:
@@ -352,7 +350,7 @@ class FeaturesSimulation:
         }
         for n in typical_values:
             subareas = self.model.inp.subareas
-            subareas.loc[self.subcatchment_id, "S-" + param] = n
+            subareas.loc[self.subcatchment_id, f"S-{param}"] = n
             self.model.inp.subareas = subareas
             swmmio.utils.modify_model.replace_inp_section(
                 self.file, "[SUBAREAS]", subareas
@@ -361,7 +359,7 @@ class FeaturesSimulation:
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
         df = pd.DataFrame(data=catchment_data)
-        df["Destore-" + param] = typical_values
+        df[f"Destore-{param}"] = typical_values
         return df
 
     def simulate_s_imperv(self) -> pd.DataFrame:

@@ -100,8 +100,7 @@ def plot(
             xanchor="center",
         )
     )
-    plot_div = fig.to_html(full_html=False)
-    return plot_div
+    return fig.to_html(full_html=False)
 
 
 def main_view(request: HttpRequest) -> HttpResponse:
@@ -485,17 +484,14 @@ def calculations(request: HttpRequest) -> HttpResponse:
     """
     df = None
     if request.method == "POST":
-        uploaded_file_path = request.session.get("uploaded_file_path", None)
-
-        if not uploaded_file_path:
-            messages.error(request, "Please upload a file first.")
-        else:
+        if uploaded_file_path := request.session.get(
+            "uploaded_file_path", None
+        ):
             try:
                 swmmio_model = swmmio.Model(uploaded_file_path)
 
                 with Simulation(uploaded_file_path) as sim:
-                    for _ in sim:
-                        pass
+                    pass
                 ann_predictions = predict_runoff(swmmio_model).transpose()
                 df = pd.DataFrame(
                     data={
@@ -511,9 +507,11 @@ def calculations(request: HttpRequest) -> HttpResponse:
                 logger.error(e)
                 messages.error(
                     request,
-                    "Error occurred while performing calculations: {}".format(str(e)),
+                    f"Error occurred while performing calculations: {str(e)}",
                 )
 
+        else:
+            messages.error(request, "Please upload a file first.")
     df_is_empty = df is None or df.empty
 
     return render(
