@@ -27,19 +27,20 @@ jobs:
     - name: Set up Python ${{ matrix.python-version }}
       run: uv python install ${{ matrix.python-version }}
 
-    - name: Install dependencies
+    - name: Create venv and install dependencies
       run: |
-        uv pip install --system flake8 pytest pytest-cov
-        uv pip install --system -r requirements.txt
+        uv venv --python ${{ matrix.python-version }}
+        uv pip install flake8 pytest pytest-cov
+        uv pip install -r requirements.txt
 
     - name: Lint with flake8
       run: |
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        uv run flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
     - name: Test with pytest
       run: |
-        pytest catchment_simulation/test_catchment_features_simulation.py --cov=catchment_simulation
+        uv run pytest catchment_simulation/test_catchment_features_simulation.py --cov=catchment_simulation
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v4
@@ -62,12 +63,13 @@ jobs:
 
     - name: Build package
       run: |
-        uv pip install --system setuptools wheel twine
-        python setup.py sdist bdist_wheel
-        twine check dist/*
+        uv venv --python 3.11
+        uv pip install setuptools wheel twine
+        uv run python setup.py sdist bdist_wheel
+        uv run twine check dist/*
 
     - name: Publish to PyPI
       env:
         TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
         TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-      run: twine upload dist/* --skip-existing
+      run: uv run twine upload dist/* --skip-existing
