@@ -22,7 +22,7 @@ class FeaturesSimulation:
     def __init__(self, subcatchment_id: str, raw_file: str) -> None:
         self.raw_file = raw_file
         self.subcatchment_id = subcatchment_id
-        self.file = FeaturesSimulation.copy_file(self, copy=self.raw_file)
+        self.file = self.copy_file(copy=self.raw_file)
         self.model = swmmio.Model(self.file)
 
     def copy_file(self, copy: str = None, suffix: str = "copy") -> str:
@@ -118,9 +118,9 @@ class FeaturesSimulation:
             swmmio.utils.modify_model.replace_inp_section(
                 self.model.inp.path, "[SUBCATCHMENTS]", subcatchment
             )
-            subcatchemnt_stats = self.calculate()
+            subcatchment_stats = self.calculate()
             for key in catchment_data:
-                catchment_data[key].append(subcatchemnt_stats[key])
+                catchment_data[key].append(subcatchment_stats[key])
         catchment_data[feature] = scope
         return pd.DataFrame(data=catchment_data)
 
