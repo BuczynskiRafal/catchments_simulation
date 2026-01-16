@@ -1,9 +1,11 @@
 """Package include method for simulate subcatchment with different
 features values from Storm Water Management Model"""
+
 import os
-import swmmio
-import pandas as pd
+
 import numpy as np
+import pandas as pd
+import swmmio
 from pyswmm import Simulation, Subcatchments
 
 
@@ -22,14 +24,33 @@ class FeaturesSimulation:
     RESULT_KEYS: tuple[str, ...] = ("runoff", "peak_runoff_rate", "infiltration", "evaporation")
 
     # Source: McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC.
-    MANNING_N_VALUES: tuple[float, ...] = tuple(sorted([
-        0.011, 0.012, 0.013, 0.014, 0.015, 0.024, 0.05, 0.06,
-        0.17, 0.13, 0.15, 0.24, 0.41, 0.4, 0.8,
-    ]))
+    MANNING_N_VALUES: tuple[float, ...] = tuple(
+        sorted(
+            [
+                0.011,
+                0.012,
+                0.013,
+                0.014,
+                0.015,
+                0.024,
+                0.05,
+                0.06,
+                0.17,
+                0.13,
+                0.15,
+                0.24,
+                0.41,
+                0.4,
+                0.8,
+            ]
+        )
+    )
 
     # Source: ASCE (1992), Design & Construction of Urban Stormwater Management Systems, New York, NY.
     # Values in mm (converted from inches: 0.05, 0.1, 0.2, 0.3)
-    DEPRESSION_STORAGE_VALUES: tuple[float, ...] = tuple(val * 25.4 for val in [0.05, 0.1, 0.2, 0.3])
+    DEPRESSION_STORAGE_VALUES: tuple[float, ...] = tuple(
+        val * 25.4 for val in [0.05, 0.1, 0.2, 0.3]
+    )
 
     @staticmethod
     def _create_result_dict() -> dict[str, list]:
@@ -162,9 +183,7 @@ class FeaturesSimulation:
         catchment_data[feature] = scope
         return pd.DataFrame(data=catchment_data)
 
-    def simulate_area(
-        self, start: float = 1, stop: float = 10, step: float = 1
-    ) -> pd.DataFrame:
+    def simulate_area(self, start: float = 1, stop: float = 10, step: float = 1) -> pd.DataFrame:
         """
         Simulate the area of the subcatchment within a specified range of values.
 
@@ -182,9 +201,7 @@ class FeaturesSimulation:
         pd.DataFrame
             A DataFrame containing the results of the simulation.
         """
-        return self.simulate_subcatchment(
-            feature="Area", start=start, stop=stop, step=step
-        )
+        return self.simulate_subcatchment(feature="Area", start=start, stop=stop, step=step)
 
     def simulate_percent_impervious(
         self, start: float = 0, stop: float = 100, step: float = 10
@@ -206,9 +223,7 @@ class FeaturesSimulation:
         pd.DataFrame
             A DataFrame containing the results of the simulation.
         """
-        return self.simulate_subcatchment(
-            feature="PercImperv", start=start, stop=stop, step=step
-        )
+        return self.simulate_subcatchment(feature="PercImperv", start=start, stop=stop, step=step)
 
     def simulate_percent_slope(
         self, start: float = 0, stop: float = 100, step: float = 10
@@ -230,13 +245,9 @@ class FeaturesSimulation:
         pd.DataFrame
             A DataFrame containing the results of the simulation.
         """
-        return self.simulate_subcatchment(
-            feature="PercSlope", start=start, stop=stop, step=step
-        )
+        return self.simulate_subcatchment(feature="PercSlope", start=start, stop=stop, step=step)
 
-    def simulate_width(
-        self, start: float = 0, stop: float = 100, step: float = 10
-    ) -> pd.DataFrame:
+    def simulate_width(self, start: float = 0, stop: float = 100, step: float = 10) -> pd.DataFrame:
         """
         Simulate the width of a subcatchment within a specified range of values.
 
@@ -254,9 +265,7 @@ class FeaturesSimulation:
         pd.DataFrame
             A DataFrame containing the results of the simulation.
         """
-        return self.simulate_subcatchment(
-            feature="Width", start=start, stop=stop, step=step
-        )
+        return self.simulate_subcatchment(feature="Width", start=start, stop=stop, step=step)
 
     def simulate_curb_length(
         self, start: float = 0, stop: float = 100, step: float = 10
@@ -278,9 +287,7 @@ class FeaturesSimulation:
         pd.DataFrame
             A DataFrame containing the results of the simulation.
         """
-        return self.simulate_subcatchment(
-            feature="CurbLength", start=start, stop=stop, step=step
-        )
+        return self.simulate_subcatchment(feature="CurbLength", start=start, stop=stop, step=step)
 
     def simulate_manning_n(self, param: str) -> pd.DataFrame:
         """
@@ -304,9 +311,7 @@ class FeaturesSimulation:
             subareas[col] = subareas[col].astype(float)
             subareas.loc[self.subcatchment_id, col] = n
             self.model.inp.subareas = subareas
-            swmmio.utils.modify_model.replace_inp_section(
-                self.file, "[SUBAREAS]", subareas
-            )
+            swmmio.utils.modify_model.replace_inp_section(self.file, "[SUBAREAS]", subareas)
             catchment_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
@@ -360,9 +365,7 @@ class FeaturesSimulation:
             subareas = self.model.inp.subareas
             subareas.loc[self.subcatchment_id, "S-" + param] = n
             self.model.inp.subareas = subareas
-            swmmio.utils.modify_model.replace_inp_section(
-                self.file, "[SUBAREAS]", subareas
-            )
+            swmmio.utils.modify_model.replace_inp_section(self.file, "[SUBAREAS]", subareas)
             catchment_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
@@ -420,9 +423,7 @@ class FeaturesSimulation:
             subareas = self.model.inp.subareas
             subareas.loc[self.subcatchment_id, "PctZero"] = percent
             self.model.inp.subareas = subareas
-            swmmio.utils.modify_model.replace_inp_section(
-                self.file, "[SUBAREAS]", subareas
-            )
+            swmmio.utils.modify_model.replace_inp_section(self.file, "[SUBAREAS]", subareas)
             catchment_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
