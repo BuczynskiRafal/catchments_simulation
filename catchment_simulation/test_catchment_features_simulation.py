@@ -1,8 +1,10 @@
-import pytest
-import os
 import glob
-import swmmio
+import os
+
 import pandas as pd
+import pytest
+import swmmio
+
 from .catchment_features_simulation import FeaturesSimulation
 
 
@@ -16,10 +18,6 @@ def simulation_instance():
     instance = FeaturesSimulation(subcatchment_id, raw_file)
     yield instance
     instance._cleanup_temp_files()
-    # Clean up any remaining copy files
-    for f in glob.glob("catchment_simulation/example_*.inp"):
-        if os.path.exists(f):
-            os.remove(f)
 
 
 def test_init(simulation_instance):
@@ -71,9 +69,7 @@ def test_simulate_subcatchment(simulation_instance):
     Test the simulate_subcatchment method.
     """
     feature = "Area"
-    df = simulation_instance.simulate_subcatchment(
-        feature=feature, start=1, stop=10, step=1
-    )
+    df = simulation_instance.simulate_subcatchment(feature=feature, start=1, stop=10, step=1)
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 10
     assert set(df.columns) == set(
@@ -232,7 +228,6 @@ class TestContextManager:
             for f in temp_files:
                 assert os.path.exists(f)
 
-        # After exiting, temp files should be cleaned up
         for f in temp_files:
             assert not os.path.exists(f)
 
@@ -267,7 +262,10 @@ class TestClassConstants:
     def test_result_keys(self):
         """Test that RESULT_KEYS contains expected keys."""
         assert FeaturesSimulation.RESULT_KEYS == (
-            "runoff", "peak_runoff_rate", "infiltration", "evaporation"
+            "runoff",
+            "peak_runoff_rate",
+            "infiltration",
+            "evaporation",
         )
 
     def test_manning_n_values_sorted(self):
@@ -280,7 +278,6 @@ class TestClassConstants:
         """Test that DEPRESSION_STORAGE_VALUES are in mm."""
         values = FeaturesSimulation.DEPRESSION_STORAGE_VALUES
         assert len(values) == 4
-        # Values should be in mm (converted from inches)
         assert values[0] == pytest.approx(0.05 * 25.4)
 
     def test_create_result_dict(self):
@@ -289,3 +286,23 @@ class TestClassConstants:
         assert set(result.keys()) == set(FeaturesSimulation.RESULT_KEYS)
         for key in result:
             assert result[key] == []
+
+
+class TestCleanup:
+    """Tests for file cleanup logic."""
+
+    def test_fixture_safety_net_cleanup(self):
+        """Test the safety net cleanup for files not tracked by instance."""
+
+        extra_file = "catchment_simulation/example_untracked.inp"
+        with open(extra_file, "w") as f:
+            f.write("test")
+
+        def safety_cleanup():
+            for f in glob.glob("catchment_simulation/example_*.inp"):
+                if os.path.exists(f):
+                    os.remove(f)
+
+        assert os.path.exists(extra_file)
+        safety_cleanup()
+        assert not os.path.exists(extra_file)
