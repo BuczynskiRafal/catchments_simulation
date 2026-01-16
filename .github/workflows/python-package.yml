@@ -66,8 +66,8 @@ jobs:
 
     - name: Build package
       run: |
-        uv pip install --system setuptools wheel twine
-        python setup.py sdist bdist_wheel
+        uv pip install --system build twine
+        python -m build
         twine check dist/*
 
     - name: Publish to PyPI

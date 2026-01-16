@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "catchment_simulation"
+version = "0.0.7"
+description = "Collection of calculation methods for simulating subcatchment features from Storm Water Management Model"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Rafal Buczynski", email = "rafal.buczynski@outlook.com"}
+]
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Hydrology",
+]
+keywords = ["swmm", "hydrology", "simulation", "catchment", "stormwater"]
+dependencies = [
+    "pandas>=1.3.5",
+    "numpy>=1.21.6",
+    "swmmio>=0.6.0",
+    "pyswmm>=1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/BuczynskiRafal/catchments_simulation"
+Documentation = "https://catchments-simulation.readthedocs.io"
+Repository = "https://github.com/BuczynskiRafal/catchments_simulation"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["catchment_simulation*"]
+
+[tool.setuptools.package-data]
+catchment_simulation = ["py.typed"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:builtin type Swig.*:DeprecationWarning",
+    "ignore:builtin type swigvarlink:DeprecationWarning",
+]
