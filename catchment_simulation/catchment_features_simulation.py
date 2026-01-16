@@ -19,11 +19,52 @@ class FeaturesSimulation:
         The path to the raw SWMM input file.
     """
 
+    RESULT_KEYS: tuple[str, ...] = ("runoff", "peak_runoff_rate", "infiltration", "evaporation")
+
+    # Source: McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC.
+    MANNING_N_VALUES: tuple[float, ...] = tuple(sorted([
+        0.011, 0.012, 0.013, 0.014, 0.015, 0.024, 0.05, 0.06,
+        0.17, 0.13, 0.15, 0.24, 0.41, 0.4, 0.8,
+    ]))
+
+    # Source: ASCE (1992), Design & Construction of Urban Stormwater Management Systems, New York, NY.
+    # Values in mm (converted from inches: 0.05, 0.1, 0.2, 0.3)
+    DEPRESSION_STORAGE_VALUES: tuple[float, ...] = tuple(val * 25.4 for val in [0.05, 0.1, 0.2, 0.3])
+
+    @staticmethod
+    def _create_result_dict() -> dict[str, list]:
+        """Create an empty result dictionary with standard keys."""
+        return {key: [] for key in FeaturesSimulation.RESULT_KEYS}
+
     def __init__(self, subcatchment_id: str, raw_file: str) -> None:
         self.raw_file = raw_file
         self.subcatchment_id = subcatchment_id
+        self._temp_files: list[str] = []
         self.file = self.copy_file(copy=self.raw_file)
         self.model = swmmio.Model(self.file)
+
+    def __enter__(self) -> "FeaturesSimulation":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self._cleanup_temp_files()
+
+    def _cleanup_temp_files(self) -> None:
+        """Remove all temporary files created during simulation."""
+        for temp_file in self._temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+        self._temp_files.clear()
+
+    @staticmethod
+    def _validate_simulation_params(start: float, stop: float, step: float) -> None:
+        """Validate simulation parameters."""
+        if start < 0:
+            raise ValueError(f"start must be >= 0, got {start}")
+        if step <= 0:
+            raise ValueError(f"step must be > 0, got {step}")
+        if start > stop:
+            raise ValueError(f"start ({start}) must be <= stop ({stop})")
 
     def copy_file(self, copy: str = None, suffix: str = "copy") -> str:
         """
@@ -46,6 +87,7 @@ class FeaturesSimulation:
         baseline = swmmio.Model(copy)
         new_path = os.path.join(baseline.inp.name + "_" + suffix + ".inp")
         baseline.inp.save(new_path)
+        self._temp_files.append(new_path)
         return new_path
 
     def get_section(self, section: str = "subcatchments") -> pd.DataFrame:
@@ -102,13 +144,9 @@ class FeaturesSimulation:
         pd.DataFrame
             A DataFrame containing the results of the simulation.
         """
+        self._validate_simulation_params(start, stop, step)
         self.file = self.copy_file(self.raw_file)
-        catchment_data = {
-            "runoff": [],
-            "peak_runoff_rate": [],
-            "infiltration": [],
-            "evaporation": [],
-        }
+        catchment_data = self._create_result_dict()
         scope = np.arange(start, stop + 0.001, step)
 
         for percent in scope:
@@ -259,36 +297,12 @@ class FeaturesSimulation:
             A DataFrame containing the results of the simulation.
         """
         self.file = self.copy_file(self.raw_file)
-        # Source: McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC.
-        manning_n = np.sort(
-            [
-                0.011,
-                0.012,
-                0.013,
-                0.014,
-                0.015,
-                0.024,
-                0.05,
-                0.06,
-                0.17,
-                0.13,
-                0.15,
-                0.24,
-                0.41,
-                0.4,
-                0.8,
-            ]
-        )
-
-        catchment_data = {
-            "runoff": [],
-            "peak_runoff_rate": [],
-            "infiltration": [],
-            "evaporation": [],
-        }
-        for n in manning_n:
+        catchment_data = self._create_result_dict()
+        for n in self.MANNING_N_VALUES:
             subareas = self.model.inp.subareas
-            subareas.loc[self.subcatchment_id, "N-" + param] = n
+            col = "N-" + param
+            subareas[col] = subareas[col].astype(float)
+            subareas.loc[self.subcatchment_id, col] = n
             self.model.inp.subareas = subareas
             swmmio.utils.modify_model.replace_inp_section(
                 self.file, "[SUBAREAS]", subareas
@@ -296,7 +310,7 @@ class FeaturesSimulation:
             catchment_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
-        catchment_data["N-" + param] = manning_n
+        catchment_data["N-" + param] = self.MANNING_N_VALUES
         return pd.DataFrame(data=catchment_data)
 
     def simulate_n_imperv(self) -> pd.DataFrame:
@@ -341,16 +355,8 @@ class FeaturesSimulation:
             - Destore-param
         """
         self.file = self.copy_file(self.raw_file)
-        """Source: ASCE,(1992), Design & Construction of Urban Stormwater Management Systems, New York, NY."""
-        typical_values = [0.05, 0.1, 0.2, 0.3]  # Inches
-        typical_values = [val * 25.4 for val in typical_values]  # SI units [mm]
-        catchment_data = {
-            "runoff": [],
-            "peak_runoff_rate": [],
-            "infiltration": [],
-            "evaporation": [],
-        }
-        for n in typical_values:
+        catchment_data = self._create_result_dict()
+        for n in self.DEPRESSION_STORAGE_VALUES:
             subareas = self.model.inp.subareas
             subareas.loc[self.subcatchment_id, "S-" + param] = n
             self.model.inp.subareas = subareas
@@ -361,7 +367,7 @@ class FeaturesSimulation:
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
         df = pd.DataFrame(data=catchment_data)
-        df["Destore-" + param] = typical_values
+        df["Destore-" + param] = self.DEPRESSION_STORAGE_VALUES
         return df
 
     def simulate_s_imperv(self) -> pd.DataFrame:
@@ -406,14 +412,10 @@ class FeaturesSimulation:
         pd.DataFrame
             A DataFrame with the results of the simulation.
         """
+        self._validate_simulation_params(start, stop, step)
         self.file = self.copy_file(self.raw_file)
         percent_impervious = np.arange(start, stop + 0.001, step)
-        catchment_data = {
-            "runoff": [],
-            "peak_runoff_rate": [],
-            "infiltration": [],
-            "evaporation": [],
-        }
+        catchment_data = self._create_result_dict()
         for percent in percent_impervious:
             subareas = self.model.inp.subareas
             subareas.loc[self.subcatchment_id, "PctZero"] = percent
