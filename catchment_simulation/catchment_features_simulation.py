@@ -173,6 +173,7 @@ class FeaturesSimulation:
         for percent in scope:
             # subcatchment = swmmio.utils.dataframes.dataframe_from_inp(self.file, '[SUBCATCHMENTS]')
             subcatchment = self.model.inp.subcatchments
+            subcatchment[feature] = subcatchment[feature].astype(float)
             subcatchment.loc[self.subcatchment_id, feature] = percent
             swmmio.utils.modify_model.replace_inp_section(
                 self.model.inp.path, "[SUBCATCHMENTS]", subcatchment
