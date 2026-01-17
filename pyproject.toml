@@ -67,6 +67,8 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
+pythonpath = ["cs_app"]
+addopts = "--ds=cs_app.test_settings --ignore=cs_app/cs_app/test_settings.py"
 filterwarnings = [
     "ignore:builtin type Swig.*:DeprecationWarning",
     "ignore:builtin type swigvarlink:DeprecationWarning",
