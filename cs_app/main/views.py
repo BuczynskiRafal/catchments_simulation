@@ -3,8 +3,9 @@ This module contains views and helper functions for rendering and managing
 the main view, about page, contact form, and user profiles, as well as
 functions for creating interactive plots.
 """
-import logging
+
 import datetime
+import logging
 import os
 from typing import Optional
 
@@ -16,24 +17,23 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
-from django.core.files.storage import default_storage, Storage
+from django.core.files.storage import default_storage
 from django.http import (
     FileResponse,
+    HttpRequest,
     HttpResponse,
     HttpResponseNotFound,
     HttpResponseRedirect,
     JsonResponse,
-    HttpRequest,
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from pyswmm import Simulation
 
-from main.services import send_message
+from catchment_simulation.catchment_features_simulation import FeaturesSimulation
 from main.forms import ContactForm, SimulationForm, UserProfileForm
 from main.predictor import predict_runoff
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
+from main.services import send_message
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +214,8 @@ def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
             profile = user.userprofile
             form = UserProfileForm(request.POST, instance=profile)
         except AttributeError:
-            pass
+            logger.debug(f"User {user_id} has no profile, creating new form for POST")
+            form = UserProfileForm(request.POST, initial={"user": user, "bio": ""})
         if form.is_valid():
             form.save()
     else:
@@ -222,12 +223,43 @@ def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
             profile = user.userprofile
             form = UserProfileForm(instance=profile)
         except AttributeError:
+            logger.debug(f"User {user_id} has no profile, creating empty form")
             form = UserProfileForm(initial={"user": user, "bio": ""})
         if request.user != user:
             for field in form.fields:
                 form.fields[field].disabled = True
             form.helper.inputs = []
     return render(request, "main/userprofile.html", {"form": form})
+
+
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Sanitize filename to prevent path traversal attacks."""
+    import re
+
+    # Remove path separators and other dangerous characters
+    sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename)
+    # Remove leading/trailing dots and spaces
+    sanitized = sanitized.strip(". ")
+    # Limit length
+    return sanitized[:100] if sanitized else "uploaded_file"
+
+
+def _validate_inp_file_content(file_content: bytes) -> bool:
+    """
+    Validate that the file content appears to be a valid SWMM .inp file.
+
+    SWMM .inp files typically start with section headers like [TITLE], [OPTIONS], etc.
+    """
+    try:
+        content_str = file_content.decode("utf-8", errors="ignore")
+        # Check for common SWMM section headers
+        swmm_sections = ["[TITLE]", "[OPTIONS]", "[RAINGAGES]", "[SUBCATCHMENTS]", "[SUBAREAS]"]
+        return any(section in content_str.upper() for section in swmm_sections)
+    except Exception:
+        return False
 
 
 def upload(request: HttpRequest) -> JsonResponse:
@@ -245,24 +277,59 @@ def upload(request: HttpRequest) -> JsonResponse:
         JSON response containing a success message if the file was uploaded successfully, or an error message if not.
     """
     if request.method == "POST":
+        if "file" not in request.FILES:
+            return JsonResponse({"error": "No file provided."}, status=400)
+
         uploaded_file = request.FILES["file"]
         filename, file_extension = os.path.splitext(uploaded_file.name)
 
-        if file_extension.lower() == ".inp":
-            file_path = os.path.join("uploaded_files", filename + file_extension)
-            with open(file_path, "wb+") as destination:
-                for chunk in uploaded_file.chunks():
-                    destination.write(chunk)
-
-            request.session["uploaded_file_path"] = file_path
-
-            return JsonResponse({"message": "File was sent."})
-        else:
+        # Check file extension
+        if file_extension.lower() != ".inp":
             return JsonResponse(
-                {"error": "Invalid file type. Please upload a .inp file."}
+                {"error": "Invalid file type. Please upload a .inp file."},
+                status=400,
             )
 
-    return JsonResponse({"error": "Error occurred while sending file."})
+        # Check file size
+        if uploaded_file.size > MAX_UPLOAD_SIZE:
+            return JsonResponse(
+                {
+                    "error": f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB."
+                },
+                status=400,
+            )
+
+        # Read file content for validation
+        file_content = uploaded_file.read()
+        uploaded_file.seek(0)  # Reset file pointer
+
+        # Validate file content
+        if not _validate_inp_file_content(file_content):
+            logger.warning(f"Invalid .inp file content uploaded: {uploaded_file.name}")
+            return JsonResponse(
+                {
+                    "error": "Invalid file content. The file does not appear to be a valid SWMM .inp file."
+                },
+                status=400,
+            )
+
+        # Sanitize filename
+        safe_filename = _sanitize_filename(filename)
+        file_path = os.path.join("uploaded_files", safe_filename + file_extension)
+
+        # Ensure upload directory exists
+        os.makedirs("uploaded_files", exist_ok=True)
+
+        with open(file_path, "wb+") as destination:
+            for chunk in uploaded_file.chunks():
+                destination.write(chunk)
+
+        request.session["uploaded_file_path"] = file_path
+        logger.info(f"File uploaded successfully: {file_path}")
+
+        return JsonResponse({"message": "File was sent."})
+
+    return JsonResponse({"error": "Error occurred while sending file."}, status=400)
 
 
 def get_feature_name(method_name: str) -> str:
@@ -290,9 +357,7 @@ def get_feature_name(method_name: str) -> str:
     return feature_map.get(method_name, "")
 
 
-def save_output_file(
-    request: HttpRequest, df: pd.DataFrame, output_file_name: str
-) -> None:
+def save_output_file(request: HttpRequest, df: pd.DataFrame, output_file_name: str) -> None:
     """
     Save the output file to the server.
 
@@ -362,7 +427,7 @@ def clear_session_variables(request: HttpRequest) -> None:
             del request.session[variable]
 
 
-# @login_required
+@login_required
 def simulation_view(request: HttpRequest) -> HttpResponse:
     """
     Render the simulation view.
@@ -395,9 +460,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                 "uploaded_file_path",
                 os.path.abspath("catchment_simulation/example.inp"),
             )
-            model = FeaturesSimulation(
-                subcatchment_id=catchment_name, raw_file=uploaded_file_path
-            )
+            model = FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path)
             feature_name = get_feature_name(method_name)
 
             method = getattr(model, method_name)
@@ -407,9 +470,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             show_download_button = True
 
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file_name = (
-                f"{request.user.username}_simulation_result_{timestamp}.xlsx"
-            )
+            output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
 
             user_plot = plot(
                 df=df,
@@ -511,11 +572,9 @@ def calculations(request: HttpRequest) -> HttpResponse:
                 logger.error(e)
                 messages.error(
                     request,
-                    "Error occurred while performing calculations: {}".format(str(e)),
+                    f"Error occurred while performing calculations: {str(e)}",
                 )
 
     df_is_empty = df is None or df.empty
 
-    return render(
-        request, "main/calculations.html", {"df": df, "df_is_empty": df_is_empty}
-    )
+    return render(request, "main/calculations.html", {"df": df, "df_is_empty": df_is_empty})
