@@ -99,21 +99,55 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            const loginUrl = '{% url "login" %}';
             const runSimulationButton = document.getElementById('run-simulation-button');
             const runCalculationsButton = document.getElementById('run-calculations-button');
             const buttons = [runSimulationButton, runCalculationsButton];
-    
+
             buttons.forEach(function(button) {
                 if (button) {
                     button.addEventListener('click', function(event) {
                         const isAuthenticated = button.getAttribute('data-authenticated') === 'True';
                         if (!isAuthenticated) {
                             event.preventDefault();
-                            window.location.href = '/accounts/login/';
+                            window.location.href = loginUrl;
                         }
                     });
                 }
             });
+
+            function initDropzone() {
+                if (typeof Dropzone === 'undefined') {
+                    return;
+                }
+                const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+                    || '{{ csrf_token }}';
+                Dropzone.options.myDropzone = {
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-CSRFToken': csrfToken
+                    },
+                    error: function(file, response, xhr) {
+                        if (xhr && xhr.status === 401) {
+                            const redirectUrl = (response && response.login_url) ? response.login_url : loginUrl;
+                            alert('You must be logged in to upload files.');
+                            window.location.href = redirectUrl + '?next=' + encodeURIComponent(window.location.pathname);
+                            return;
+                        }
+                        let message = 'Upload failed.';
+                        if (typeof response === 'string') {
+                            message = response;
+                        } else if (response && response.error) {
+                            message = response.error;
+                        }
+                        const errorEl = file.previewElement?.querySelector('[data-dz-errormessage]');
+                        if (errorEl) {
+                            errorEl.textContent = message;
+                        }
+                    }
+                };
+            }
+            initDropzone();
         });
     </script>
 </body>

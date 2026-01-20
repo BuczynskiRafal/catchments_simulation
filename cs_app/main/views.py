@@ -7,6 +7,7 @@ functions for creating interactive plots.
 import datetime
 import logging
 import os
+from functools import wraps
 from typing import Optional
 
 import numpy as np
@@ -36,6 +37,30 @@ from main.predictor import predict_runoff
 from main.services import send_message
 
 logger = logging.getLogger(__name__)
+
+
+def ajax_login_required(view_func):
+    """
+    Decorator that checks authentication for AJAX requests.
+
+    For AJAX requests, returns a 401 JSON response with a login URL.
+    For regular requests, redirects to the login page.
+    """
+
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            login_url = settings.LOGIN_URL
+            is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            if is_ajax:
+                return JsonResponse(
+                    {"error": "Authentication required.", "login_url": login_url},
+                    status=401,
+                )
+            return redirect(f"{login_url}?next={request.path}")
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
 
 
 def plot(
@@ -252,19 +277,35 @@ def _validate_inp_file_content(file_content: bytes) -> bool:
     Validate that the file content appears to be a valid SWMM .inp file.
 
     SWMM .inp files typically start with section headers like [TITLE], [OPTIONS], etc.
+    Handles BOM markers and various line endings (CRLF/LF).
     """
     try:
-        content_str = file_content.decode("utf-8", errors="ignore")
+        if file_content.startswith(b"\xef\xbb\xbf"):
+            file_content = file_content[3:]
+        elif file_content.startswith(b"\xff\xfe") or file_content.startswith(b"\xfe\xff"):
+            file_content = file_content[2:]
+
+        try:
+            content_str = file_content.decode("utf-8")
+        except UnicodeDecodeError:
+            content_str = file_content.decode("latin-1")
+
+        content_upper = content_str.replace("\r\n", "\n").replace("\r", "\n").upper()
+
         # Check for common SWMM section headers
         swmm_sections = ["[TITLE]", "[OPTIONS]", "[RAINGAGES]", "[SUBCATCHMENTS]", "[SUBAREAS]"]
-        return any(section in content_str.upper() for section in swmm_sections)
+        return any(section in content_upper for section in swmm_sections)
     except Exception:
         return False
 
 
+@ajax_login_required
 def upload(request: HttpRequest) -> JsonResponse:
     """
     Upload a .inp file to the server.
+
+    Requires user authentication. For AJAX requests (like Dropzone.js),
+    returns a 401 JSON response if not authenticated.
 
     Parameters
     ----------
