@@ -69,6 +69,52 @@ The 'Calculations' tab contains a neural network model trained to predict catchm
 ### Warning
 You will be asked to register and log in before performing the simulation. 
 
+---
+
+# Local Development Setup
+
+## Running the Django Web Application Locally
+
+### Prerequisites
+- Python 3.9+ 
+- [uv](https://docs.astral.sh/uv/) package manager (recommended)
+
+### Quick Start
+
+```bash
+# Clone repository
+git clone https://github.com/BuczynskiRafal/catchments_simulation.git
+cd catchments_simulation
+
+# Create virtual environment with uv
+uv venv --python 3.12
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
+
+# Install main package
+uv pip install -e ".[dev]"
+
+# Install Django dependencies
+uv pip install Django==3.2 Werkzeug==2.0.0 crispy-bootstrap4==2022.1 \
+    python-dotenv==1.0.0 django-crispy-forms==2.0 django-import-export==3.2.0 \
+    django-storages==1.13.2 plotly==5.18.0 dj-database-url==2.0.0 \
+    whitenoise==6.4.0 gunicorn==20.1.0 pytest-django email-validator
+
+# macOS only: Fix code signature issues
+find .venv -name "*.so" -o -name "*.dylib" | xargs codesign --force --sign -
+
+# Run the app
+cd cs_app
+python manage.py migrate
+python manage.py runserver
+```
+
+Open http://127.0.0.1:8000/ in your browser.
+
+For detailed instructions, see [cs_app/README.md](cs_app/README.md).
+
+---
+
 # More examples of package usage 
 
 #### Simulate subcatchment percent impervious in selected range.
