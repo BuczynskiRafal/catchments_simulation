@@ -35,10 +35,10 @@ jobs:
         uv pip install --system -e .
 
     - name: Lint with ruff
-      run: ruff check catchment_simulation/
+      run: ruff check src/
 
     - name: Test with pytest
-      run: pytest catchment_simulation/test_catchment_features_simulation.py --cov=catchment_simulation
+      run: pytest tests/test_catchment_features_simulation.py --cov=catchment_simulation
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v4

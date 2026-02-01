@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 import swmmio
 
-from .catchment_features_simulation import FeaturesSimulation
+from catchment_simulation import FeaturesSimulation
 
 
 @pytest.fixture
@@ -14,7 +14,7 @@ def simulation_instance():
     Returns a FeaturesSimulation instance with cleanup.
     """
     subcatchment_id = "S1"
-    raw_file = "catchment_simulation/example.inp"
+    raw_file = "tests/fixtures/example.inp"
     instance = FeaturesSimulation(subcatchment_id, raw_file)
     yield instance
     instance._cleanup_temp_files()
@@ -25,7 +25,7 @@ def test_init(simulation_instance):
     Test the initialization of the simulation instance.
     """
     assert simulation_instance.subcatchment_id == "S1"
-    assert simulation_instance.raw_file == "catchment_simulation/example.inp"
+    assert simulation_instance.raw_file == "tests/fixtures/example.inp"
     assert simulation_instance.file.endswith("_copy.inp")
     assert isinstance(simulation_instance.model, swmmio.Model)
 
@@ -220,7 +220,7 @@ class TestContextManager:
     def test_context_manager_cleanup(self):
         """Test that context manager cleans up temp files."""
         subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
+        raw_file = "tests/fixtures/example.inp"
 
         with FeaturesSimulation(subcatchment_id, raw_file) as sim:
             temp_files = sim._temp_files.copy()
@@ -294,12 +294,12 @@ class TestCleanup:
     def test_fixture_safety_net_cleanup(self):
         """Test the safety net cleanup for files not tracked by instance."""
 
-        extra_file = "catchment_simulation/example_untracked.inp"
+        extra_file = "tests/fixtures/example_untracked.inp"
         with open(extra_file, "w") as f:
             f.write("test")
 
         def safety_cleanup():
-            for f in glob.glob("catchment_simulation/example_*.inp"):
+            for f in glob.glob("tests/fixtures/example_*.inp"):
                 if os.path.exists(f):
                     os.remove(f)
 
@@ -502,7 +502,7 @@ class TestContextManagerExceptions:
         """Test that temp files are cleaned up even when exception occurs."""
         temp_files = []
         try:
-            with FeaturesSimulation("S1", "catchment_simulation/example.inp") as sim:
+            with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
                 temp_files = sim._temp_files.copy()
                 assert len(temp_files) > 0
                 raise ValueError("Test exception")
@@ -514,7 +514,7 @@ class TestContextManagerExceptions:
 
     def test_cleanup_after_multiple_simulations(self):
         """Test cleanup after running multiple simulations."""
-        with FeaturesSimulation("S1", "catchment_simulation/example.inp") as sim:
+        with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
             sim.simulate_area(start=1, stop=2, step=1)
             sim.simulate_width(start=10, stop=20, step=10)
             temp_files = sim._temp_files.copy()

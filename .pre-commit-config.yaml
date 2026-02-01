@@ -11,7 +11,7 @@ repos:
       - id: pytest
         name: pytest
         entry: pytest
-        args: [catchment_simulation/test_catchment_features_simulation.py, --tb=short]
+        args: [tests/test_catchment_features_simulation.py, --tb=short]
         language: system
         pass_filenames: false
         always_run: true
