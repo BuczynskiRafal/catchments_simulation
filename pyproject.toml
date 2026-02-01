@@ -46,7 +46,7 @@ Documentation = "https://catchments-simulation.readthedocs.io"
 Repository = "https://github.com/BuczynskiRafal/catchments_simulation"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["catchment_simulation*"]
 
 [tool.setuptools.package-data]
