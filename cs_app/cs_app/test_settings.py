@@ -1,6 +1,7 @@
 import os
-import django
 from pathlib import Path
+
+import django
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,8 +25,6 @@ INSTALLED_APPS = [
     "crispy_forms",
     "crispy_bootstrap4",
     "storages",
-    "psycopg2",
-    "pytest_django",
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
 ]
@@ -128,5 +127,3 @@ STATIC_URL = "/static/"
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "cs_app.test_settings")
 django.setup()
-
-from django.core.management import call_command

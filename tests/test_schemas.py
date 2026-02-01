@@ -1,27 +1,13 @@
-"""Tests for Pydantic schemas in the catchment_simulation package.
-
-Imports the schemas module directly (via importlib) to avoid pulling in the
-heavy pyswmm / swmmio C-extensions through ``__init__.py``.
-"""
-
-import importlib.util
-import os
+"""Tests for Pydantic schemas in the catchment_simulation package."""
 
 import pytest
 from pydantic import ValidationError
 
-# Load schemas.py directly so that importing the package __init__
-# (which eagerly loads pyswmm) is not required.
-_schemas_path = os.path.join(
-    os.path.dirname(__file__), os.pardir, "src", "catchment_simulation", "schemas.py"
+from catchment_simulation.schemas import (
+    SimulationMethodParams,
+    SimulationParams,
+    SubcatchmentParams,
 )
-_spec = importlib.util.spec_from_file_location("catchment_simulation.schemas", _schemas_path)
-_schemas = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_schemas)
-
-SimulationParams = _schemas.SimulationParams
-SubcatchmentParams = _schemas.SubcatchmentParams
-SimulationMethodParams = _schemas.SimulationMethodParams
 
 
 class TestSimulationParams:
