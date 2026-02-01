@@ -32,8 +32,10 @@ from django.urls import reverse
 from pyswmm import Simulation
 
 from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+from catchment_simulation.schemas import SimulationMethodParams
 from main.forms import ContactForm, SimulationForm, UserProfileForm
 from main.predictor import predict_runoff
+from main.schemas import ContactMessage
 from main.services import send_message
 
 logger = logging.getLogger(__name__)
@@ -210,7 +212,8 @@ def contact(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = ContactForm(data=request.POST)
         if form.is_valid():
-            send_message(form.cleaned_data)
+            message = ContactMessage.model_validate(form.cleaned_data)
+            send_message(message)
             return HttpResponseRedirect(reverse("contact"))
     else:
         form = ContactForm()
@@ -491,21 +494,25 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = SimulationForm(request.POST)
         if form.is_valid():
-            method_name = form.cleaned_data["option"]
-            start = form.cleaned_data["start"]
-            stop = form.cleaned_data["stop"]
-            step = form.cleaned_data["step"]
-            catchment_name = form.cleaned_data["catchment_name"]
+            params = SimulationMethodParams(
+                method_name=form.cleaned_data["option"],
+                start=form.cleaned_data["start"],
+                stop=form.cleaned_data["stop"],
+                step=form.cleaned_data["step"],
+                catchment_name=form.cleaned_data["catchment_name"],
+            )
 
             uploaded_file_path = request.session.get(
                 "uploaded_file_path",
                 os.path.abspath("catchment_simulation/example.inp"),
             )
-            model = FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path)
-            feature_name = get_feature_name(method_name)
+            model = FeaturesSimulation(
+                subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
+            )
+            feature_name = get_feature_name(params.method_name)
 
-            method = getattr(model, method_name)
-            df = method(start=start, stop=stop, step=step)
+            method = getattr(model, params.method_name)
+            df = method(start=params.start, stop=params.stop, step=params.step)
             df = df[[feature_name, "runoff"]]
 
             show_download_button = True

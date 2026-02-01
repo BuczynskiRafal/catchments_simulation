@@ -8,6 +8,8 @@ import pandas as pd
 import swmmio
 from pyswmm import Simulation, Subcatchments
 
+from .schemas import SimulationParams
+
 
 class FeaturesSimulation:
     """
@@ -78,14 +80,18 @@ class FeaturesSimulation:
         self._temp_files.clear()
 
     @staticmethod
-    def _validate_simulation_params(start: float, stop: float, step: float) -> None:
-        """Validate simulation parameters."""
-        if start < 0:
-            raise ValueError(f"start must be >= 0, got {start}")
-        if step <= 0:
-            raise ValueError(f"step must be > 0, got {step}")
-        if start > stop:
-            raise ValueError(f"start ({start}) must be <= stop ({stop})")
+    def _validate_simulation_params(start: float, stop: float, step: float) -> SimulationParams:
+        """Validate simulation parameters using Pydantic schema.
+
+        Returns the validated ``SimulationParams`` instance so callers can
+        use the coerced values if needed.
+
+        Raises
+        ------
+        pydantic.ValidationError
+            If any parameter violates its constraints.
+        """
+        return SimulationParams(start=start, stop=stop, step=step)
 
     def copy_file(self, copy: str = None, suffix: str = "copy") -> str:
         """
