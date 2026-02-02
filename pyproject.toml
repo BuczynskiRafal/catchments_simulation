@@ -30,6 +30,7 @@ dependencies = [
     "numpy>=1.21.6",
     "swmmio>=0.6.0",
     "pyswmm>=1.2.0",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -67,7 +68,12 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 filterwarnings = [
     "ignore:builtin type Swig.*:DeprecationWarning",
     "ignore:builtin type swigvarlink:DeprecationWarning",
 ]
+
+
+
+

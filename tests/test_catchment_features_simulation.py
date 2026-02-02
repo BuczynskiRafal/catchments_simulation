@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import pytest
 import swmmio
+from pydantic import ValidationError
 
 from catchment_simulation import FeaturesSimulation
 
@@ -233,26 +234,26 @@ class TestContextManager:
 
 
 class TestParameterValidation:
-    """Tests for parameter validation."""
+    """Tests for parameter validation (now powered by Pydantic schemas)."""
 
     def test_negative_start_raises_error(self, simulation_instance):
-        """Test that negative start value raises ValueError."""
-        with pytest.raises(ValueError, match="start must be >= 0"):
+        """Test that negative start value raises ValidationError."""
+        with pytest.raises(ValidationError):
             simulation_instance.simulate_subcatchment("Area", start=-1, stop=10, step=1)
 
     def test_zero_step_raises_error(self, simulation_instance):
-        """Test that zero step value raises ValueError."""
-        with pytest.raises(ValueError, match="step must be > 0"):
+        """Test that zero step value raises ValidationError."""
+        with pytest.raises(ValidationError):
             simulation_instance.simulate_subcatchment("Area", start=0, stop=10, step=0)
 
     def test_negative_step_raises_error(self, simulation_instance):
-        """Test that negative step value raises ValueError."""
-        with pytest.raises(ValueError, match="step must be > 0"):
+        """Test that negative step value raises ValidationError."""
+        with pytest.raises(ValidationError):
             simulation_instance.simulate_subcatchment("Area", start=0, stop=10, step=-1)
 
     def test_start_greater_than_stop_raises_error(self, simulation_instance):
-        """Test that start > stop raises ValueError."""
-        with pytest.raises(ValueError, match="start .* must be <= stop"):
+        """Test that start > stop raises ValidationError."""
+        with pytest.raises(ValidationError, match="start .* must be <= stop"):
             simulation_instance.simulate_subcatchment("Area", start=100, stop=10, step=1)
 
 
