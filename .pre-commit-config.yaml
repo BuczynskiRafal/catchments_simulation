@@ -8,9 +8,18 @@ repos:
 
   - repo: local
     hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        args: [src/]
+        language: system
+        pass_filenames: false
+        always_run: true
+        types: [python]
+
       - id: pytest
         name: pytest
-        entry: pytest
+        entry: uv run pytest
         args: [tests/test_catchment_features_simulation.py, --tb=short]
         language: system
         pass_filenames: false

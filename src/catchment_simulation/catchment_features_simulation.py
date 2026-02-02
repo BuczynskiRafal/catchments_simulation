@@ -1,7 +1,10 @@
 """Package include method for simulate subcatchment with different
 features values from Storm Water Management Model"""
 
+from __future__ import annotations
+
 import os
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -55,7 +58,7 @@ class FeaturesSimulation:
     )
 
     @staticmethod
-    def _create_result_dict() -> dict[str, list]:
+    def _create_result_dict() -> dict[str, list[Any]]:
         """Create an empty result dictionary with standard keys."""
         return {key: [] for key in FeaturesSimulation.RESULT_KEYS}
 
@@ -66,10 +69,15 @@ class FeaturesSimulation:
         self.file = self.copy_file(copy=self.raw_file)
         self.model = swmmio.Model(self.file)
 
-    def __enter__(self) -> "FeaturesSimulation":
+    def __enter__(self) -> FeaturesSimulation:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         self._cleanup_temp_files()
 
     def _cleanup_temp_files(self) -> None:
@@ -93,7 +101,7 @@ class FeaturesSimulation:
         """
         return SimulationParams(start=start, stop=stop, step=step)
 
-    def copy_file(self, copy: str = None, suffix: str = "copy") -> str:
+    def copy_file(self, copy: str | None = None, suffix: str = "copy") -> str:
         """
         Create a copy of a SWMM input file with a suffix added to the end of the file name.
 
@@ -112,7 +120,7 @@ class FeaturesSimulation:
         if copy is None:
             copy = self.raw_file
         baseline = swmmio.Model(copy)
-        new_path = os.path.join(baseline.inp.name + "_" + suffix + ".inp")
+        new_path: str = os.path.join(baseline.inp.name + "_" + suffix + ".inp")
         baseline.inp.save(new_path)
         self._temp_files.append(new_path)
         return new_path
@@ -133,7 +141,7 @@ class FeaturesSimulation:
         """
         return getattr(swmmio.Model(self.file).inp, section)
 
-    def calculate(self) -> dict:
+    def calculate(self) -> dict[str, Any]:
         """
         Run a simulation using the SWMM model and return the statistics of the subcatchment with the
         ID `self.subcatchment_id`.
@@ -147,7 +155,8 @@ class FeaturesSimulation:
             subcatchment = Subcatchments(sim)[self.subcatchment_id]
             for _ in sim:
                 pass
-            return subcatchment.statistics
+            result: dict[str, Any] = subcatchment.statistics
+            return result
 
     def simulate_subcatchment(
         self, feature: str, start: float = 0, stop: float = 100, step: float = 10
@@ -322,7 +331,7 @@ class FeaturesSimulation:
             catchment_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
-        catchment_data["N-" + param] = self.MANNING_N_VALUES
+        catchment_data["N-" + param] = list(self.MANNING_N_VALUES)
         return pd.DataFrame(data=catchment_data)
 
     def simulate_n_imperv(self) -> pd.DataFrame:
