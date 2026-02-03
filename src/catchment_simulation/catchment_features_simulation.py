@@ -196,7 +196,7 @@ class FeaturesSimulation:
             subcatchment_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(subcatchment_stats[key])
-        catchment_data[feature] = scope
+        catchment_data[feature] = scope.tolist()
         return pd.DataFrame(data=catchment_data)
 
     def simulate_area(self, start: float = 1, stop: float = 10, step: float = 1) -> pd.DataFrame:
@@ -443,5 +443,5 @@ class FeaturesSimulation:
             catchment_stats = self.calculate()
             for key in catchment_data:
                 catchment_data[key].append(catchment_stats[key])
-        catchment_data["Zero-Imperv"] = percent_impervious
+        catchment_data["Zero-Imperv"] = percent_impervious.tolist()
         return pd.DataFrame(data=catchment_data)
