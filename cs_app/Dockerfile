@@ -1,28 +1,24 @@
-FROM nvidia/cuda:11.0-base AS build
+FROM python:3.11-slim
 
-# Use python image
-FROM python:3.8-slim
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Set the working directory
 WORKDIR /code
 
-# Copy requirements.txt into the container
-COPY requirements.txt requirements.txt
+# Copy project files needed for dependency resolution
+COPY ../pyproject.toml ../uv.lock ./
 
-# Add this line to copy the 'static' folder into the container
+# Copy static files
 COPY static static
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --trusted-host pypi.python.org -r requirements.txt
+# Install dependencies (frozen from lock file)
+RUN uv sync --frozen --no-dev --extra django
 
 # Copy the rest of the application code
 COPY . .
 
 # Collect static files
-RUN python manage.py collectstatic --noinput
+RUN uv run python manage.py collectstatic --noinput
 
-# Expose the port the app runs on
 EXPOSE 8000
 
-# Start the application
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["uv", "run", "gunicorn", "cs_app.wsgi:application", "--bind", "0.0.0.0:8000"]

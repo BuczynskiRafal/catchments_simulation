@@ -11,14 +11,13 @@ license = {text = "MIT"}
 authors = [
     {name = "Rafal Buczynski", email = "rafal.buczynski@outlook.com"}
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -39,6 +38,24 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.1.0",
     "mypy>=1.0",
+    "hypothesis>=6.60",
+    "pre-commit>=3.0",
+]
+django = [
+    "Django==3.2",
+    "Werkzeug==2.0.0",
+    "crispy-bootstrap4==2022.1",
+    "python-dotenv==1.0.0",
+    "django-crispy-forms==2.0",
+    "django-import-export==3.2.0",
+    "django-storages==1.13.2",
+    "psycopg2-binary>=2.9.6",
+    "plotly>=5.18.0",
+    "dj-database-url==2.0.0",
+    "whitenoise==6.4.0",
+    "gunicorn==20.1.0",
+    "pydantic[email]>=2.0",
+    "pytest-django>=4.5",
 ]
 
 [project.urls]
@@ -54,7 +71,7 @@ include = ["catchment_simulation*"]
 catchment_simulation = ["py.typed"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
@@ -62,13 +79,23 @@ select = ["E", "F", "W", "I", "UP", "B"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.9"
-warn_return_any = true
-warn_unused_configs = true
+python_version = "3.10"
+strict = true
+
+[[tool.mypy.overrides]]
+module = [
+    "swmmio.*",
+    "pyswmm.*",
+    "pandas.*",
+    "numpy.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 filterwarnings = [
     "ignore:builtin type Swig.*:DeprecationWarning",
     "ignore:builtin type swigvarlink:DeprecationWarning",

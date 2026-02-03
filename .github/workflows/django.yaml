@@ -2,6 +2,9 @@ name: Django CI
 
 on: [push, pull_request]
 
+env:
+  UV_CACHE_DIR: /tmp/.uv-cache
+
 jobs:
   build:
 
@@ -13,22 +16,27 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'pip'
+
     - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .
-        pip install -r cs_app/requirements.txt
-        pip install pytest==7.3.1
-        pip install pytest-django==4.5.2
-        pip install pytest-cov
+      run: uv sync --frozen --extra dev --extra django
+
     - name: Run Tests
       run: |
         export DJANGO_SETTINGS_MODULE=cs_app.test_settings
-        pytest cs_app/main/tests/ --cov=cs_app
+        uv run pytest cs_app/main/tests/ --cov=cs_app
+
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Minimize uv cache
+      run: uv cache prune --ci
