@@ -469,6 +469,21 @@ class TestErrorHandling:
         with pytest.raises((KeyError, Exception)):
             simulation_instance.simulate_subcatchment("InvalidFeature", start=0, stop=10, step=1)
 
+    def test_init_invalid_subcatchment_id(self):
+        """Test that invalid subcatchment_id raises ValueError."""
+        with pytest.raises(ValueError, match="NONEXISTENT"):
+            FeaturesSimulation("NONEXISTENT", "tests/fixtures/example.inp")
+
+    def test_init_invalid_subcatchment_id_shows_available(self):
+        """Test that ValueError message includes available subcatchment IDs."""
+        with pytest.raises(ValueError, match="S1"):
+            FeaturesSimulation("WRONG_ID", "tests/fixtures/example.inp")
+
+    def test_init_empty_subcatchment_id(self):
+        """Test that empty subcatchment_id raises ValueError."""
+        with pytest.raises(ValueError, match="Available subcatchments"):
+            FeaturesSimulation("", "tests/fixtures/example.inp")
+
 
 class TestStateManagement:
     """Tests for state management across simulations."""
