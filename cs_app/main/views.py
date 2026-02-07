@@ -401,6 +401,31 @@ def upload(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"error": "Error occurred while sending file."}, status=400)
 
 
+@ajax_login_required
+def upload_clear(request: HttpRequest) -> JsonResponse:
+    """
+    Clear the uploaded file from the session and disk.
+
+    Parameters
+    ----------
+    request : HttpRequest
+        The incoming HTTP request.
+
+    Returns
+    -------
+    JsonResponse
+        JSON response confirming the upload was cleared.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+
+    file_path = request.session.pop("uploaded_file_path", None)
+    if file_path and os.path.exists(file_path):
+        os.remove(file_path)
+
+    return JsonResponse({"message": "Upload cleared."})
+
+
 def get_feature_name(method_name: str) -> str:
     """
     Get the feature name based on the method name.
