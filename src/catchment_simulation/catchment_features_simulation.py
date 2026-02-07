@@ -24,6 +24,13 @@ class FeaturesSimulation:
         The identifier of the subcatchment being simulated.
     raw_file : str
         The path to the raw SWMM input file.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the raw_file does not exist.
+    ValueError
+        If the subcatchment_id does not exist in the SWMM model.
     """
 
     RESULT_KEYS: tuple[str, ...] = ("runoff", "peak_runoff_rate", "infiltration", "evaporation")
@@ -75,6 +82,13 @@ class FeaturesSimulation:
         self._temp_files: list[str] = []
         self.file = self.copy_file(copy=self.raw_file)
         self.model = swmmio.Model(self.file)
+        available_ids = list(self.model.inp.subcatchments.index)
+        if subcatchment_id not in available_ids:
+            self._cleanup_temp_files()
+            raise ValueError(
+                f"Subcatchment '{subcatchment_id}' not found in model. "
+                f"Available subcatchments: {available_ids}"
+            )
 
     def __enter__(self) -> FeaturesSimulation:
         return self
