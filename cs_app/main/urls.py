@@ -6,15 +6,18 @@ and file upload and download.
 Django uses the urlpatterns list to match the requested URL
 with the corresponding view function.
 """
+
 from django.urls import path
+
 from .views import (
-    main_view,
     about,
+    calculations,
     contact,
-    user_profile,
+    main_view,
     simulation_view,
     upload,
-    calculations,
+    upload_clear,
+    user_profile,
 )
 
 app_name = "main"
@@ -23,6 +26,7 @@ app_name = "main"
 urlpatterns = [
     path("", main_view, name="main_view"),
     path("upload/", upload, name="upload"),
+    path("upload/clear/", upload_clear, name="upload_clear"),
     path("user/<int:user_id>/profile", user_profile, name="userprofile"),
     path("contact", contact, name="contact"),
     path("about", about, name="about"),

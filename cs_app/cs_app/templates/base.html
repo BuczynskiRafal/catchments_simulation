@@ -29,20 +29,22 @@
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/prism.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/components/prism-python.min.js"></script>
     <script src="https://unpkg.com/dropzone@5.9.3/dist/dropzone.js"></script>
+    <script>Dropzone.autoDiscover = false;</script>
 
     <style>
-        .dropzone {
-        border-radius: 0.5rem;
-        }
-        .dz-message {
-            border-radius: 0.25rem;
-        }
         html,
         body {
             height: 100%;
         }
         .content-wrapper {
             min-height: calc(90% - 100px);
+        }
+        /* Default dropzone reset — page-specific styles take over */
+        .dropzone {
+            border-radius: 0.5rem;
+        }
+        .dz-message {
+            border-radius: 0.25rem;
         }
     </style>
 
@@ -120,12 +122,49 @@
                 if (typeof Dropzone === 'undefined') {
                     return;
                 }
+                var el = document.querySelector('#my-dropzone');
+                if (!el || el.dropzone) {
+                    return;
+                }
                 const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
                     || '{{ csrf_token }}';
-                Dropzone.options.myDropzone = {
+                const uploadUrl = '{% url "main:upload" %}';
+                const clearUrl = '{% url "main:upload_clear" %}';
+                new Dropzone('#my-dropzone', {
+                    url: uploadUrl,
+                    acceptedFiles: '.inp',
+                    maxFilesize: 10,
+                    maxFiles: 1,
+                    addRemoveLinks: true,
+                    dictRemoveFile: '\u00d7',
                     headers: {
                         'X-Requested-With': 'XMLHttpRequest',
                         'X-CSRFToken': csrfToken
+                    },
+                    init: function() {
+                        this.on('removedfile', function() {
+                            var msgEl = document.querySelector('#my-dropzone .dz-message');
+                            if (msgEl) {
+                                msgEl.style.display = '';
+                            }
+                            fetch(clearUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'X-CSRFToken': csrfToken,
+                                    'X-Requested-With': 'XMLHttpRequest'
+                                }
+                            });
+                        });
+                        this.on('addedfile', function() {
+                            var msgEl = document.querySelector('#my-dropzone .dz-message');
+                            if (msgEl) {
+                                msgEl.style.display = 'none';
+                            }
+                        });
+                        this.on('maxfilesexceeded', function(file) {
+                            this.removeAllFiles();
+                            this.addFile(file);
+                        });
                     },
                     error: function(file, response, xhr) {
                         if (xhr && xhr.status === 401) {
@@ -140,12 +179,15 @@
                         } else if (response && response.error) {
                             message = response.error;
                         }
-                        const errorEl = file.previewElement?.querySelector('[data-dz-errormessage]');
-                        if (errorEl) {
-                            errorEl.textContent = message;
+                        if (file.previewElement) {
+                            file.previewElement.classList.add('dz-error');
+                            const errorEl = file.previewElement.querySelector('[data-dz-errormessage]');
+                            if (errorEl) {
+                                errorEl.textContent = message;
+                            }
                         }
                     }
-                };
+                });
             }
             initDropzone();
         });
