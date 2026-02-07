@@ -27,6 +27,13 @@ class FeaturesSimulation:
     """
 
     RESULT_KEYS: tuple[str, ...] = ("runoff", "peak_runoff_rate", "infiltration", "evaporation")
+    TIMESERIES_KEYS: tuple[str, ...] = (
+        "rainfall",
+        "runoff",
+        "infiltration_loss",
+        "evaporation_loss",
+        "runon",
+    )
 
     # Source: McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC.
     MANNING_N_VALUES: tuple[float, ...] = tuple(
@@ -158,6 +165,33 @@ class FeaturesSimulation:
             result: dict[str, Any] = subcatchment.statistics
             return result
 
+    def calculate_timeseries(self) -> pd.DataFrame:
+        """Run a simulation and collect per-timestep data for the subcatchment.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with a ``DatetimeIndex`` (name ``"datetime"``) and columns
+            corresponding to ``TIMESERIES_KEYS``.
+        """
+        records: list[dict[str, Any]] = []
+        with Simulation(self.file) as sim:
+            subcatchment = Subcatchments(sim)[self.subcatchment_id]
+            for step in sim:  # noqa: B007
+                records.append(
+                    {
+                        "datetime": sim.current_time,
+                        **{key: getattr(subcatchment, key) for key in self.TIMESERIES_KEYS},
+                    }
+                )
+        if not records:
+            df = pd.DataFrame(columns=list(self.TIMESERIES_KEYS))
+            df.index.name = "datetime"
+            return df
+        df = pd.DataFrame(records)
+        df = df.set_index("datetime")
+        return df
+
     def simulate_subcatchment(
         self, feature: str, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
@@ -198,6 +232,45 @@ class FeaturesSimulation:
                 catchment_data[key].append(subcatchment_stats[key])
         catchment_data[feature] = scope.tolist()
         return pd.DataFrame(data=catchment_data)
+
+    def simulate_subcatchment_timeseries(
+        self, feature: str, start: float = 0, stop: float = 100, step: float = 10
+    ) -> dict[float, pd.DataFrame]:
+        """Simulate a subcatchment with varying feature values, collecting timeseries.
+
+        Works like :meth:`simulate_subcatchment` but returns per-timestep data
+        instead of summary statistics.
+
+        Parameters
+        ----------
+        feature : str
+            The name of the parameter to be varied in the simulation.
+        start : float, optional
+            The starting value of the parameter, defaults to 0.
+        stop : float, optional
+            The maximum value of the parameter to be simulated, defaults to 100.
+        step : float, optional
+            The step size for the simulation, defaults to 10.
+
+        Returns
+        -------
+        dict[float, pd.DataFrame]
+            Mapping of parameter values to DataFrames with timeseries data.
+        """
+        self._validate_simulation_params(start, stop, step)
+        self.file = self.copy_file(self.raw_file)
+        scope = np.arange(start, stop + 0.001, step)
+        results: dict[float, pd.DataFrame] = {}
+
+        for percent in scope:
+            subcatchment = self.model.inp.subcatchments
+            subcatchment[feature] = subcatchment[feature].astype(float)
+            subcatchment.loc[self.subcatchment_id, feature] = percent
+            swmmio.utils.modify_model.replace_inp_section(
+                self.model.inp.path, "[SUBCATCHMENTS]", subcatchment
+            )
+            results[float(percent)] = self.calculate_timeseries()
+        return results
 
     def simulate_area(self, start: float = 1, stop: float = 10, step: float = 1) -> pd.DataFrame:
         """

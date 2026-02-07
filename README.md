@@ -115,7 +115,35 @@ For detailed instructions, see [cs_app/README.md](cs_app/README.md).
 
 ---
 
-# More examples of package usage 
+# Timeseries (hydrograph) data
+
+#### Get per-timestep runoff hydrograph from a single simulation.
+
+```python
+from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+
+subcatchment_id = "S1"
+raw_file = "catchment_simulation/example.inp"
+model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
+ts = model.calculate_timeseries()
+# ts is a DataFrame with DatetimeIndex and columns:
+# rainfall, runoff, infiltration_loss, evaporation_loss, runon
+```
+
+#### Collect timeseries for varying subcatchment parameter values.
+
+```python
+from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+
+subcatchment_id = "S1"
+raw_file = "catchment_simulation/example.inp"
+model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
+results = model.simulate_subcatchment_timeseries("PercImperv", start=0, stop=100, step=25)
+# results is a dict[float, DataFrame] — one hydrograph per parameter value
+# e.g. results[25.0] returns the timeseries DataFrame for PercImperv=25
+```
+
+# More examples of package usage
 
 #### Simulate subcatchment percent impervious in selected range.
 
