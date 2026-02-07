@@ -1,6 +1,8 @@
 import glob
 import os
+from datetime import datetime
 
+import numpy as np
 import pandas as pd
 import pytest
 import swmmio
@@ -429,7 +431,7 @@ class TestDataFrameValidation:
         df = simulation_instance.simulate_subcatchment("Area", start=1, stop=5, step=2)
         expected = np.arange(1, 5 + 0.001, 2)
         assert len(df["Area"]) == len(expected)
-        for actual, exp in zip(df["Area"], expected):
+        for actual, exp in zip(df["Area"], expected, strict=False):
             assert actual == pytest.approx(exp)
 
     def test_result_values_non_negative(self, simulation_instance):
@@ -536,7 +538,7 @@ class TestNumericalCorrectness:
         """Test depression storage conversion from inches to mm."""
         values = FeaturesSimulation.DEPRESSION_STORAGE_VALUES
         expected_inches = [0.05, 0.1, 0.2, 0.3]
-        for actual, inches in zip(values, expected_inches):
+        for actual, inches in zip(values, expected_inches, strict=False):
             assert actual == pytest.approx(inches * 25.4)
 
     def test_simulate_row_count_matches_range(self, simulation_instance):
@@ -551,13 +553,116 @@ class TestNumericalCorrectness:
     def test_manning_n_column_values_match_constant(self, simulation_instance):
         """Test that N-Imperv column contains MANNING_N_VALUES."""
         df = simulation_instance.simulate_n_imperv()
-        for actual, expected in zip(df["N-Imperv"], FeaturesSimulation.MANNING_N_VALUES):
+        for actual, expected in zip(
+            df["N-Imperv"], FeaturesSimulation.MANNING_N_VALUES, strict=False
+        ):
             assert actual == pytest.approx(expected)
 
     def test_destore_column_values_match_constant(self, simulation_instance):
         """Test that Destore column contains DEPRESSION_STORAGE_VALUES."""
         df = simulation_instance.simulate_s_imperv()
         for actual, expected in zip(
-            df["Destore-Imperv"], FeaturesSimulation.DEPRESSION_STORAGE_VALUES
+            df["Destore-Imperv"], FeaturesSimulation.DEPRESSION_STORAGE_VALUES, strict=False
         ):
             assert actual == pytest.approx(expected)
+
+
+class TestCalculateTimeseries:
+    """Tests for calculate_timeseries method."""
+
+    def test_returns_dataframe(self, simulation_instance):
+        """Test that calculate_timeseries returns a DataFrame."""
+        df = simulation_instance.calculate_timeseries()
+        assert isinstance(df, pd.DataFrame)
+
+    def test_has_datetime_index(self, simulation_instance):
+        """Test that the result has a DatetimeIndex named 'datetime'."""
+        df = simulation_instance.calculate_timeseries()
+        assert df.index.name == "datetime"
+        assert isinstance(df.index, pd.DatetimeIndex)
+
+    def test_columns_match_timeseries_keys(self, simulation_instance):
+        """Test that columns match TIMESERIES_KEYS."""
+        df = simulation_instance.calculate_timeseries()
+        assert list(df.columns) == list(FeaturesSimulation.TIMESERIES_KEYS)
+
+    def test_not_empty(self, simulation_instance):
+        """Test that the result is not empty."""
+        df = simulation_instance.calculate_timeseries()
+        assert not df.empty
+
+    def test_values_non_negative(self, simulation_instance):
+        """Test that all values are >= 0."""
+        df = simulation_instance.calculate_timeseries()
+        assert (df >= 0).all().all()
+
+    def test_index_monotonically_increasing(self, simulation_instance):
+        """Test that the datetime index is monotonically increasing."""
+        df = simulation_instance.calculate_timeseries()
+        assert df.index.is_monotonic_increasing
+
+    def test_timestamps_within_simulation_period(self, simulation_instance):
+        """Test that timestamps fall within the simulation period."""
+        df = simulation_instance.calculate_timeseries()
+        sim_start = datetime(2022, 6, 17, 0, 0)
+        sim_end = datetime(2022, 6, 17, 12, 0)
+        assert df.index.min() >= sim_start
+        assert df.index.max() <= sim_end
+
+    def test_runoff_positive(self, simulation_instance):
+        """Test that runoff has positive values (model has rainfall)."""
+        df = simulation_instance.calculate_timeseries()
+        assert (df["runoff"] > 0).any()
+
+
+class TestSimulateSubcatchmentTimeseries:
+    """Tests for simulate_subcatchment_timeseries method."""
+
+    def test_returns_dict(self, simulation_instance):
+        """Test that simulate_subcatchment_timeseries returns a dict."""
+        result = simulation_instance.simulate_subcatchment_timeseries(
+            "Area", start=1, stop=3, step=1
+        )
+        assert isinstance(result, dict)
+
+    def test_keys_match_range(self, simulation_instance):
+        """Test that dict keys correspond to the parameter range."""
+        result = simulation_instance.simulate_subcatchment_timeseries(
+            "Area", start=1, stop=3, step=1
+        )
+        expected_keys = np.arange(1, 3 + 0.001, 1)
+        assert len(result) == len(expected_keys)
+        for key, exp in zip(sorted(result.keys()), expected_keys, strict=False):
+            assert key == pytest.approx(float(exp))
+
+    def test_values_are_valid_dataframes(self, simulation_instance):
+        """Test that values are DataFrames with DatetimeIndex and TIMESERIES_KEYS."""
+        result = simulation_instance.simulate_subcatchment_timeseries(
+            "Area", start=1, stop=3, step=1
+        )
+        for _, df in result.items():
+            assert isinstance(df, pd.DataFrame)
+            assert isinstance(df.index, pd.DatetimeIndex)
+            assert df.index.name == "datetime"
+            assert list(df.columns) == list(FeaturesSimulation.TIMESERIES_KEYS)
+
+    def test_all_series_same_length(self, simulation_instance):
+        """Test that all timeseries have the same length."""
+        result = simulation_instance.simulate_subcatchment_timeseries(
+            "Area", start=1, stop=3, step=1
+        )
+        lengths = [len(df) for df in result.values()]
+        assert len(set(lengths)) == 1
+
+    def test_validation_error_for_negative_start(self, simulation_instance):
+        """Test that negative start raises ValidationError."""
+        with pytest.raises(ValidationError):
+            simulation_instance.simulate_subcatchment_timeseries("Area", start=-1, stop=10, step=1)
+
+    def test_single_step(self, simulation_instance):
+        """Test with start == stop (single step)."""
+        result = simulation_instance.simulate_subcatchment_timeseries(
+            "Area", start=5, stop=5, step=1
+        )
+        assert len(result) == 1
+        assert 5.0 in result
