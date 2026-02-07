@@ -62,16 +62,18 @@
                     <thead>
                         <tr>
                             <th class="text-center">Index</th>
-                            <th class="text-center">{{ feature_name }}</th>
-                            <th class="text-center">Runoff</th>
+                            {% for col in results_columns %}
+                            <th class="text-center">{{ col }}</th>
+                            {% endfor %}
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in results_data %}
                             <tr>
                                 <td class="text-center">{{ forloop.counter }}</td>
-                                <td class="text-center">{{ row.0|floatformat:2  }}</td>
-                                <td class="text-center">{{ row.1|floatformat:2  }}</td>
+                                {% for val in row %}
+                                <td class="text-center">{{ val|floatformat:2 }}</td>
+                                {% endfor %}
                             </tr>
                         {% endfor %}
                     </tbody>

@@ -1,6 +1,8 @@
 import json
 import os
+import shutil
 
+import pandas as pd
 import pytest
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
@@ -10,7 +12,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory
 from django.urls import reverse
 
-from main.views import calculations, simulation_view, upload
+from main.views import calculations, save_output_file, simulation_view, upload
 
 
 @pytest.mark.django_db
@@ -258,3 +260,29 @@ def test_upload_authenticated_user_can_upload(user):
 
     if os.path.exists(expected_path):
         os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_save_output_file_creates_directory(user):
+    """
+    Test that save_output_file creates the output_files directory
+    if it does not exist, preventing OSError.
+    """
+    output_dir = "output_files"
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+
+    factory = RequestFactory()
+    request = factory.get("/")
+    middleware = SessionMiddleware(lambda req: None)
+    middleware.process_request(request)
+    request.session.save()
+
+    df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
+    save_output_file(request, df, "test_result.xlsx")
+
+    assert os.path.isdir(output_dir)
+    assert os.path.exists(os.path.join(output_dir, "simulation_result.xlsx"))
+    assert request.session["output_file_name"] == "test_result.xlsx"
+
+    shutil.rmtree(output_dir, ignore_errors=True)

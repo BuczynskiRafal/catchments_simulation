@@ -9,7 +9,7 @@ description = "Collection of calculation methods for simulating subcatchment fea
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Rafal Buczynski", email = "rafal.buczynski@outlook.com"}
+    {name = "Rafal Buczynski", email = "rafal.buczynski@sd.pb.edu.pl"}
 ]
 requires-python = ">=3.10"
 classifiers = [
