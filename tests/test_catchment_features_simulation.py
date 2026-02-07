@@ -9,6 +9,7 @@ import swmmio
 from pydantic import ValidationError
 
 from catchment_simulation import FeaturesSimulation
+from catchment_simulation.analysis import runoff_volume, time_to_peak
 
 
 @pytest.fixture
@@ -628,6 +629,121 @@ class TestCalculateTimeseries:
         """Test that runoff has positive values (model has rainfall)."""
         df = simulation_instance.calculate_timeseries()
         assert (df["runoff"] > 0).any()
+
+
+class TestHydrogramAnalytics:
+    """Tests for time_to_peak and runoff_volume functions from analysis module."""
+
+    def test_time_to_peak_returns_timedelta(self, simulation_instance):
+        """Test that time_to_peak returns a pd.Timedelta."""
+        ts = simulation_instance.calculate_timeseries()
+        result = time_to_peak(ts)
+        assert isinstance(result, pd.Timedelta)
+
+    def test_time_to_peak_is_non_negative(self, simulation_instance):
+        """Test that time to peak is >= 0."""
+        ts = simulation_instance.calculate_timeseries()
+        result = time_to_peak(ts)
+        assert result >= pd.Timedelta(0)
+
+    def test_time_to_peak_within_simulation_period(self, simulation_instance):
+        """Test that time to peak does not exceed simulation duration."""
+        ts = simulation_instance.calculate_timeseries()
+        result = time_to_peak(ts)
+        duration = ts.index[-1] - ts.index[0]
+        assert result <= duration
+
+    def test_time_to_peak_custom_column(self, simulation_instance):
+        """Test time_to_peak with a different column."""
+        ts = simulation_instance.calculate_timeseries()
+        result = time_to_peak(ts, column="rainfall")
+        assert isinstance(result, pd.Timedelta)
+
+    def test_time_to_peak_empty_raises(self):
+        """Test that empty timeseries raises ValueError."""
+        empty_df = pd.DataFrame(columns=["runoff"])
+        empty_df.index.name = "datetime"
+        with pytest.raises(ValueError, match="empty"):
+            time_to_peak(empty_df)
+
+    def test_time_to_peak_invalid_column_raises(self, simulation_instance):
+        """Test that invalid column name raises ValueError."""
+        ts = simulation_instance.calculate_timeseries()
+        with pytest.raises(ValueError, match="not found"):
+            time_to_peak(ts, column="nonexistent")
+
+    def test_time_to_peak_all_zeros_raises(self):
+        """Test that all-zero values raise ValueError (no meaningful peak)."""
+        idx = pd.DatetimeIndex(
+            ["2022-01-01 00:00", "2022-01-01 01:00", "2022-01-01 02:00"],
+            name="datetime",
+        )
+        df = pd.DataFrame({"runoff": [0.0, 0.0, 0.0]}, index=idx)
+        with pytest.raises(ValueError, match="zero"):
+            time_to_peak(df)
+
+    def test_runoff_volume_returns_float(self, simulation_instance):
+        """Test that runoff_volume returns a float."""
+        ts = simulation_instance.calculate_timeseries()
+        result = runoff_volume(ts)
+        assert isinstance(result, float)
+
+    def test_runoff_volume_is_non_negative(self, simulation_instance):
+        """Test that runoff volume is >= 0."""
+        ts = simulation_instance.calculate_timeseries()
+        result = runoff_volume(ts)
+        assert result >= 0
+
+    def test_runoff_volume_partial_interval(self, simulation_instance):
+        """Test runoff_volume with a restricted time interval."""
+        ts = simulation_instance.calculate_timeseries()
+        mid = ts.index[len(ts) // 2]
+        partial = runoff_volume(ts, end=mid)
+        total = runoff_volume(ts)
+        assert partial <= total + 1e-9
+
+    def test_runoff_volume_both_start_and_end(self, simulation_instance):
+        """Test runoff_volume with both start and end specified."""
+        ts = simulation_instance.calculate_timeseries()
+        q1 = ts.index[len(ts) // 4]
+        q3 = ts.index[3 * len(ts) // 4]
+        partial = runoff_volume(ts, start=q1, end=q3)
+        total = runoff_volume(ts)
+        assert partial <= total + 1e-9
+        assert isinstance(partial, float)
+
+    def test_runoff_volume_too_few_points_raises(self):
+        """Test that fewer than 2 points raises ValueError."""
+        idx = pd.DatetimeIndex(["2022-01-01"], name="datetime")
+        single = pd.DataFrame({"runoff": [1.0]}, index=idx)
+        with pytest.raises(ValueError, match="2 data points"):
+            runoff_volume(single)
+
+    def test_runoff_volume_invalid_column_raises(self, simulation_instance):
+        """Test that missing column raises ValueError."""
+        ts = simulation_instance.calculate_timeseries()
+        with pytest.raises(ValueError, match="not found"):
+            runoff_volume(ts, column="nonexistent")
+
+    def test_runoff_volume_custom_column(self, simulation_instance):
+        """Test runoff_volume with a different column."""
+        ts = simulation_instance.calculate_timeseries()
+        result = runoff_volume(ts, column="infiltration_loss")
+        assert isinstance(result, float)
+        assert result >= 0
+
+    def test_runoff_volume_numerical_correctness(self):
+        """Test trapezoidal integration with known values."""
+        idx = pd.date_range("2022-01-01", periods=3, freq="50s", name="datetime")
+        df = pd.DataFrame({"runoff": [2.0, 2.0, 2.0]}, index=idx)
+        assert runoff_volume(df) == pytest.approx(200.0)
+
+    def test_time_to_peak_numerical_correctness(self):
+        """Test time_to_peak with known peak position."""
+        idx = pd.date_range("2022-01-01", periods=4, freq="1h", name="datetime")
+        df = pd.DataFrame({"runoff": [0.0, 1.0, 3.0, 0.5]}, index=idx)
+        result = time_to_peak(df)
+        assert result == pd.Timedelta(hours=2)
 
 
 class TestSimulateSubcatchmentTimeseries:
