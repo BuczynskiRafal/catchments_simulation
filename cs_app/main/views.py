@@ -8,11 +8,11 @@ import datetime
 import logging
 import os
 from functools import wraps
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import swmmio
 from django.conf import settings
 from django.contrib import messages
@@ -29,6 +29,7 @@ from django.http import (
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from plotly.subplots import make_subplots
 from pyswmm import Simulation
 
 from catchment_simulation.catchment_features_simulation import FeaturesSimulation
@@ -67,16 +68,16 @@ def ajax_login_required(view_func):
 
 def plot(
     x: str,
-    y: Optional[str] = "runoff",
-    path: Optional[str] = None,
-    df: Optional[pd.DataFrame] = None,
-    xaxes: Optional[bool] = False,
-    start: Optional[int] = 0,
-    stop: Optional[int] = 100,
-    title: Optional[str] = None,
-    rename_labels: Optional[bool] = False,
-    x_name: Optional[str] = None,
-    y_name: Optional[str] = None,
+    y: str | list[str] | None = "runoff",
+    path: str | None = None,
+    df: pd.DataFrame | None = None,
+    xaxes: bool | None = False,
+    start: int | None = 0,
+    stop: int | None = 100,
+    title: str | None = None,
+    rename_labels: bool | None = False,
+    x_name: str | None = None,
+    y_name: str | None = None,
 ) -> str:
     """
     Create an interactive plot using Plotly.
@@ -113,20 +114,44 @@ def plot(
     """
     if path is not None:
         df = pd.read_excel(path)
-    fig = px.line(df, x, y, title=title)
-    if xaxes:
-        fig.update_xaxes(range=[start, stop])
 
-    if rename_labels:
-        fig.update_xaxes(title_text=x_name)
-        fig.update_yaxes(title_text=y_name)
-    fig.update_layout(
-        title=dict(
-            text=title,
-            x=0.5,
-            xanchor="center",
+    if isinstance(y, list) and len(y) > 1:
+        import math
+
+        n = len(y)
+        cols = 2
+        rows = math.ceil(n / cols)
+        fig = make_subplots(
+            rows=rows,
+            cols=cols,
+            subplot_titles=y,
+            vertical_spacing=0.12,
+            horizontal_spacing=0.08,
         )
-    )
+        for i, col in enumerate(y):
+            r = i // cols + 1
+            c = i % cols + 1
+            fig.add_trace(
+                go.Scatter(x=df[x], y=df[col], mode="lines", name=col),
+                row=r,
+                col=c,
+            )
+        fig.update_layout(
+            height=350 * rows,
+            title=dict(text=title, x=0.5, xanchor="center"),
+            showlegend=False,
+        )
+        if xaxes:
+            fig.update_xaxes(range=[start, stop])
+    else:
+        fig = px.line(df, x, y, title=title)
+        if xaxes:
+            fig.update_xaxes(range=[start, stop])
+        if rename_labels:
+            fig.update_xaxes(title_text=x_name)
+            fig.update_yaxes(title_text=y_name)
+        fig.update_layout(title=dict(text=title, x=0.5, xanchor="center"))
+
     plot_div = fig.to_html(full_html=False)
     return plot_div
 
@@ -415,6 +440,7 @@ def save_output_file(request: HttpRequest, df: pd.DataFrame, output_file_name: s
         The name of the output file.
     """
     output_file_path = "output_files/simulation_result.xlsx"
+    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
     df.to_excel(output_file_path, index=False)
 
     with open(output_file_path, "rb") as file:
@@ -442,6 +468,7 @@ def get_session_variables(request: HttpRequest) -> dict:
     return {
         "show_download_button": request.session.get("show_download_button", False),
         "user_plot": request.session.get("user_plot", None),
+        "results_columns": request.session.get("results_columns", []),
         "results_data": request.session.get("results_data", []),
         "feature_name": request.session.get("feature_name", ""),
         "output_file_name": request.session.get("output_file_name", None),
@@ -461,6 +488,7 @@ def clear_session_variables(request: HttpRequest) -> None:
     for variable in [
         "show_download_button",
         "user_plot",
+        "results_columns",
         "results_data",
         "feature_name",
         "output_file_name",
@@ -513,7 +541,9 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
 
             method = getattr(model, params.method_name)
             df = method(start=params.start, stop=params.stop, step=params.step)
-            df = df[[feature_name, "runoff"]]
+            # Reorder: feature first, then the rest
+            other_cols = [c for c in df.columns if c != feature_name]
+            df = df[[feature_name] + other_cols]
 
             show_download_button = True
 
@@ -523,15 +553,15 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             user_plot = plot(
                 df=df,
                 x=feature_name,
+                y=other_cols,
                 xaxes=False,
                 title=f"Dependence of runoff on subcatchment {feature_name}.",
             )
 
             request.session["show_download_button"] = show_download_button
             request.session["user_plot"] = user_plot
-            request.session["results_data"] = [
-                (row[feature_name], row["runoff"]) for index, row in df.iterrows()
-            ]
+            request.session["results_columns"] = df.columns.tolist()
+            request.session["results_data"] = df.values.tolist()
             request.session["feature_name"] = feature_name
 
             save_output_file(request, df, output_file_name)
@@ -539,16 +569,12 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     else:
         form = SimulationForm()
         session_data = get_session_variables(request)
-        clear_session_variables(request)
 
-    try:
-        return render(
-            request,
-            "main/simulation.html",
-            {"form": form, **session_data, "output_file_name": output_file_name},
-        )
-    finally:
-        clear_session_variables(request)
+    return render(
+        request,
+        "main/simulation.html",
+        {"form": form, **session_data},
+    )
 
 
 def download_result(request: HttpRequest) -> HttpResponse:
