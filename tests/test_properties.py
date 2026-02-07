@@ -72,7 +72,17 @@ VALID_METHOD_NAMES = [
     "simulate_width",
     "simulate_percent_impervious",
     "simulate_percent_zero_imperv",
+    "simulate_curb_length",
 ]
+
+PREDEFINED_METHOD_NAMES = [
+    "simulate_n_imperv",
+    "simulate_n_perv",
+    "simulate_s_imperv",
+    "simulate_s_perv",
+]
+
+ALL_METHOD_NAMES = VALID_METHOD_NAMES + PREDEFINED_METHOD_NAMES
 
 
 # ===========================================================================
@@ -237,7 +247,7 @@ class TestSimulationMethodParamsProperties:
         assert params.start <= params.stop
 
     @given(
-        method_name=st.text(min_size=1, max_size=50).filter(lambda s: s not in VALID_METHOD_NAMES),
+        method_name=st.text(min_size=1, max_size=50).filter(lambda s: s not in ALL_METHOD_NAMES),
     )
     @settings(max_examples=100)
     def test_invalid_method_name_rejected(self, method_name: str) -> None:
@@ -261,6 +271,34 @@ class TestSimulationMethodParamsProperties:
                 method_name="simulate_area",
                 start=start,
                 stop=stop,
+                step=1,
+                catchment_name="S1",
+            )
+
+    @given(
+        method_name=st.sampled_from(PREDEFINED_METHOD_NAMES),
+    )
+    @settings(max_examples=100)
+    def test_predefined_method_accepted_without_range(self, method_name: str) -> None:
+        params = SimulationMethodParams(
+            method_name=method_name,
+            catchment_name="S1",
+        )
+        assert params.start is None
+        assert params.stop is None
+        assert params.step is None
+
+    @given(
+        method_name=st.sampled_from(PREDEFINED_METHOD_NAMES),
+        start=st.integers(min_value=1, max_value=100),
+    )
+    @settings(max_examples=100)
+    def test_predefined_method_rejects_range_params(self, method_name: str, start: int) -> None:
+        with pytest.raises(ValidationError):
+            SimulationMethodParams(
+                method_name=method_name,
+                start=start,
+                stop=100,
                 step=1,
                 catchment_name="S1",
             )

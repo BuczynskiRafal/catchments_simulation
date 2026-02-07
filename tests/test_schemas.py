@@ -235,17 +235,28 @@ class TestSimulationMethodParams:
         assert params.catchment_name == "S1"
 
     def test_all_valid_method_names(self):
-        methods = [
+        range_methods = [
             "simulate_percent_slope",
             "simulate_area",
             "simulate_width",
             "simulate_percent_impervious",
             "simulate_percent_zero_imperv",
+            "simulate_curb_length",
         ]
-        for method in methods:
+        for method in range_methods:
             params = SimulationMethodParams(
                 method_name=method, start=1, stop=10, step=1, catchment_name="S1"
             )
+            assert params.method_name == method
+
+        predefined_methods = [
+            "simulate_n_imperv",
+            "simulate_n_perv",
+            "simulate_s_imperv",
+            "simulate_s_perv",
+        ]
+        for method in predefined_methods:
+            params = SimulationMethodParams(method_name=method, catchment_name="S1")
             assert params.method_name == method
 
     def test_invalid_method_name_rejected(self):
@@ -307,3 +318,46 @@ class TestSimulationMethodParams:
                 step=1,
                 catchment_name="x" * 101,
             )
+
+    def test_predefined_method_without_range_params(self):
+        """Test that predefined methods work without start/stop/step."""
+        params = SimulationMethodParams(method_name="simulate_n_imperv", catchment_name="S1")
+        assert params.start is None
+        assert params.stop is None
+        assert params.step is None
+
+    def test_predefined_method_rejects_start_stop_step(self):
+        """Test that predefined methods reject start/stop/step parameters."""
+        with pytest.raises(ValidationError, match="predefined literature values"):
+            SimulationMethodParams(
+                method_name="simulate_n_imperv",
+                start=1,
+                stop=10,
+                step=1,
+                catchment_name="S1",
+            )
+
+    def test_range_method_requires_start_stop_step(self):
+        """Test that range-based methods require start/stop/step."""
+        with pytest.raises(ValidationError, match="requires start, stop, and step"):
+            SimulationMethodParams(method_name="simulate_area", catchment_name="S1")
+
+    def test_range_method_partial_params_rejected(self):
+        """Test that providing only some range params is rejected."""
+        with pytest.raises(ValidationError):
+            SimulationMethodParams(
+                method_name="simulate_area",
+                start=1,
+                catchment_name="S1",
+            )
+
+    def test_predefined_methods_constant(self):
+        """Test that PREDEFINED_METHODS contains expected methods."""
+        assert SimulationMethodParams.PREDEFINED_METHODS == frozenset(
+            {
+                "simulate_n_imperv",
+                "simulate_n_perv",
+                "simulate_s_imperv",
+                "simulate_s_perv",
+            }
+        )

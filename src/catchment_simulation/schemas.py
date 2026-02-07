@@ -4,7 +4,7 @@ Provides strict runtime validation of simulation parameters and subcatchment dat
 ensuring physically meaningful values before any computation begins.
 """
 
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, PositiveFloat, model_validator
 
@@ -50,7 +50,21 @@ class SubcatchmentParams(BaseModel):
 
 
 class SimulationMethodParams(BaseModel):
-    """Parameters submitted from the web form for a single simulation run."""
+    """Parameters for a single simulation run.
+
+    Range-based methods (e.g. ``simulate_area``) require ``start``, ``stop``
+    and ``step``.  Predefined methods (Manning's *n* and depression storage)
+    use literature values and do **not** accept range parameters.
+    """
+
+    PREDEFINED_METHODS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "simulate_n_imperv",
+            "simulate_n_perv",
+            "simulate_s_imperv",
+            "simulate_s_perv",
+        }
+    )
 
     method_name: Literal[
         "simulate_percent_slope",
@@ -58,16 +72,36 @@ class SimulationMethodParams(BaseModel):
         "simulate_width",
         "simulate_percent_impervious",
         "simulate_percent_zero_imperv",
+        "simulate_curb_length",
+        "simulate_n_imperv",
+        "simulate_n_perv",
+        "simulate_s_imperv",
+        "simulate_s_perv",
     ] = Field(..., description="Name of the simulation method to execute")
-    start: int = Field(ge=1, le=100, description="Start value")
-    stop: int = Field(ge=1, le=100, description="Stop value")
-    step: int = Field(ge=1, le=100, description="Step size")
+    start: int | None = Field(
+        default=None, ge=1, le=100, description="Start value (range-based methods only)"
+    )
+    stop: int | None = Field(
+        default=None, ge=1, le=100, description="Stop value (range-based methods only)"
+    )
+    step: int | None = Field(
+        default=None, ge=1, le=100, description="Step size (range-based methods only)"
+    )
     catchment_name: str = Field(
         ..., min_length=1, max_length=100, description="Subcatchment identifier"
     )
 
     @model_validator(mode="after")
-    def start_le_stop(self) -> "SimulationMethodParams":
-        if self.start > self.stop:
-            raise ValueError(f"start ({self.start}) must be <= stop ({self.stop})")
+    def validate_method_params(self) -> "SimulationMethodParams":
+        if self.method_name in self.PREDEFINED_METHODS:
+            if any(v is not None for v in (self.start, self.stop, self.step)):
+                raise ValueError(
+                    f"'{self.method_name}' uses predefined literature values "
+                    f"and does not accept start/stop/step parameters"
+                )
+        else:
+            if any(v is None for v in (self.start, self.stop, self.step)):
+                raise ValueError(f"'{self.method_name}' requires start, stop, and step parameters")
+            if self.start > self.stop:  # type: ignore[operator]
+                raise ValueError(f"start ({self.start}) must be <= stop ({self.stop})")
         return self
