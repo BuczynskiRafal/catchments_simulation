@@ -143,6 +143,38 @@ results = model.simulate_subcatchment_timeseries("PercImperv", start=0, stop=100
 # e.g. results[25.0] returns the timeseries DataFrame for PercImperv=25
 ```
 
+#### Compute time to peak runoff.
+
+```python
+from catchment_simulation import FeaturesSimulation
+from catchment_simulation.analysis import time_to_peak
+
+with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
+    ts = model.calculate_timeseries()
+ttp = time_to_peak(ts)
+# ttp is a pd.Timedelta, e.g. Timedelta('0 days 02:30:00')
+```
+
+#### Compute total runoff volume over a time interval.
+
+```python
+from datetime import datetime
+from catchment_simulation import FeaturesSimulation
+from catchment_simulation.analysis import runoff_volume
+
+with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
+    ts = model.calculate_timeseries()
+volume = runoff_volume(ts)
+# volume in flow-unit x seconds (e.g. cubic metres for CMS models)
+
+# restrict to a specific interval (both endpoints inclusive)
+partial = runoff_volume(
+    ts,
+    start=datetime(2022, 6, 17, 2, 0),
+    end=datetime(2022, 6, 17, 6, 0),
+)
+```
+
 # More examples of package usage
 
 #### Simulate subcatchment percent impervious in selected range.
