@@ -231,15 +231,14 @@ class FeaturesSimulation:
         self._validate_simulation_params(start, stop, step)
         self.file = self.copy_file(self.raw_file)
         catchment_data = self._create_result_dict()
-        scope = np.arange(start, stop + 0.001, step)
+        scope = np.arange(start, stop + step / 2, step)
 
         for percent in scope:
-            # subcatchment = swmmio.utils.dataframes.dataframe_from_inp(self.file, '[SUBCATCHMENTS]')
             subcatchment = self.model.inp.subcatchments
             subcatchment[feature] = subcatchment[feature].astype(float)
             subcatchment.loc[self.subcatchment_id, feature] = percent
             swmmio.utils.modify_model.replace_inp_section(
-                self.model.inp.path, "[SUBCATCHMENTS]", subcatchment
+                self.file, "[SUBCATCHMENTS]", subcatchment
             )
             subcatchment_stats = self.calculate()
             for key in catchment_data:
@@ -273,7 +272,7 @@ class FeaturesSimulation:
         """
         self._validate_simulation_params(start, stop, step)
         self.file = self.copy_file(self.raw_file)
-        scope = np.arange(start, stop + 0.001, step)
+        scope = np.arange(start, stop + step / 2, step)
         results: dict[float, pd.DataFrame] = {}
 
         for percent in scope:
@@ -281,7 +280,7 @@ class FeaturesSimulation:
             subcatchment[feature] = subcatchment[feature].astype(float)
             subcatchment.loc[self.subcatchment_id, feature] = percent
             swmmio.utils.modify_model.replace_inp_section(
-                self.model.inp.path, "[SUBCATCHMENTS]", subcatchment
+                self.file, "[SUBCATCHMENTS]", subcatchment
             )
             results[float(percent)] = self.calculate_timeseries()
         return results
@@ -520,7 +519,7 @@ class FeaturesSimulation:
         """
         self._validate_simulation_params(start, stop, step)
         self.file = self.copy_file(self.raw_file)
-        percent_impervious = np.arange(start, stop + 0.001, step)
+        percent_impervious = np.arange(start, stop + step / 2, step)
         catchment_data = self._create_result_dict()
         for percent in percent_impervious:
             subareas = self.model.inp.subareas

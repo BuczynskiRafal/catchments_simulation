@@ -78,14 +78,14 @@ class SimulationMethodParams(BaseModel):
         "simulate_s_imperv",
         "simulate_s_perv",
     ] = Field(..., description="Name of the simulation method to execute")
-    start: int | None = Field(
-        default=None, ge=1, le=100, description="Start value (range-based methods only)"
+    start: float | None = Field(
+        default=None, ge=0, description="Start value (range-based methods only)"
     )
-    stop: int | None = Field(
-        default=None, ge=1, le=100, description="Stop value (range-based methods only)"
+    stop: float | None = Field(
+        default=None, ge=0, description="Stop value (range-based methods only)"
     )
-    step: int | None = Field(
-        default=None, ge=1, le=100, description="Step size (range-based methods only)"
+    step: float | None = Field(
+        default=None, gt=0, description="Step size (range-based methods only)"
     )
     catchment_name: str = Field(
         ..., min_length=1, max_length=100, description="Subcatchment identifier"
