@@ -1,5 +1,7 @@
 """Package for simulating subcatchment features with Storm Water Management Model."""
 
+from importlib.metadata import version
+
 from .analysis import runoff_volume, time_to_peak
 from .catchment_features_simulation import FeaturesSimulation
 from .schemas import SimulationMethodParams, SimulationParams, SubcatchmentParams
@@ -12,4 +14,4 @@ __all__ = [
     "time_to_peak",
     "runoff_volume",
 ]
-__version__ = "0.0.7"
+__version__ = version("catchment_simulation")

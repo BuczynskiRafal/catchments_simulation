@@ -1,17 +1,14 @@
 version: 2
 
-# Specify the Python version used for building the documentation.
 python:
-  version: 3.8
+  version: 3.12
   install:
     - requirements: docs/requirements.txt
 sphinx:
   configuration: docs/source/conf.py
 
-# Configure the build process and output formats.
 formats:
   - htmlzip
 
-# Set up the build environment.
 build:
   image: latest

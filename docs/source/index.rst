@@ -8,6 +8,8 @@ Welcome to Catchment Simulation's documentation!
    :caption: Contents:
    
    catchment_simulation
+   analysis
+   schemas
    cs_app_main
    cs_app_register
 

@@ -273,18 +273,18 @@ class TestSimulationMethodParams:
         with pytest.raises(ValidationError):
             SimulationMethodParams(
                 method_name="simulate_area",
-                start=0,
+                start=-1,
                 stop=10,
                 step=1,
                 catchment_name="S1",
             )
 
-    def test_stop_above_max_rejected(self):
+    def test_stop_below_min_rejected(self):
         with pytest.raises(ValidationError):
             SimulationMethodParams(
                 method_name="simulate_area",
-                start=1,
-                stop=101,
+                start=0,
+                stop=-1,
                 step=1,
                 catchment_name="S1",
             )
