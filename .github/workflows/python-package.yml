@@ -40,12 +40,14 @@ jobs:
       run: uv run mypy src/
 
     - name: Test with pytest
-      run: uv run pytest tests/ --cov=catchment_simulation -m "not slow"
+      run: uv run pytest tests/ --cov=catchment_simulation --cov-report=xml -m "not slow"
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v4
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./coverage.xml
+        fail_ci_if_error: true
 
     - name: Minimize uv cache
       run: uv cache prune --ci
