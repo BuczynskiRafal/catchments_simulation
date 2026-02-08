@@ -67,13 +67,11 @@ jobs:
 
     - name: Build package
       run: |
-        uv tool install build
-        uv tool install twine
-        python -m build
-        twine check dist/*
+        uv build
+        uvx twine check dist/*
 
     - name: Publish to PyPI
       env:
         TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
         TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-      run: twine upload dist/* --skip-existing
+      run: uvx twine upload dist/* --skip-existing
