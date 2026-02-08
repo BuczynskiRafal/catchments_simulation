@@ -1,9 +1,7 @@
 import os
 import sys
-import subprocess
-import django
-from recommonmark.parser import CommonMarkParser
 
+import django
 
 sys.path.insert(0, os.path.abspath("../../"))
 sys.path.insert(0, os.path.abspath("../../cs_app"))
@@ -11,25 +9,7 @@ os.environ["DJANGO_SETTINGS_MODULE"] = "cs_app.test_settings"
 django.setup()
 
 
-source_parsers = {
-    ".md": CommonMarkParser,
-}
-
 source_suffix = [".rst", ".md"]
-
-
-def convert_readme_md_to_rst(app, docname, source):
-    if docname == "index":
-        readme_path = os.path.join(app.srcdir, "..", "..", "README.md")
-        rst_output = subprocess.check_output(
-            ["pandoc", "-f", "markdown", "-t", "rst", readme_path]
-        )
-        source[0] = rst_output.decode("utf-8")
-    print(f"Current working directory: {os.getcwd()}")
-
-
-def setup(app):
-    app.connect("source-read", convert_readme_md_to_rst)
 
 
 project = "Catchment Simulation"
@@ -41,6 +21,7 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx.ext.viewcode",
     "sphinx.ext.autodoc",
+    "myst_parser",
 ]
 
 templates_path = ["_templates"]
