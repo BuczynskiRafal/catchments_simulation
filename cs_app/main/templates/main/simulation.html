@@ -3,498 +3,43 @@
 {% block title %}Catchment Simulations{% endblock %}
 
 {% block style %}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+{% include 'main/_upload_zone_styles.html' %}
+{% endblock %}
 
-<style>
-/* ── Upload Zone ─────────────────────────────────────── */
-.upload-zone-wrapper {
-    max-width: 640px;
-    margin: 0 auto 2rem;
-    font-family: 'Outfit', sans-serif;
-}
+{% block additional_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var optionSelect = document.getElementById('id_option');
+    var predefinedMethods = [
+        'simulate_n_imperv', 'simulate_n_perv',
+        'simulate_s_imperv', 'simulate_s_perv'
+    ];
 
-.upload-zone-label {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
-    font-size: 0.8rem;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #64748b;
-}
-
-.upload-zone-label svg {
-    width: 16px;
-    height: 16px;
-    opacity: 0.6;
-}
-
-/* Override ALL default dropzone styles */
-.dropzone.upload-dropzone,
-.upload-dropzone.dropzone {
-    position: relative;
-    min-height: 220px !important;
-    padding: 0 !important;
-    background: #f8fafc;
-    border: 2px dashed #cbd5e1 !important;
-    border-radius: 16px !important;
-    cursor: pointer;
-    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-}
-
-/* Animated gradient border on hover */
-.upload-dropzone::before {
-    content: '';
-    position: absolute;
-    inset: -2px;
-    border-radius: 18px;
-    padding: 2px;
-    background: conic-gradient(
-        from 0deg,
-        #06b6d4, #0ea5e9, #6366f1, #8b5cf6,
-        #06b6d4, #0ea5e9, #6366f1, #8b5cf6,
-        #06b6d4
-    );
-    -webkit-mask:
-        linear-gradient(#fff 0 0) content-box,
-        linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    opacity: 0;
-    transition: opacity 0.5s ease;
-    pointer-events: none;
-    z-index: 1;
-}
-
-.upload-dropzone:hover::before,
-.upload-dropzone.dz-drag-hover::before {
-    opacity: 1;
-    animation: borderSpin 4s linear infinite;
-}
-
-@keyframes borderSpin {
-    to { --angle: 360deg; }
-}
-
-.upload-dropzone:hover {
-    border-color: transparent !important;
-    background: #f1f5f9;
-    transform: translateY(-2px);
-    box-shadow:
-        0 8px 30px rgba(6, 182, 212, 0.08),
-        0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-.upload-dropzone.dz-drag-hover {
-    border-color: transparent !important;
-    background: #ecfeff;
-    transform: translateY(-2px) scale(1.005);
-    box-shadow:
-        0 12px 40px rgba(6, 182, 212, 0.15),
-        0 2px 8px rgba(0, 0, 0, 0.04);
-}
-
-/* Custom message area */
-.upload-dropzone .dz-message {
-    margin: 0 !important;
-    padding: 2.5rem 2rem !important;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-    position: relative;
-    z-index: 2;
-}
-
-/* Background pattern */
-.upload-dropzone .dz-message::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image:
-        radial-gradient(circle at 1px 1px, #e2e8f0 1px, transparent 0);
-    background-size: 24px 24px;
-    opacity: 0.5;
-    pointer-events: none;
-}
-
-.upload-icon-ring {
-    position: relative;
-    width: 72px;
-    height: 72px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #e0f2fe, #ecfeff);
-    box-shadow:
-        0 0 0 1px rgba(6, 182, 212, 0.1),
-        0 4px 12px rgba(6, 182, 212, 0.08);
-    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.upload-dropzone:hover .upload-icon-ring {
-    transform: translateY(-4px);
-    box-shadow:
-        0 0 0 1px rgba(6, 182, 212, 0.2),
-        0 8px 24px rgba(6, 182, 212, 0.12);
-    background: linear-gradient(135deg, #cffafe, #e0f2fe);
-}
-
-.upload-dropzone.dz-drag-hover .upload-icon-ring {
-    transform: translateY(-6px) scale(1.08);
-    background: linear-gradient(135deg, #a5f3fc, #bae6fd);
-    box-shadow:
-        0 0 0 2px rgba(6, 182, 212, 0.3),
-        0 12px 32px rgba(6, 182, 212, 0.2);
-}
-
-.upload-icon-ring svg {
-    width: 28px;
-    height: 28px;
-    color: #0891b2;
-    transition: transform 0.3s ease;
-}
-
-.upload-dropzone:hover .upload-icon-ring svg {
-    transform: translateY(-2px);
-}
-
-.upload-dropzone.dz-drag-hover .upload-icon-ring svg {
-    animation: iconFloat 1.5s ease-in-out infinite;
-}
-
-@keyframes iconFloat {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-4px); }
-}
-
-.upload-text-group {
-    text-align: center;
-    position: relative;
-    z-index: 1;
-}
-
-.upload-text-primary {
-    font-family: 'Outfit', sans-serif;
-    font-size: 1.05rem;
-    font-weight: 500;
-    color: #1e293b;
-    margin: 0 0 0.35rem;
-    line-height: 1.4;
-}
-
-.upload-text-primary strong {
-    color: #0891b2;
-    font-weight: 600;
-    position: relative;
-}
-
-.upload-text-primary strong::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
-    height: 1.5px;
-    background: #0891b2;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.upload-dropzone:hover .upload-text-primary strong::after {
-    opacity: 0.4;
-}
-
-.upload-text-secondary {
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.82rem;
-    color: #94a3b8;
-    font-weight: 300;
-    margin: 0;
-}
-
-.upload-file-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.85rem;
-    background: #0f172a;
-    color: #e2e8f0;
-    font-family: 'Outfit', monospace;
-    font-size: 0.72rem;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    border-radius: 100px;
-    position: relative;
-    z-index: 1;
-}
-
-.upload-file-badge::before {
-    content: '';
-    width: 6px;
-    height: 6px;
-    background: #06b6d4;
-    border-radius: 50%;
-    box-shadow: 0 0 6px rgba(6, 182, 212, 0.5);
-}
-
-/* ── Uploaded file preview override ──────────────────── */
-.upload-dropzone .dz-preview {
-    position: relative;
-    margin: 0.75rem auto !important;
-    width: calc(100% - 3rem);
-    max-width: 560px;
-    padding: 0.85rem 3.5rem 0.85rem 3rem;
-    background: #fff;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-    min-height: auto !important;
-    transition: all 0.3s ease;
-    z-index: 2;
-}
-
-.upload-dropzone .dz-preview:hover {
-    border-color: #cbd5e1;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-.upload-dropzone .dz-preview .dz-image {
-    display: none !important;
-}
-
-.upload-dropzone .dz-preview .dz-details {
-    position: relative !important;
-    opacity: 1 !important;
-    padding: 0 !important;
-    font-family: 'Outfit', sans-serif;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-height: auto !important;
-}
-
-.upload-dropzone .dz-preview .dz-details .dz-filename {
-    word-wrap: break-word;
-}
-
-.upload-dropzone .dz-preview .dz-details .dz-filename span {
-    font-weight: 500;
-    font-size: 0.88rem;
-    color: #1e293b;
-    background: none !important;
-    border: none !important;
-    padding: 0 !important;
-}
-
-.upload-dropzone .dz-preview .dz-details .dz-size {
-    margin-bottom: 0 !important;
-}
-
-.upload-dropzone .dz-preview .dz-details .dz-size span {
-    font-size: 0.78rem;
-    color: #94a3b8;
-    background: none !important;
-    border: none !important;
-    padding: 0 !important;
-}
-
-/* Progress bar */
-.upload-dropzone .dz-preview .dz-progress {
-    position: relative !important;
-    top: auto !important;
-    left: auto !important;
-    width: 100% !important;
-    height: 3px !important;
-    margin: 0.6rem 0 0 !important;
-    background: #f1f5f9 !important;
-    border-radius: 4px !important;
-    overflow: hidden;
-}
-
-.upload-dropzone .dz-preview .dz-progress .dz-upload {
-    background: linear-gradient(90deg, #06b6d4, #0ea5e9) !important;
-    border-radius: 4px !important;
-    height: 100%;
-    transition: width 0.3s ease;
-}
-
-/* Success state */
-.upload-dropzone .dz-preview.dz-success {
-    border-color: #a7f3d0;
-    background: #f0fdf4;
-}
-
-.upload-dropzone .dz-preview.dz-success .dz-progress {
-    opacity: 0;
-    height: 0 !important;
-    margin: 0 !important;
-}
-
-/* Success checkmark */
-.upload-dropzone .dz-preview .dz-success-mark {
-    position: absolute !important;
-    top: 50% !important;
-    left: 1rem !important;
-    right: auto !important;
-    margin-top: -13px !important;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-    pointer-events: none;
-}
-
-.upload-dropzone .dz-preview.dz-success .dz-success-mark {
-    opacity: 1;
-}
-
-.upload-dropzone .dz-preview .dz-success-mark svg {
-    width: 26px;
-    height: 26px;
-}
-
-.upload-dropzone .dz-preview .dz-success-mark svg polygon {
-    fill: #10b981;
-}
-
-/* Error state */
-.upload-dropzone .dz-preview.dz-error {
-    border-color: #fecaca;
-    background: #fef2f2;
-}
-
-.upload-dropzone .dz-preview .dz-error-mark {
-    position: absolute !important;
-    top: 50% !important;
-    left: 1rem !important;
-    right: auto !important;
-    margin-top: -13px !important;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-    pointer-events: none;
-}
-
-.upload-dropzone .dz-preview.dz-error .dz-error-mark {
-    opacity: 1;
-}
-
-.upload-dropzone .dz-preview .dz-error-mark svg {
-    width: 26px;
-    height: 26px;
-}
-
-.upload-dropzone .dz-preview .dz-error-mark svg polygon {
-    fill: #ef4444;
-}
-
-.upload-dropzone .dz-preview .dz-error-message {
-    position: relative !important;
-    top: auto !important;
-    left: auto !important;
-    opacity: 1 !important;
-    margin-top: 0.5rem;
-    padding: 0.4rem 0.7rem !important;
-    background: #fef2f2 !important;
-    border: 1px solid #fecaca;
-    border-radius: 8px !important;
-    font-family: 'Outfit', sans-serif;
-    font-size: 0.78rem;
-    color: #dc2626 !important;
-    pointer-events: none;
-}
-
-.upload-dropzone .dz-preview .dz-error-message::after {
-    display: none !important;
-}
-
-/* Remove button */
-.upload-dropzone .dz-preview .dz-remove {
-    position: absolute;
-    top: 50%;
-    right: 0.8rem;
-    transform: translateY(-50%);
-    font-family: 'Outfit', sans-serif;
-    font-size: 1.3rem;
-    line-height: 1;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    color: #64748b;
-    text-decoration: none !important;
-    transition: all 0.2s ease;
-    z-index: 20;
-    cursor: pointer;
-}
-
-.upload-dropzone .dz-preview .dz-remove:hover {
-    background: #fef2f2;
-    border-color: #fecaca;
-    color: #ef4444;
-}
-
-/* ── Entry animation ─────────────────────────────────── */
-@keyframes uploadZoneIn {
-    from {
-        opacity: 0;
-        transform: translateY(12px);
+    function toggleRangeFields() {
+        var isPredefined = predefinedMethods.indexOf(optionSelect.value) !== -1;
+        var fieldIds = ['id_start', 'id_stop', 'id_step'];
+        fieldIds.forEach(function(fieldId) {
+            var field = document.getElementById(fieldId);
+            if (field) {
+                var wrapper = field.closest('.col-md-2');
+                if (wrapper) {
+                    wrapper.style.display = isPredefined ? 'none' : '';
+                }
+            }
+        });
     }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
 
-.upload-zone-wrapper {
-    animation: uploadZoneIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
-</style>
+    if (optionSelect) {
+        optionSelect.addEventListener('change', toggleRangeFields);
+        toggleRangeFields();
+    }
+});
+</script>
 {% endblock %}
 
 {% block content %}
 
-
-<div class="upload-zone-wrapper">
-    <div class="upload-zone-label">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Upload SWMM Model
-    </div>
-    <form action="/upload/" method="post" enctype="multipart/form-data" class="dropzone upload-dropzone" id="my-dropzone">
-        {% csrf_token %}
-        <div class="fallback">
-            <input name="file" type="file" multiple class="custom-file-input" />
-            <input type="submit" value="Upload" class="btn btn-primary mt-3" />
-        </div>
-        <div class="dz-message" data-dz-message>
-            <div class="upload-icon-ring">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="17 8 12 3 7 8"/>
-                    <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-            </div>
-            <div class="upload-text-group">
-                <p class="upload-text-primary">Drag & drop your file or <strong>browse</strong></p>
-                <p class="upload-text-secondary">SWMM input file for catchment simulation</p>
-            </div>
-            <span class="upload-file-badge">.inp &mdash; max 10 MB</span>
-        </div>
-    </form>
-</div>
+{% include 'main/_upload_zone.html' %}
 
 {% load crispy_forms_tags %}
 
@@ -527,16 +72,16 @@
 
 
         {% if show_download_button %}
-        <!-- User plot-->
         {{ user_plot|safe }}
     
+        {% if output_file_url %}
         <div class="row mt-3">
             <div class="col-md-12 d-flex justify-content-center">
                 <a href="{{ output_file_url }}" download="{{ output_file_name }}" class="btn btn-success">Download Results</a>
             </div>
         </div>
+        {% endif %}
     
-        <!-- Tabela z wynikami -->
         <div class="row mt-3">
             <div class="col-md-12">
                 <table class="table table-bordered">
@@ -562,7 +107,6 @@
             </div>
         </div>
     {% endif %}
-    </div>
 </form>
 
 {% endblock %}

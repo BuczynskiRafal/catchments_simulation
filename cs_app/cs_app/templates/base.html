@@ -21,11 +21,8 @@
         {% block title %} {% endblock %}
     </title>
 
-    <!-- Latest compiled and minified CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.2/dist/css/bootstrap.min.css" rel="stylesheet">
-
     <!-- Latest compiled JavaScript -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/prism.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/components/prism-python.min.js"></script>
     <script src="https://unpkg.com/dropzone@5.9.3/dist/dropzone.js"></script>
@@ -63,6 +60,7 @@
                     <li><a href="{% url 'main:main_view' %}" class="nav-link px-2 link-dark">Home</a></li>
                     <li><a href="{% url 'main:about' %}" class="nav-link px-2 link-dark">About</a></li>
                     <li><a href="{% url 'main:simulation' %}" class="nav-link px-2 link-dark">Simulation</a></li>
+                    <li><a href="{% url 'main:timeseries' %}" class="nav-link px-2 link-dark">Timeseries</a></li>
                     <li><a href="{% url 'main:calculations' %}" class="nav-link px-2 link-dark">Calculations</a></li>
                 </ul>
                 <div class="col-md-3 text-end">
@@ -104,7 +102,8 @@
             const loginUrl = '{% url "login" %}';
             const runSimulationButton = document.getElementById('run-simulation-button');
             const runCalculationsButton = document.getElementById('run-calculations-button');
-            const buttons = [runSimulationButton, runCalculationsButton];
+            const runTimeseriesButton = document.getElementById('run-timeseries-button');
+            const buttons = [runSimulationButton, runCalculationsButton, runTimeseriesButton];
 
             buttons.forEach(function(button) {
                 if (button) {

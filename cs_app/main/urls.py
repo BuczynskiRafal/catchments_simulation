@@ -1,6 +1,6 @@
 """
 This module defines the URL patterns for the main app, including the main view,
-user profile, contact form, about page, simulation view,
+user profile, contact form, about page, simulation view, timeseries view,
 and file upload and download.
 
 Django uses the urlpatterns list to match the requested URL
@@ -15,6 +15,7 @@ from .views import (
     contact,
     main_view,
     simulation_view,
+    timeseries_view,
     upload,
     upload_clear,
     user_profile,
@@ -32,4 +33,5 @@ urlpatterns = [
     path("about", about, name="about"),
     path("calculations", calculations, name="calculations"),
     path("simulation", simulation_view, name="simulation"),
+    path("timeseries", timeseries_view, name="timeseries"),
 ]
