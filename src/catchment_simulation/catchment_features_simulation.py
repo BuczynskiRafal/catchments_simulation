@@ -33,6 +33,8 @@ class FeaturesSimulation:
         If the subcatchment_id does not exist in the SWMM model.
     """
 
+    SWMM_SIDE_EXTENSIONS: tuple[str, ...] = (".inp", ".rpt", ".out")
+
     RESULT_KEYS: tuple[str, ...] = ("runoff", "peak_runoff_rate", "infiltration", "evaporation")
     TIMESERIES_KEYS: tuple[str, ...] = (
         "rainfall",
@@ -80,15 +82,18 @@ class FeaturesSimulation:
         self.raw_file = raw_file
         self.subcatchment_id = subcatchment_id
         self._temp_files: list[str] = []
-        self.file = self.copy_file(copy=self.raw_file)
-        self.model = swmmio.Model(self.file)
-        available_ids = list(self.model.inp.subcatchments.index)
-        if subcatchment_id not in available_ids:
+        try:
+            self.file = self.copy_file(copy=self.raw_file)
+            self.model = swmmio.Model(self.file)
+            available_ids = list(self.model.inp.subcatchments.index)
+            if subcatchment_id not in available_ids:
+                raise ValueError(
+                    f"Subcatchment '{subcatchment_id}' not found in model. "
+                    f"Available subcatchments: {available_ids}"
+                )
+        except Exception:
             self._cleanup_temp_files()
-            raise ValueError(
-                f"Subcatchment '{subcatchment_id}' not found in model. "
-                f"Available subcatchments: {available_ids}"
-            )
+            raise
 
     def __enter__(self) -> FeaturesSimulation:
         return self
@@ -104,8 +109,12 @@ class FeaturesSimulation:
     def _cleanup_temp_files(self) -> None:
         """Remove all temporary files created during simulation."""
         for temp_file in self._temp_files:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+            base = os.path.splitext(temp_file)[0]
+            for ext in self.SWMM_SIDE_EXTENSIONS:
+                try:
+                    os.remove(base + ext)
+                except OSError:
+                    pass
         self._temp_files.clear()
 
     @staticmethod
