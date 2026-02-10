@@ -6,7 +6,9 @@ functions for creating interactive plots.
 
 import datetime
 import logging
+import math
 import os
+import uuid
 from functools import wraps
 
 import numpy as np
@@ -20,10 +22,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.files.storage import default_storage
 from django.http import (
-    FileResponse,
     HttpRequest,
     HttpResponse,
-    HttpResponseNotFound,
     HttpResponseRedirect,
     JsonResponse,
 )
@@ -32,9 +32,10 @@ from django.urls import reverse
 from plotly.subplots import make_subplots
 from pyswmm import Simulation
 
+from catchment_simulation.analysis import runoff_volume, time_to_peak
 from catchment_simulation.catchment_features_simulation import FeaturesSimulation
 from catchment_simulation.schemas import SimulationMethodParams
-from main.forms import ContactForm, SimulationForm, UserProfileForm
+from main.forms import ContactForm, SimulationForm, TimeseriesForm, UserProfileForm
 from main.predictor import predict_runoff
 from main.schemas import ContactMessage
 from main.services import send_message
@@ -116,8 +117,6 @@ def plot(
         df = pd.read_excel(path)
 
     if isinstance(y, list) and len(y) > 1:
-        import math
-
         n = len(y)
         cols = 2
         rows = math.ceil(n / cols)
@@ -447,11 +446,21 @@ def get_feature_name(method_name: str) -> str:
         "simulate_width": "Width",
         "simulate_percent_impervious": "PercImperv",
         "simulate_percent_zero_imperv": "Zero-Imperv",
+        "simulate_curb_length": "CurbLength",
+        "simulate_n_imperv": "N-Imperv",
+        "simulate_n_perv": "N-Perv",
+        "simulate_s_imperv": "Destore-Imperv",
+        "simulate_s_perv": "Destore-Perv",
     }
     return feature_map.get(method_name, "")
 
 
-def save_output_file(request: HttpRequest, df: pd.DataFrame, output_file_name: str) -> None:
+def save_output_file(
+    request: HttpRequest,
+    df: pd.DataFrame,
+    output_file_name: str,
+    session_prefix: str = "",
+) -> None:
     """
     Save the output file to the server.
 
@@ -463,17 +472,21 @@ def save_output_file(request: HttpRequest, df: pd.DataFrame, output_file_name: s
         The dataframe containing the simulation results.
     output_file_name : str
         The name of the output file.
+    session_prefix : str
+        Prefix for session keys (e.g. "ts_" for timeseries).
     """
-    output_file_path = "output_files/simulation_result.xlsx"
+    output_file_path = f"output_files/result_{uuid.uuid4().hex[:8]}.xlsx"
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
     df.to_excel(output_file_path, index=False)
 
     with open(output_file_path, "rb") as file:
         default_storage.save(output_file_name, file)
 
+    os.remove(output_file_path)
+
     output_file_url = default_storage.url(output_file_name)
-    request.session["output_file_url"] = output_file_url
-    request.session["output_file_name"] = output_file_name
+    request.session[f"{session_prefix}output_file_url"] = output_file_url
+    request.session[f"{session_prefix}output_file_name"] = output_file_name
 
 
 def get_session_variables(request: HttpRequest) -> dict:
@@ -519,6 +532,12 @@ def clear_session_variables(request: HttpRequest) -> None:
         "output_file_name",
         "output_file_url",
         "uploaded_file_path",
+        "ts_user_plot",
+        "ts_time_to_peak",
+        "ts_runoff_volume",
+        "ts_show_results",
+        "ts_output_file_url",
+        "ts_output_file_name",
     ]:
         if variable in request.session:
             del request.session[variable]
@@ -547,11 +566,14 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = SimulationForm(request.POST)
         if form.is_valid():
+            option = form.cleaned_data["option"]
+            is_predefined = option in SimulationForm.PREDEFINED_METHODS
+
             params = SimulationMethodParams(
-                method_name=form.cleaned_data["option"],
-                start=form.cleaned_data["start"],
-                stop=form.cleaned_data["stop"],
-                step=form.cleaned_data["step"],
+                method_name=option,
+                start=form.cleaned_data.get("start") if not is_predefined else None,
+                stop=form.cleaned_data.get("stop") if not is_predefined else None,
+                step=form.cleaned_data.get("step") if not is_predefined else None,
                 catchment_name=form.cleaned_data["catchment_name"],
             )
 
@@ -559,38 +581,46 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                 "uploaded_file_path",
                 os.path.abspath("catchment_simulation/example.inp"),
             )
-            model = FeaturesSimulation(
-                subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
-            )
-            feature_name = get_feature_name(params.method_name)
 
-            method = getattr(model, params.method_name)
-            df = method(start=params.start, stop=params.stop, step=params.step)
-            # Reorder: feature first, then the rest
-            other_cols = [c for c in df.columns if c != feature_name]
-            df = df[[feature_name] + other_cols]
+            try:
+                model = FeaturesSimulation(
+                    subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
+                )
+                feature_name = get_feature_name(params.method_name)
 
-            show_download_button = True
+                method = getattr(model, params.method_name)
+                if is_predefined:
+                    df = method()
+                else:
+                    df = method(start=params.start, stop=params.stop, step=params.step)
+                other_cols = [c for c in df.columns if c != feature_name]
+                df = df[[feature_name] + other_cols]
 
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
+                show_download_button = True
 
-            user_plot = plot(
-                df=df,
-                x=feature_name,
-                y=other_cols,
-                xaxes=False,
-                title=f"Dependence of runoff on subcatchment {feature_name}.",
-            )
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
 
-            request.session["show_download_button"] = show_download_button
-            request.session["user_plot"] = user_plot
-            request.session["results_columns"] = df.columns.tolist()
-            request.session["results_data"] = df.values.tolist()
-            request.session["feature_name"] = feature_name
+                user_plot = plot(
+                    df=df,
+                    x=feature_name,
+                    y=other_cols,
+                    xaxes=False,
+                    title=f"Dependence of runoff on subcatchment {feature_name}.",
+                )
 
-            save_output_file(request, df, output_file_name)
-            return redirect("main:simulation")
+                request.session["show_download_button"] = show_download_button
+                request.session["user_plot"] = user_plot
+                request.session["results_columns"] = df.columns.tolist()
+                request.session["results_data"] = df.values.tolist()
+                request.session["feature_name"] = feature_name
+
+                save_output_file(request, df, output_file_name)
+                return redirect("main:simulation")
+
+            except Exception as e:
+                logger.error("Simulation failed: %s", e)
+                messages.error(request, f"Error running simulation: {e}")
     else:
         form = SimulationForm()
         session_data = get_session_variables(request)
@@ -602,9 +632,77 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     )
 
 
-def download_result(request: HttpRequest) -> HttpResponse:
+def _build_sweep_timeseries_plot(
+    results: dict[float, pd.DataFrame], feature: str, catchment_name: str
+) -> str:
+    """Build an overlay Plotly chart for timeseries parameter sweep results."""
+    columns = list(FeaturesSimulation.TIMESERIES_KEYS)
+    n = len(columns)
+    cols = 2
+    rows = math.ceil(n / cols)
+    fig = make_subplots(
+        rows=rows,
+        cols=cols,
+        subplot_titles=columns,
+        vertical_spacing=0.12,
+        horizontal_spacing=0.08,
+    )
+    for param_val, ts_df in results.items():
+        ts_df_reset = ts_df.reset_index()
+        for i, col in enumerate(columns):
+            r = i // cols + 1
+            c = i % cols + 1
+            fig.add_trace(
+                go.Scatter(
+                    x=ts_df_reset["datetime"],
+                    y=ts_df_reset[col],
+                    mode="lines",
+                    name=f"{feature}={param_val}",
+                    legendgroup=str(param_val),
+                    showlegend=(i == 0),
+                ),
+                row=r,
+                col=c,
+            )
+    fig.update_layout(
+        height=350 * rows,
+        title=dict(
+            text=f"Timeseries sweep: {feature} for {catchment_name}",
+            x=0.5,
+            xanchor="center",
+        ),
+    )
+    return fig.to_html(full_html=False)
+
+
+def _save_sweep_output(
+    request: HttpRequest, results: dict[float, pd.DataFrame], output_file_name: str
+) -> None:
+    """Save timeseries sweep results to a multi-sheet Excel file."""
+    output_file_path = f"output_files/result_{uuid.uuid4().hex[:8]}.xlsx"
+    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+    with pd.ExcelWriter(output_file_path, engine="openpyxl") as writer:
+        for param_val, ts_df in results.items():
+            sheet_name = f"val_{param_val:.2f}"[:31]
+            ts_df.reset_index().to_excel(writer, sheet_name=sheet_name, index=False)
+    with open(output_file_path, "rb") as file:
+        default_storage.save(output_file_name, file)
+    os.remove(output_file_path)
+    output_file_url = default_storage.url(output_file_name)
+    request.session["ts_output_file_url"] = output_file_url
+    request.session["ts_output_file_name"] = output_file_name
+
+
+@login_required
+def timeseries_view(request: HttpRequest) -> HttpResponse:
     """
-    Download the simulation result file.
+    Render the timeseries analysis view.
+
+    Supports two modes:
+    - single: Run a single simulation and display per-timestep data with
+      analytical metrics (time to peak, runoff volume).
+    - sweep: Vary a subcatchment parameter over a range and overlay the
+      resulting hydrographs.
 
     Parameters
     ----------
@@ -614,19 +712,113 @@ def download_result(request: HttpRequest) -> HttpResponse:
     Returns
     -------
     HttpResponse
-        The HTTP response containing the file download or a 404 response if the file is not found.
+        The HTTP response with the rendered timeseries template.
     """
-    output_file_path = "output_files/simulation_result.xlsx"
+    session_data = {}
 
-    if os.path.exists(output_file_path):
-        response = FileResponse(
-            open(output_file_path, "rb"),
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        response["Content-Disposition"] = "attachment; filename=simulation_result.xlsx"
-        return response
+    if request.method == "POST":
+        form = TimeseriesForm(request.POST)
+        if form.is_valid():
+            mode = form.cleaned_data["mode"]
+            catchment_name = form.cleaned_data["catchment_name"]
+
+            uploaded_file_path = request.session.get(
+                "uploaded_file_path",
+                os.path.abspath("catchment_simulation/example.inp"),
+            )
+
+            try:
+                model = FeaturesSimulation(
+                    subcatchment_id=catchment_name, raw_file=uploaded_file_path
+                )
+            except Exception as e:
+                logger.error("Failed to initialise FeaturesSimulation: %s", e)
+                messages.error(request, f"Error initialising model: {e}")
+                return render(request, "main/timeseries.html", {"form": form})
+
+            try:
+                if mode == "single":
+                    ts_df = model.calculate_timeseries()
+
+                    # Compute analytical metrics
+                    try:
+                        ttp = time_to_peak(ts_df, column="runoff")
+                        ttp_str = str(ttp)
+                    except ValueError:
+                        ttp_str = "N/A"
+
+                    try:
+                        vol = runoff_volume(ts_df, column="runoff")
+                        vol_str = f"{vol:.4f}"
+                    except ValueError:
+                        vol_str = "N/A"
+
+                    # Build Plotly chart with subplots for each timeseries column
+                    ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
+                    ts_df_reset = ts_df.reset_index()
+                    ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
+
+                    user_plot = plot(
+                        df=ts_df_reset,
+                        x="datetime",
+                        y=ts_columns,
+                        xaxes=False,
+                        title=f"Timeseries for subcatchment {catchment_name}",
+                    )
+
+                    # Save for download
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
+                    save_output_file(
+                        request, ts_df.reset_index(), output_file_name, session_prefix="ts_"
+                    )
+
+                    request.session["ts_user_plot"] = user_plot
+                    request.session["ts_time_to_peak"] = ttp_str
+                    request.session["ts_runoff_volume"] = vol_str
+                    request.session["ts_show_results"] = True
+
+                    return redirect("main:timeseries")
+
+                elif mode == "sweep":
+                    feature = form.cleaned_data["feature"]
+                    start = form.cleaned_data["start"]
+                    stop = form.cleaned_data["stop"]
+                    step = form.cleaned_data["step"]
+
+                    results = model.simulate_subcatchment_timeseries(
+                        feature=feature, start=start, stop=stop, step=step
+                    )
+
+                    user_plot = _build_sweep_timeseries_plot(results, feature, catchment_name)
+
+                    # Save multi-sheet Excel
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
+                    _save_sweep_output(request, results, output_file_name)
+
+                    request.session["ts_user_plot"] = user_plot
+                    request.session["ts_show_results"] = True
+                    request.session["ts_time_to_peak"] = None
+                    request.session["ts_runoff_volume"] = None
+
+                    return redirect("main:timeseries")
+
+            except Exception as e:
+                logger.error("Timeseries analysis failed: %s", e)
+                messages.error(request, f"Error running analysis: {e}")
     else:
-        return HttpResponseNotFound("File not found.")
+        form = TimeseriesForm()
+        session_data = {
+            "ts_user_plot": request.session.get("ts_user_plot"),
+            "ts_time_to_peak": request.session.get("ts_time_to_peak"),
+            "ts_runoff_volume": request.session.get("ts_runoff_volume"),
+            "ts_show_results": request.session.get("ts_show_results", False),
+            "output_file_url": request.session.get("ts_output_file_url"),
+            "output_file_name": request.session.get("ts_output_file_name"),
+        }
+
+    return render(request, "main/timeseries.html", {"form": form, **session_data})
 
 
 def calculations(request: HttpRequest) -> HttpResponse:

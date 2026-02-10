@@ -1,0 +1,121 @@
+{% extends 'base.html' %}
+
+{% block title %}Timeseries Analysis{% endblock %}
+
+{% block style %}
+{% include 'main/_upload_zone_styles.html' %}
+<style>
+/* ── Metric Cards ────────────────────────────────────── */
+.metric-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    transition: box-shadow 0.2s ease;
+}
+.metric-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% include 'main/_upload_zone.html' %}
+
+{% load crispy_forms_tags %}
+
+<form method="post">
+    {% csrf_token %}
+        <div class="container">
+            <div class="row d-flex justify-content-center">
+                <div class="col-md-2">
+                    {{ form.mode|as_crispy_field }}
+                </div>
+                <div class="col-md-2" id="feature-wrapper">
+                    {{ form.feature|as_crispy_field }}
+                </div>
+                <div class="col-md-2" id="start-wrapper">
+                    {{ form.start|as_crispy_field }}
+                </div>
+                <div class="col-md-2" id="stop-wrapper">
+                    {{ form.stop|as_crispy_field }}
+                </div>
+                <div class="col-md-2" id="step-wrapper">
+                    {{ form.step|as_crispy_field }}
+                </div>
+                <div class="col-md-2">
+                    {{ form.catchment_name|as_crispy_field }}
+                </div>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-md-12 d-flex justify-content-center">
+                <button type="submit" class="btn btn-primary" id="run-timeseries-button" data-authenticated="{{ request.user.is_authenticated }}">Run Timeseries Analysis</button>
+            </div>
+        </div>
+
+        {% if ts_show_results %}
+        <!-- Analytical metric cards -->
+        {% if ts_time_to_peak or ts_runoff_volume %}
+        <div class="row mt-4 d-flex justify-content-center">
+            {% if ts_time_to_peak %}
+            <div class="col-md-3">
+                <div class="card metric-card text-center">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Time to Peak</h6>
+                        <h4 class="card-title">{{ ts_time_to_peak }}</h4>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            {% if ts_runoff_volume %}
+            <div class="col-md-3">
+                <div class="card metric-card text-center">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Runoff Volume</h6>
+                        <h4 class="card-title">{{ ts_runoff_volume }} m&sup3;</h4>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Timeseries chart -->
+        {{ ts_user_plot|safe }}
+
+        <!-- Download button -->
+        {% if output_file_url %}
+        <div class="row mt-3">
+            <div class="col-md-12 d-flex justify-content-center">
+                <a href="{{ output_file_url }}" download="{{ output_file_name }}" class="btn btn-success">Download Results</a>
+            </div>
+        </div>
+        {% endif %}
+        {% endif %}
+</form>
+
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var modeSelect = document.getElementById('id_mode');
+    var sweepWrappers = ['feature-wrapper', 'start-wrapper', 'stop-wrapper', 'step-wrapper'];
+
+    function toggleSweepFields() {
+        var isSweep = modeSelect && modeSelect.value === 'sweep';
+        sweepWrappers.forEach(function(wrapperId) {
+            var wrapper = document.getElementById(wrapperId);
+            if (wrapper) {
+                wrapper.style.display = isSweep ? '' : 'none';
+            }
+        });
+    }
+
+    if (modeSelect) {
+        modeSelect.addEventListener('change', toggleSweepFields);
+        toggleSweepFields();
+    }
+});
+</script>
+{% endblock %}

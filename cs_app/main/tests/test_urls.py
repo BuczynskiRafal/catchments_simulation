@@ -1,4 +1,4 @@
-from django.urls import reverse, resolve
+from django.urls import resolve, reverse
 
 
 def test_main_view_url():
@@ -41,3 +41,9 @@ def test_simulation_view_url():
     """Tests the URL of the simulation page."""
     path = reverse("main:simulation")
     assert resolve(path).view_name == "main:simulation"
+
+
+def test_timeseries_view_url():
+    """Tests the URL of the timeseries page."""
+    path = reverse("main:timeseries")
+    assert resolve(path).view_name == "main:timeseries"

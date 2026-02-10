@@ -12,7 +12,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory
 from django.urls import reverse
 
-from main.views import calculations, save_output_file, simulation_view, upload
+from main.views import calculations, save_output_file, simulation_view, timeseries_view, upload
 
 
 @pytest.mark.django_db
@@ -80,7 +80,7 @@ def test_simulation_view(user):
     request = factory.post(
         "simulation",
         {
-            "option": "slope",
+            "option": "simulate_percent_slope",
             "start": "1",
             "stop": "100",
             "step": "1",
@@ -90,6 +90,9 @@ def test_simulation_view(user):
     middleware = SessionMiddleware(lambda req: None)
     middleware.process_request(request)
     request.session.save()
+
+    message_middleware = MessageMiddleware(lambda req: None)
+    message_middleware.process_request(request)
 
     request.user = user
     response = simulation_view(request)
@@ -265,9 +268,11 @@ def test_upload_authenticated_user_can_upload(user):
 @pytest.mark.django_db
 def test_save_output_file_creates_directory(user):
     """
-    Test that save_output_file creates the output_files directory
-    if it does not exist, preventing OSError.
+    Test that save_output_file saves to default_storage, sets session keys,
+    and cleans up the temp file.
     """
+    from django.core.files.storage import default_storage
+
     output_dir = "output_files"
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
@@ -281,8 +286,109 @@ def test_save_output_file_creates_directory(user):
     df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
     save_output_file(request, df, "test_result.xlsx")
 
-    assert os.path.isdir(output_dir)
-    assert os.path.exists(os.path.join(output_dir, "simulation_result.xlsx"))
     assert request.session["output_file_name"] == "test_result.xlsx"
+    assert "output_file_url" in request.session
+    assert default_storage.exists("test_result.xlsx")
 
+    # Temp file should be cleaned up
+    if os.path.isdir(output_dir):
+        assert len(os.listdir(output_dir)) == 0
+
+    default_storage.delete("test_result.xlsx")
     shutil.rmtree(output_dir, ignore_errors=True)
+
+
+@pytest.mark.django_db
+def test_timeseries_view_get(user):
+    """
+    Test the timeseries view's GET response by creating a new request via
+    RequestFactory with middleware to handle sessions.
+    The user is set to the provided user fixture.
+    The response status code is asserted to be 200.
+    """
+    factory = RequestFactory()
+    request = factory.get("timeseries")
+    middleware = SessionMiddleware(lambda req: None)
+    middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = timeseries_view(request)
+
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_simulation_form_predefined_method_valid():
+    """
+    Test that SimulationForm accepts predefined methods without start/stop/step.
+    """
+    from main.forms import SimulationForm
+
+    form = SimulationForm(
+        data={
+            "option": "simulate_n_imperv",
+            "catchment_name": "S1",
+        }
+    )
+    assert form.is_valid(), f"Form errors: {form.errors}"
+
+
+@pytest.mark.django_db
+def test_simulation_form_range_method_requires_params():
+    """
+    Test that SimulationForm rejects range methods without start/stop/step.
+    """
+    from main.forms import SimulationForm
+
+    form = SimulationForm(
+        data={
+            "option": "simulate_percent_slope",
+            "catchment_name": "S1",
+        }
+    )
+    assert not form.is_valid()
+    assert "start" in form.errors
+    assert "stop" in form.errors
+    assert "step" in form.errors
+
+
+@pytest.mark.django_db
+def test_timeseries_form_sweep_start_zero_is_valid():
+    """
+    Test that TimeseriesForm accepts start=0 in sweep mode (regression for falsy check).
+    """
+    from main.forms import TimeseriesForm
+
+    form = TimeseriesForm(
+        data={
+            "mode": "sweep",
+            "feature": "PercSlope",
+            "start": "0",
+            "stop": "100",
+            "step": "10",
+            "catchment_name": "S1",
+        }
+    )
+    assert form.is_valid(), f"Form errors: {form.errors}"
+
+
+@pytest.mark.django_db
+def test_timeseries_form_sweep_too_many_steps():
+    """
+    Test that TimeseriesForm rejects sweeps exceeding MAX_SWEEP_STEPS.
+    """
+    from main.forms import TimeseriesForm
+
+    form = TimeseriesForm(
+        data={
+            "mode": "sweep",
+            "feature": "PercSlope",
+            "start": "0",
+            "stop": "1000",
+            "step": "1",
+            "catchment_name": "S1",
+        }
+    )
+    assert not form.is_valid()
+    assert "step" in form.errors
