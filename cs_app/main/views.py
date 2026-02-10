@@ -351,6 +351,16 @@ def get_feature_name(method_name: str) -> str:
     return feature_map.get(method_name, "")
 
 
+def _delete_stored_file(request: HttpRequest, session_key: str) -> None:
+    """Delete a file from default_storage using the name stored in a session key."""
+    name = request.session.get(session_key)
+    if name:
+        try:
+            default_storage.delete(name)
+        except Exception:
+            logger.warning("Failed to delete stored file %s", name, exc_info=True)
+
+
 def save_output_file(
     request: HttpRequest,
     df: pd.DataFrame,
@@ -373,16 +383,19 @@ def save_output_file(
     """
     output_file_path = f"output_files/result_{uuid.uuid4().hex[:8]}.xlsx"
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
-    df.to_excel(output_file_path, index=False)
 
-    with open(output_file_path, "rb") as file:
-        default_storage.save(output_file_name, file)
+    try:
+        df.to_excel(output_file_path, index=False)
+        with open(output_file_path, "rb") as file:
+            saved_name = default_storage.save(output_file_name, file)
+    finally:
+        if os.path.exists(output_file_path):
+            os.remove(output_file_path)
 
-    os.remove(output_file_path)
-
-    output_file_url = default_storage.url(output_file_name)
+    _delete_stored_file(request, f"{session_prefix}output_file_name")
+    output_file_url = default_storage.url(saved_name)
     request.session[f"{session_prefix}output_file_url"] = output_file_url
-    request.session[f"{session_prefix}output_file_name"] = output_file_name
+    request.session[f"{session_prefix}output_file_name"] = saved_name
 
 
 def get_session_variables(request: HttpRequest) -> dict:
@@ -419,6 +432,9 @@ def clear_session_variables(request: HttpRequest) -> None:
     request : HttpRequest
         The incoming HTTP request.
     """
+    _delete_stored_file(request, "output_file_name")
+    _delete_stored_file(request, "ts_output_file_name")
+
     for variable in [
         "show_download_button",
         "chart_config",
@@ -478,18 +494,18 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             )
 
             try:
-                model = FeaturesSimulation(
+                with FeaturesSimulation(
                     subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
-                )
-                feature_name = get_feature_name(params.method_name)
+                ) as model:
+                    feature_name = get_feature_name(params.method_name)
 
-                method = getattr(model, params.method_name)
-                if is_predefined:
-                    df = method()
-                else:
-                    df = method(start=params.start, stop=params.stop, step=params.step)
-                other_cols = [c for c in df.columns if c != feature_name]
-                df = df[[feature_name] + other_cols]
+                    method = getattr(model, params.method_name)
+                    if is_predefined:
+                        df = method()
+                    else:
+                        df = method(start=params.start, stop=params.stop, step=params.step)
+                    other_cols = [c for c in df.columns if c != feature_name]
+                    df = df[[feature_name] + other_cols]
 
                 show_download_button = True
 
@@ -530,16 +546,21 @@ def _save_sweep_output(
     """Save timeseries sweep results to a multi-sheet Excel file."""
     output_file_path = f"output_files/result_{uuid.uuid4().hex[:8]}.xlsx"
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
-    with pd.ExcelWriter(output_file_path, engine="openpyxl") as writer:
-        for param_val, ts_df in results.items():
-            sheet_name = f"val_{param_val:.2f}"[:31]
-            ts_df.reset_index().to_excel(writer, sheet_name=sheet_name, index=False)
-    with open(output_file_path, "rb") as file:
-        default_storage.save(output_file_name, file)
-    os.remove(output_file_path)
-    output_file_url = default_storage.url(output_file_name)
+    try:
+        with pd.ExcelWriter(output_file_path, engine="openpyxl") as writer:
+            for param_val, ts_df in results.items():
+                sheet_name = f"val_{param_val:.2f}"[:31]
+                ts_df.reset_index().to_excel(writer, sheet_name=sheet_name, index=False)
+        with open(output_file_path, "rb") as file:
+            saved_name = default_storage.save(output_file_name, file)
+    finally:
+        if os.path.exists(output_file_path):
+            os.remove(output_file_path)
+
+    _delete_stored_file(request, "ts_output_file_name")
+    output_file_url = default_storage.url(saved_name)
     request.session["ts_output_file_url"] = output_file_url
-    request.session["ts_output_file_name"] = output_file_name
+    request.session["ts_output_file_name"] = saved_name
 
 
 @login_required
@@ -577,90 +598,84 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
             )
 
             try:
-                model = FeaturesSimulation(
+                with FeaturesSimulation(
                     subcatchment_id=catchment_name, raw_file=uploaded_file_path
-                )
-            except Exception as e:
-                logger.error("Failed to initialise FeaturesSimulation: %s", e)
-                messages.error(request, f"Error initialising model: {e}")
-                return render(request, "main/timeseries.html", {"form": form})
+                ) as model:
+                    if mode == "single":
+                        ts_df = model.calculate_timeseries()
 
-            try:
-                if mode == "single":
-                    ts_df = model.calculate_timeseries()
+                        # Compute analytical metrics
+                        try:
+                            ttp = time_to_peak(ts_df, column="runoff")
+                            ttp_str = str(ttp)
+                        except ValueError:
+                            ttp_str = "N/A"
 
-                    # Compute analytical metrics
-                    try:
-                        ttp = time_to_peak(ts_df, column="runoff")
-                        ttp_str = str(ttp)
-                    except ValueError:
-                        ttp_str = "N/A"
+                        try:
+                            vol = runoff_volume(ts_df, column="runoff")
+                            vol_str = f"{vol:.4f}"
+                        except ValueError:
+                            vol_str = "N/A"
 
-                    try:
-                        vol = runoff_volume(ts_df, column="runoff")
-                        vol_str = f"{vol:.4f}"
-                    except ValueError:
-                        vol_str = "N/A"
-
-                    # Serialize timeseries data as JSON for frontend rendering
-                    ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
-                    ts_df_reset = ts_df.reset_index()
-                    ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
-
-                    # Save for download
-                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
-                    save_output_file(
-                        request, ts_df.reset_index(), output_file_name, session_prefix="ts_"
-                    )
-
-                    request.session["ts_chart_config"] = {
-                        "mode": "single",
-                        "data": json.loads(ts_df_reset.to_json(orient="records")),
-                        "columns": ts_columns,
-                        "title": f"Timeseries for subcatchment {catchment_name}",
-                    }
-                    request.session["ts_time_to_peak"] = ttp_str
-                    request.session["ts_runoff_volume"] = vol_str
-                    request.session["ts_show_results"] = True
-
-                    return redirect("main:timeseries")
-
-                elif mode == "sweep":
-                    feature = form.cleaned_data["feature"]
-                    start = form.cleaned_data["start"]
-                    stop = form.cleaned_data["stop"]
-                    step = form.cleaned_data["step"]
-
-                    results = model.simulate_subcatchment_timeseries(
-                        feature=feature, start=start, stop=stop, step=step
-                    )
-
-                    ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
-                    sweep_data = {}
-                    for param_val, ts_df in results.items():
+                        # Serialize timeseries data as JSON for frontend rendering
+                        ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
                         ts_df_reset = ts_df.reset_index()
                         ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
-                        sweep_data[str(param_val)] = ts_df_reset.to_dict(orient="records")
 
-                    # Save multi-sheet Excel
-                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
-                    _save_sweep_output(request, results, output_file_name)
+                        # Save for download
+                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
+                        save_output_file(
+                            request, ts_df.reset_index(), output_file_name, session_prefix="ts_"
+                        )
 
-                    request.session["ts_chart_config"] = {
-                        "mode": "sweep",
-                        "data": sweep_data,
-                        "columns": ts_columns,
-                        "title": f"Timeseries sweep: {feature} for {catchment_name}",
-                        "feature": feature,
-                        "catchment": catchment_name,
-                    }
-                    request.session["ts_show_results"] = True
-                    request.session["ts_time_to_peak"] = None
-                    request.session["ts_runoff_volume"] = None
+                        request.session["ts_chart_config"] = {
+                            "mode": "single",
+                            "data": json.loads(ts_df_reset.to_json(orient="records")),
+                            "columns": ts_columns,
+                            "title": f"Timeseries for subcatchment {catchment_name}",
+                        }
+                        request.session["ts_time_to_peak"] = ttp_str
+                        request.session["ts_runoff_volume"] = vol_str
+                        request.session["ts_show_results"] = True
 
-                    return redirect("main:timeseries")
+                        return redirect("main:timeseries")
+
+                    elif mode == "sweep":
+                        feature = form.cleaned_data["feature"]
+                        start = form.cleaned_data["start"]
+                        stop = form.cleaned_data["stop"]
+                        step = form.cleaned_data["step"]
+
+                        results = model.simulate_subcatchment_timeseries(
+                            feature=feature, start=start, stop=stop, step=step
+                        )
+
+                        ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
+                        sweep_data = {}
+                        for param_val, ts_df in results.items():
+                            ts_df_reset = ts_df.reset_index()
+                            ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
+                            sweep_data[str(param_val)] = ts_df_reset.to_dict(orient="records")
+
+                        # Save multi-sheet Excel
+                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
+                        _save_sweep_output(request, results, output_file_name)
+
+                        request.session["ts_chart_config"] = {
+                            "mode": "sweep",
+                            "data": sweep_data,
+                            "columns": ts_columns,
+                            "title": f"Timeseries sweep: {feature} for {catchment_name}",
+                            "feature": feature,
+                            "catchment": catchment_name,
+                        }
+                        request.session["ts_show_results"] = True
+                        request.session["ts_time_to_peak"] = None
+                        request.session["ts_runoff_volume"] = None
+
+                        return redirect("main:timeseries")
 
             except Exception as e:
                 logger.error("Timeseries analysis failed: %s", e)
@@ -677,6 +692,18 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
         }
 
     return render(request, "main/timeseries.html", {"form": form, **session_data})
+
+
+def _cleanup_swmm_side_files(inp_path: str) -> None:
+    """Remove .rpt and .out files generated by SWMM alongside a .inp file."""
+    base = os.path.splitext(inp_path)[0]
+    for ext in FeaturesSimulation.SWMM_SIDE_EXTENSIONS:
+        if ext == ".inp":
+            continue
+        try:
+            os.remove(base + ext)
+        except OSError:
+            pass
 
 
 def calculations(request: HttpRequest) -> HttpResponse:
@@ -716,6 +743,7 @@ def calculations(request: HttpRequest) -> HttpResponse:
                         "ANN_Runoff_m3": np.round(ann_predictions, 2),
                     },
                 )
+                _cleanup_swmm_side_files(uploaded_file_path)
 
             except Exception as e:
                 logger.error(e)
