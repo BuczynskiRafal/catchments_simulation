@@ -18,6 +18,7 @@ function renderLineChart(containerId, records, xField, yFields, opts) {
     var cols = Array.isArray(yFields) ? yFields : [yFields];
     var el = document.getElementById(containerId);
     if (!el) return;
+    el.innerHTML = '';
 
     if (cols.length > 1) {
         var nCols = 2;
@@ -61,6 +62,7 @@ function renderLineChart(containerId, records, xField, yFields, opts) {
             name: yCol
         }];
         var singleLayout = {
+            height: 450,
             title: {text: opts.title || '', x: 0.5, xanchor: 'center'}
         };
         if (opts.xLabel) singleLayout.xaxis = {title: opts.xLabel};
@@ -85,6 +87,7 @@ function renderLineChart(containerId, records, xField, yFields, opts) {
 function renderSweepChart(containerId, sweepData, columns, feature, catchmentName) {
     var el = document.getElementById(containerId);
     if (!el) return;
+    el.innerHTML = '';
 
     var nCols = 2;
     var nRows = Math.ceil(columns.length / nCols);
