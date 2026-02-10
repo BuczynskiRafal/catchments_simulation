@@ -1,6 +1,11 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}Timeseries Analysis{% endblock %}
+
+{% block head_scripts %}
+{% include 'main/_chart_scripts.html' %}
+{% endblock %}
 
 {% block style %}
 {% include 'main/_upload_zone_styles.html' %}
@@ -81,7 +86,8 @@
         {% endif %}
 
         <!-- Timeseries chart -->
-        {{ ts_user_plot|safe }}
+        <div id="timeseries-chart"><p class="text-muted text-center">Loading chart...</p></div>
+        {{ ts_chart_config|json_script:"ts-chart-config" }}
 
         <!-- Download button -->
         {% if output_file_url %}
@@ -115,6 +121,25 @@ document.addEventListener('DOMContentLoaded', function() {
     if (modeSelect) {
         modeSelect.addEventListener('change', toggleSweepFields);
         toggleSweepFields();
+    }
+
+    var configEl = document.getElementById('ts-chart-config');
+    if (configEl) {
+        try {
+            var config = JSON.parse(configEl.textContent);
+            if (config.mode === 'single') {
+                renderLineChart('timeseries-chart', config.data, 'datetime', config.columns, {
+                    title: config.title
+                });
+            } else if (config.mode === 'sweep') {
+                renderSweepChart('timeseries-chart', config.data, config.columns,
+                    config.feature, config.catchment);
+            }
+        } catch (e) {
+            console.error('Failed to render chart:', e);
+            var el = document.getElementById('timeseries-chart');
+            if (el) el.innerHTML = '<p class="text-danger text-center">Failed to load chart.</p>';
+        }
     }
 });
 </script>

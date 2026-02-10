@@ -1,20 +1,17 @@
 """
 This module contains views and helper functions for rendering and managing
-the main view, about page, contact form, and user profiles, as well as
-functions for creating interactive plots.
+the main view, about page, contact form, and user profiles.
 """
 
 import datetime
+import json
 import logging
-import math
 import os
 import uuid
-from functools import wraps
+from functools import lru_cache, wraps
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import swmmio
 from django.conf import settings
 from django.contrib import messages
@@ -29,7 +26,6 @@ from django.http import (
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from plotly.subplots import make_subplots
 from pyswmm import Simulation
 
 from catchment_simulation.analysis import runoff_volume, time_to_peak
@@ -67,92 +63,21 @@ def ajax_login_required(view_func):
     return wrapper
 
 
-def plot(
-    x: str,
-    y: str | list[str] | None = "runoff",
-    path: str | None = None,
-    df: pd.DataFrame | None = None,
-    xaxes: bool | None = False,
-    start: int | None = 0,
-    stop: int | None = 100,
-    title: str | None = None,
-    rename_labels: bool | None = False,
-    x_name: str | None = None,
-    y_name: str | None = None,
-) -> str:
-    """
-    Create an interactive plot using Plotly.
-
-    Parameters
-    ----------
-    x : str
-        Column name for x-axis.
-    y : str, optional
-        Column name for y-axis (default is "runoff").
-    path : str, optional
-        Path to the input file (default is None).
-    df : pd.DataFrame, optional
-        Input dataframe (default is None).
-    xaxes : bool, optional
-        Whether to show x-axis range or not (default is False).
-    start : int, optional
-        Start value for x-axis range (default is 0).
-    stop : int, optional
-        Stop value for x-axis range (default is 100).
-    title : str, optional
-        Title for the plot (default is None).
-    rename_labels : bool, optional
-        Whether to rename axis labels (default is False).
-    x_name : str, optional
-        New name for x-axis label (default is None).
-    y_name : str, optional
-        New name for y-axis label (default is None).
-
-    Returns
-    -------
-    str
-        The generated plot as an HTML string.
-    """
-    if path is not None:
-        df = pd.read_excel(path)
-
-    if isinstance(y, list) and len(y) > 1:
-        n = len(y)
-        cols = 2
-        rows = math.ceil(n / cols)
-        fig = make_subplots(
-            rows=rows,
-            cols=cols,
-            subplot_titles=y,
-            vertical_spacing=0.12,
-            horizontal_spacing=0.08,
-        )
-        for i, col in enumerate(y):
-            r = i // cols + 1
-            c = i % cols + 1
-            fig.add_trace(
-                go.Scatter(x=df[x], y=df[col], mode="lines", name=col),
-                row=r,
-                col=c,
-            )
-        fig.update_layout(
-            height=350 * rows,
-            title=dict(text=title, x=0.5, xanchor="center"),
-            showlegend=False,
-        )
-        if xaxes:
-            fig.update_xaxes(range=[start, stop])
-    else:
-        fig = px.line(df, x, y, title=title)
-        if xaxes:
-            fig.update_xaxes(range=[start, stop])
-        if rename_labels:
-            fig.update_xaxes(title_text=x_name)
-            fig.update_yaxes(title_text=y_name)
-        fig.update_layout(title=dict(text=title, x=0.5, xanchor="center"))
-
-    plot_div = fig.to_html(full_html=False)
-    return plot_div
+@lru_cache(maxsize=1)
+def _load_static_chart_data() -> dict:
+    """Load and cache static chart data from Excel files (read once at startup)."""
+    data_dir = os.path.join(settings.BASE_DIR, "data")
+    return {
+        "slope": json.loads(
+            pd.read_excel(os.path.join(data_dir, "df_slope.xlsx")).to_json(orient="records")
+        ),
+        "area": json.loads(
+            pd.read_excel(os.path.join(data_dir, "df_area.xlsx")).to_json(orient="records")
+        ),
+        "width": json.loads(
+            pd.read_excel(os.path.join(data_dir, "df_width.xlsx")).to_json(orient="records")
+        ),
+    }
 
 
 def main_view(request: HttpRequest) -> HttpResponse:
@@ -169,36 +94,7 @@ def main_view(request: HttpRequest) -> HttpResponse:
     HttpResponse
         The HTTP response with the rendered main view template.
     """
-    context = {
-        "plot_slope": plot(
-            path=os.path.join(settings.BASE_DIR, "data", "df_slope.xlsx"),
-            x="slope",
-            xaxes=True,
-            title="Dependence of runoff on subcatchment slope.",
-            rename_labels=True,
-            x_name="Percent Slope [-]",
-            y_name="Runoff [m3]",
-        ),
-        "plot_area": plot(
-            path=os.path.join(settings.BASE_DIR, "data", "df_area.xlsx"),
-            x="area",
-            xaxes=False,
-            title="Dependence of runoff on subcatchment area.",
-            rename_labels=True,
-            x_name="Area [ha]",
-            y_name="Runoff [m3]",
-        ),
-        "plot_width": plot(
-            path=os.path.join(settings.BASE_DIR, "data", "df_width.xlsx"),
-            x="width",
-            xaxes=True,
-            stop=1000,
-            title="Dependence of runoff on subcatchment width.",
-            rename_labels=True,
-            x_name="Width [m]",
-            y_name="Runoff [m3]",
-        ),
-    }
+    context = {"chart_data": _load_static_chart_data()}
     return render(request, "main/main_view.html", context)
 
 
@@ -505,7 +401,7 @@ def get_session_variables(request: HttpRequest) -> dict:
     """
     return {
         "show_download_button": request.session.get("show_download_button", False),
-        "user_plot": request.session.get("user_plot", None),
+        "chart_config": request.session.get("chart_config", None),
         "results_columns": request.session.get("results_columns", []),
         "results_data": request.session.get("results_data", []),
         "feature_name": request.session.get("feature_name", ""),
@@ -525,14 +421,14 @@ def clear_session_variables(request: HttpRequest) -> None:
     """
     for variable in [
         "show_download_button",
-        "user_plot",
+        "chart_config",
         "results_columns",
         "results_data",
         "feature_name",
         "output_file_name",
         "output_file_url",
         "uploaded_file_path",
-        "ts_user_plot",
+        "ts_chart_config",
         "ts_time_to_peak",
         "ts_runoff_volume",
         "ts_show_results",
@@ -559,7 +455,6 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
         The HTTP response with the rendered simulation template.
     """
     show_download_button = False
-    user_plot = None
     output_file_name = None
     session_data = {}
 
@@ -601,16 +496,13 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
 
-                user_plot = plot(
-                    df=df,
-                    x=feature_name,
-                    y=other_cols,
-                    xaxes=False,
-                    title=f"Dependence of runoff on subcatchment {feature_name}.",
-                )
-
                 request.session["show_download_button"] = show_download_button
-                request.session["user_plot"] = user_plot
+                request.session["chart_config"] = {
+                    "data": json.loads(df.to_json(orient="records")),
+                    "x": feature_name,
+                    "y": other_cols,
+                    "title": f"Dependence of runoff on subcatchment {feature_name}.",
+                }
                 request.session["results_columns"] = df.columns.tolist()
                 request.session["results_data"] = df.values.tolist()
                 request.session["feature_name"] = feature_name
@@ -630,49 +522,6 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
         "main/simulation.html",
         {"form": form, **session_data},
     )
-
-
-def _build_sweep_timeseries_plot(
-    results: dict[float, pd.DataFrame], feature: str, catchment_name: str
-) -> str:
-    """Build an overlay Plotly chart for timeseries parameter sweep results."""
-    columns = list(FeaturesSimulation.TIMESERIES_KEYS)
-    n = len(columns)
-    cols = 2
-    rows = math.ceil(n / cols)
-    fig = make_subplots(
-        rows=rows,
-        cols=cols,
-        subplot_titles=columns,
-        vertical_spacing=0.12,
-        horizontal_spacing=0.08,
-    )
-    for param_val, ts_df in results.items():
-        ts_df_reset = ts_df.reset_index()
-        for i, col in enumerate(columns):
-            r = i // cols + 1
-            c = i % cols + 1
-            fig.add_trace(
-                go.Scatter(
-                    x=ts_df_reset["datetime"],
-                    y=ts_df_reset[col],
-                    mode="lines",
-                    name=f"{feature}={param_val}",
-                    legendgroup=str(param_val),
-                    showlegend=(i == 0),
-                ),
-                row=r,
-                col=c,
-            )
-    fig.update_layout(
-        height=350 * rows,
-        title=dict(
-            text=f"Timeseries sweep: {feature} for {catchment_name}",
-            x=0.5,
-            xanchor="center",
-        ),
-    )
-    return fig.to_html(full_html=False)
 
 
 def _save_sweep_output(
@@ -753,18 +602,10 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                     except ValueError:
                         vol_str = "N/A"
 
-                    # Build Plotly chart with subplots for each timeseries column
+                    # Serialize timeseries data as JSON for frontend rendering
                     ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
                     ts_df_reset = ts_df.reset_index()
                     ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
-
-                    user_plot = plot(
-                        df=ts_df_reset,
-                        x="datetime",
-                        y=ts_columns,
-                        xaxes=False,
-                        title=f"Timeseries for subcatchment {catchment_name}",
-                    )
 
                     # Save for download
                     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -773,7 +614,12 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         request, ts_df.reset_index(), output_file_name, session_prefix="ts_"
                     )
 
-                    request.session["ts_user_plot"] = user_plot
+                    request.session["ts_chart_config"] = {
+                        "mode": "single",
+                        "data": json.loads(ts_df_reset.to_json(orient="records")),
+                        "columns": ts_columns,
+                        "title": f"Timeseries for subcatchment {catchment_name}",
+                    }
                     request.session["ts_time_to_peak"] = ttp_str
                     request.session["ts_runoff_volume"] = vol_str
                     request.session["ts_show_results"] = True
@@ -790,14 +636,26 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         feature=feature, start=start, stop=stop, step=step
                     )
 
-                    user_plot = _build_sweep_timeseries_plot(results, feature, catchment_name)
+                    ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
+                    sweep_data = {}
+                    for param_val, ts_df in results.items():
+                        ts_df_reset = ts_df.reset_index()
+                        ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
+                        sweep_data[str(param_val)] = ts_df_reset.to_dict(orient="records")
 
                     # Save multi-sheet Excel
                     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                     output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
                     _save_sweep_output(request, results, output_file_name)
 
-                    request.session["ts_user_plot"] = user_plot
+                    request.session["ts_chart_config"] = {
+                        "mode": "sweep",
+                        "data": sweep_data,
+                        "columns": ts_columns,
+                        "title": f"Timeseries sweep: {feature} for {catchment_name}",
+                        "feature": feature,
+                        "catchment": catchment_name,
+                    }
                     request.session["ts_show_results"] = True
                     request.session["ts_time_to_peak"] = None
                     request.session["ts_runoff_volume"] = None
@@ -810,7 +668,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
     else:
         form = TimeseriesForm()
         session_data = {
-            "ts_user_plot": request.session.get("ts_user_plot"),
+            "ts_chart_config": request.session.get("ts_chart_config"),
             "ts_time_to_peak": request.session.get("ts_time_to_peak"),
             "ts_runoff_volume": request.session.get("ts_runoff_volume"),
             "ts_show_results": request.session.get("ts_show_results", False),

@@ -1,4 +1,9 @@
 {% extends 'base.html' %}
+{% load static %}
+
+{% block head_scripts %}
+{% include 'main/_chart_scripts.html' %}
+{% endblock %}
 
 {% block content %}
     <h2 style="text-align: center;">Catchment simulation</h2>
@@ -40,9 +45,9 @@
         df = model.simulate_percent_slope(start=1, stop: = 10, step = 1)
     </code></pre>
     <!-- Plot slope data-->
-    {{ plot_slope|safe }}
+    <div id="plot-slope"><p class="text-muted text-center">Loading chart...</p></div>
 
-    
+
     <!-- Plot area-->
     <h3 style="text-align: center;">Simulate catchment area in selected range.</h3>
     <pre class="code-snippet"><code class="language-python">
@@ -53,7 +58,7 @@
         model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
         df = model.simulate_area(start=1, stop: = 100, step = 1)
     </code></pre>
-    {{ plot_area|safe }}
+    <div id="plot-area"><p class="text-muted text-center">Loading chart...</p></div>
 
 
     <!-- Plot width-->
@@ -66,6 +71,41 @@
         model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
         df = model.simulate_width(start=1, stop: = 1000, step = 1)
     </code></pre>
-    {{ plot_width|safe }}
+    <div id="plot-width"><p class="text-muted text-center">Loading chart...</p></div>
 
+{{ chart_data|json_script:"chart-data" }}
+{% endblock %}
+
+{% block additional_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    try {
+        var data = JSON.parse(document.getElementById('chart-data').textContent);
+
+        renderLineChart('plot-slope', data.slope, 'slope', 'runoff', {
+            title: 'Dependence of runoff on subcatchment slope.',
+            xLabel: 'Percent Slope [-]',
+            yLabel: 'Runoff [m3]',
+            xRange: [0, 100]
+        });
+        renderLineChart('plot-area', data.area, 'area', 'runoff', {
+            title: 'Dependence of runoff on subcatchment area.',
+            xLabel: 'Area [ha]',
+            yLabel: 'Runoff [m3]'
+        });
+        renderLineChart('plot-width', data.width, 'width', 'runoff', {
+            title: 'Dependence of runoff on subcatchment width.',
+            xLabel: 'Width [m]',
+            yLabel: 'Runoff [m3]',
+            xRange: [0, 1000]
+        });
+    } catch (e) {
+        console.error('Failed to render charts:', e);
+        ['plot-slope', 'plot-area', 'plot-width'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.innerHTML = '<p class="text-danger text-center">Failed to load chart.</p>';
+        });
+    }
+});
+</script>
 {% endblock %}

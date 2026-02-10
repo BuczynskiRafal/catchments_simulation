@@ -1,6 +1,11 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}Catchment Simulations{% endblock %}
+
+{% block head_scripts %}
+{% include 'main/_chart_scripts.html' %}
+{% endblock %}
 
 {% block style %}
 {% include 'main/_upload_zone_styles.html' %}
@@ -32,6 +37,18 @@ document.addEventListener('DOMContentLoaded', function() {
     if (optionSelect) {
         optionSelect.addEventListener('change', toggleRangeFields);
         toggleRangeFields();
+    }
+
+    var configEl = document.getElementById('chart-config');
+    if (configEl) {
+        try {
+            var config = JSON.parse(configEl.textContent);
+            renderLineChart('simulation-chart', config.data, config.x, config.y, {title: config.title});
+        } catch (e) {
+            console.error('Failed to render chart:', e);
+            var el = document.getElementById('simulation-chart');
+            if (el) el.innerHTML = '<p class="text-danger text-center">Failed to load chart.</p>';
+        }
     }
 });
 </script>
@@ -72,8 +89,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
         {% if show_download_button %}
-        {{ user_plot|safe }}
-    
+        <div id="simulation-chart"><p class="text-muted text-center">Loading chart...</p></div>
+        {{ chart_config|json_script:"chart-config" }}
+
         {% if output_file_url %}
         <div class="row mt-3">
             <div class="col-md-12 d-flex justify-content-center">
@@ -81,7 +99,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         </div>
         {% endif %}
-    
+
         <div class="row mt-3">
             <div class="col-md-12">
                 <table class="table table-bordered">
