@@ -12,7 +12,16 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory
 from django.urls import reverse
 
-from main.views import calculations, save_output_file, simulation_view, timeseries_view, upload
+from main.views import (
+    calculations,
+    clear_session_variables,
+    save_output_file,
+    simulation_view,
+    timeseries_view,
+    upload,
+    upload_clear,
+    upload_status,
+)
 
 
 @pytest.mark.django_db
@@ -253,7 +262,7 @@ def test_upload_authenticated_user_can_upload(user):
     data = json.loads(response.content)
     assert "message" in data
 
-    expected_path = os.path.join("uploaded_files", "test_upload.inp")
+    expected_path = os.path.join("uploaded_files", str(user.id), "test_upload.inp")
     assert os.path.exists(expected_path), f"File was not saved at {expected_path}"
 
     with open(expected_path, "rb") as f:
@@ -392,3 +401,351 @@ def test_timeseries_form_sweep_too_many_steps():
     )
     assert not form.is_valid()
     assert "step" in form.errors
+
+
+@pytest.mark.django_db
+def test_upload_status_no_file(user):
+    """Test that upload_status returns has_file=False when no file in session."""
+    factory = RequestFactory()
+    request = factory.get(
+        "/upload/status/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload_status(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["has_file"] is False
+
+
+@pytest.mark.django_db
+def test_upload_status_with_file(user, tmp_path):
+    """Test that upload_status returns file info when a file exists in session."""
+    test_file = tmp_path / "test.inp"
+    test_file.write_text("[TITLE]\nTest\n")
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/upload/status/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = str(test_file)
+    request.session.save()
+    request.user = user
+
+    response = upload_status(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["has_file"] is True
+    assert data["filename"] == "test.inp"
+    assert data["size"] > 0
+
+
+@pytest.mark.django_db
+def test_upload_status_stale_reference(user):
+    """Test that upload_status cleans up session when file no longer exists on disk."""
+    factory = RequestFactory()
+    request = factory.get(
+        "/upload/status/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = "/nonexistent/path/file.inp"
+    request.session.save()
+    request.user = user
+
+    response = upload_status(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["has_file"] is False
+    assert "uploaded_file_path" not in request.session
+
+
+@pytest.mark.django_db
+def test_clear_session_preserves_uploaded_file(user):
+    """Test that clear_session_variables does not remove uploaded_file_path."""
+    factory = RequestFactory()
+    request = factory.get("/")
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = "uploaded_files/test.inp"
+    request.session["show_download_button"] = True
+    request.session["chart_config"] = {"data": []}
+    request.session.save()
+
+    clear_session_variables(request)
+
+    assert request.session.get("uploaded_file_path") == "uploaded_files/test.inp"
+    assert "show_download_button" not in request.session
+    assert "chart_config" not in request.session
+
+
+# ── upload_clear tests (#4) ──────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_upload_clear_unauthenticated_ajax_returns_401():
+    """upload_clear returns 401 for unauthenticated AJAX requests."""
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/clear/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = AnonymousUser()
+
+    response = upload_clear(request)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_upload_clear_wrong_method(user):
+    """upload_clear rejects GET requests with 405."""
+    factory = RequestFactory()
+    request = factory.get(
+        "/upload/clear/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload_clear(request)
+
+    assert response.status_code == 405
+
+
+@pytest.mark.django_db
+def test_upload_clear_removes_file_and_session(user, tmp_path):
+    """upload_clear deletes the file from disk and removes session key."""
+    test_file = tmp_path / "to_delete.inp"
+    test_file.write_text("[TITLE]\nTest\n")
+
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/clear/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = str(test_file)
+    request.session.save()
+    request.user = user
+
+    response = upload_clear(request)
+
+    assert response.status_code == 200
+    assert "uploaded_file_path" not in request.session
+    assert not test_file.exists()
+
+
+@pytest.mark.django_db
+def test_upload_clear_no_file_in_session(user):
+    """upload_clear succeeds even when no file path is stored in session."""
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/clear/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload_clear(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["message"] == "Upload cleared."
+
+
+@pytest.mark.django_db
+def test_upload_clear_stale_path(user):
+    """upload_clear handles a session path pointing to a non-existent file."""
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/clear/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = "/nonexistent/file.inp"
+    request.session.save()
+    request.user = user
+
+    response = upload_clear(request)
+
+    assert response.status_code == 200
+    assert "uploaded_file_path" not in request.session
+
+
+# ── upload_status auth test (#5) ─────────────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_upload_status_unauthenticated_ajax_returns_401():
+    """upload_status returns 401 for unauthenticated AJAX requests."""
+    factory = RequestFactory()
+    request = factory.get(
+        "/upload/status/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = AnonymousUser()
+
+    response = upload_status(request)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_upload_status_unauthenticated_regular_redirects():
+    """upload_status redirects non-AJAX unauthenticated requests to login."""
+    factory = RequestFactory()
+    request = factory.get("/upload/status/")
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = AnonymousUser()
+
+    response = upload_status(request)
+
+    assert response.status_code == 302
+    assert settings.LOGIN_URL in response.url
+
+
+@pytest.mark.django_db
+def test_upload_status_rejects_post(user):
+    """upload_status rejects POST requests (require_GET)."""
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/status/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload_status(request)
+
+    assert response.status_code == 405
+
+
+# ── Core flow test (#8) ──────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_upload_persists_after_clear_session_and_new_simulation(user):
+    """
+    Core flow: upload file -> clear_session_variables (as simulation does)
+    -> file path remains in session -> upload_status still returns it.
+    """
+    factory = RequestFactory()
+
+    # 1) Upload a file
+    inp_content = b"[TITLE]\nPersistence Test\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile("persist_test.inp", inp_content, content_type="text/plain")
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload(request)
+    assert response.status_code == 200
+    saved_path = request.session.get("uploaded_file_path")
+    assert saved_path is not None
+
+    # 2) Simulate what happens after a simulation run – clear results
+    request.session["show_download_button"] = True
+    request.session["chart_config"] = {"data": []}
+    clear_session_variables(request)
+
+    # 3) Verify file path survived
+    assert request.session.get("uploaded_file_path") == saved_path
+    assert os.path.exists(saved_path)
+
+    # 4) Verify upload_status reports the file
+    status_request = factory.get(
+        "/upload/status/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware.process_request(status_request)
+    status_request.session = request.session
+    status_request.user = user
+
+    status_response = upload_status(status_request)
+    data = json.loads(status_response.content)
+    assert data["has_file"] is True
+    assert data["filename"] == "persist_test.inp"
+
+    # Cleanup
+    if os.path.exists(saved_path):
+        os.remove(saved_path)
+
+
+@pytest.mark.django_db
+def test_upload_replaces_old_file_on_disk(user):
+    """Uploading a new file removes the old file from disk (#2, #9)."""
+    factory = RequestFactory()
+
+    # Upload first file
+    inp_a = b"[TITLE]\nFile A\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    request = factory.post(
+        "/upload/",
+        {"file": SimpleUploadedFile("file_a.inp", inp_a, content_type="text/plain")},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+    upload(request)
+    path_a = request.session["uploaded_file_path"]
+    assert os.path.exists(path_a)
+
+    # Upload second file (different name)
+    inp_b = b"[TITLE]\nFile B\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    request2 = factory.post(
+        "/upload/",
+        {"file": SimpleUploadedFile("file_b.inp", inp_b, content_type="text/plain")},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware.process_request(request2)
+    request2.session = request.session
+    request2.user = user
+    upload(request2)
+    path_b = request2.session["uploaded_file_path"]
+
+    # Old file should be gone, new file present
+    assert not os.path.exists(path_a), "Old file was not cleaned up"
+    assert os.path.exists(path_b)
+
+    # Cleanup
+    if os.path.exists(path_b):
+        os.remove(path_b)
