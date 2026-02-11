@@ -131,7 +131,8 @@
                     || '{{ csrf_token }}';
                 const uploadUrl = '{% url "main:upload" %}';
                 const clearUrl = '{% url "main:upload_clear" %}';
-                new Dropzone('#my-dropzone', {
+                const statusUrl = '{% url "main:upload_status" %}';
+                var dzInstance = new Dropzone('#my-dropzone', {
                     url: uploadUrl,
                     acceptedFiles: '.inp',
                     maxFilesize: 10,
@@ -143,18 +144,24 @@
                         'X-CSRFToken': csrfToken
                     },
                     init: function() {
+                        var _replacing = false;
+                        var dz = this;
                         this.on('removedfile', function() {
                             var msgEl = document.querySelector('#my-dropzone .dz-message');
                             if (msgEl) {
                                 msgEl.style.display = '';
                             }
-                            fetch(clearUrl, {
-                                method: 'POST',
-                                headers: {
-                                    'X-CSRFToken': csrfToken,
-                                    'X-Requested-With': 'XMLHttpRequest'
-                                }
-                            });
+                            var statusEl = document.getElementById('upload-status');
+                            if (statusEl) { statusEl.style.display = 'none'; }
+                            if (!_replacing) {
+                                fetch(clearUrl, {
+                                    method: 'POST',
+                                    headers: {
+                                        'X-CSRFToken': csrfToken,
+                                        'X-Requested-With': 'XMLHttpRequest'
+                                    }
+                                }).catch(function(err) { console.warn('upload clear failed:', err); });
+                            }
                         });
                         this.on('addedfile', function() {
                             var msgEl = document.querySelector('#my-dropzone .dz-message');
@@ -162,8 +169,18 @@
                                 msgEl.style.display = 'none';
                             }
                         });
+                        this.on('success', function(file) {
+                            var statusEl = document.getElementById('upload-status');
+                            var statusText = document.getElementById('upload-status-text');
+                            if (statusEl && statusText) {
+                                statusText.textContent = 'Loaded: ' + file.name;
+                                statusEl.style.display = '';
+                            }
+                        });
                         this.on('maxfilesexceeded', function(file) {
+                            _replacing = true;
                             this.removeAllFiles();
+                            _replacing = false;
                             this.addFile(file);
                         });
                     },
@@ -189,6 +206,28 @@
                         }
                     }
                 });
+
+                // Restore previously uploaded file from session
+                fetch(statusUrl, {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                })
+                .then(function(resp) { return resp.ok ? resp.json() : null; })
+                .then(function(data) {
+                    if (data && data.has_file) {
+                        var mockFile = { name: data.filename, size: data.size, status: Dropzone.SUCCESS, accepted: true };
+                        dzInstance.files.push(mockFile);
+                        dzInstance.emit('addedfile', mockFile);
+                        dzInstance.emit('success', mockFile);
+                        dzInstance.emit('complete', mockFile);
+                        var statusEl = document.getElementById('upload-status');
+                        var statusText = document.getElementById('upload-status-text');
+                        if (statusEl && statusText) {
+                            statusText.textContent = 'Loaded: ' + data.filename;
+                            statusEl.style.display = '';
+                        }
+                    }
+                })
+                .catch(function(err) { console.warn('upload status check failed:', err); });
             }
             initDropzone();
         });

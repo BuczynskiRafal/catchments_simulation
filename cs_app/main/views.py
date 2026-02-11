@@ -26,6 +26,7 @@ from django.http import (
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.http import require_GET
 from pyswmm import Simulation
 
 from catchment_simulation.analysis import runoff_volume, time_to_peak
@@ -277,12 +278,18 @@ def upload(request: HttpRequest) -> JsonResponse:
                 status=400,
             )
 
-        # Sanitize filename
+        # Sanitize filename and scope to user
         safe_filename = _sanitize_filename(filename)
-        file_path = os.path.join("uploaded_files", safe_filename + file_extension)
+        user_dir = os.path.join("uploaded_files", str(request.user.id))
+        file_path = os.path.join(user_dir, safe_filename + file_extension)
+
+        # Remove previous uploaded file from disk
+        old_path = request.session.get("uploaded_file_path")
+        if old_path and old_path != file_path and os.path.exists(old_path):
+            os.remove(old_path)
 
         # Ensure upload directory exists
-        os.makedirs("uploaded_files", exist_ok=True)
+        os.makedirs(user_dir, exist_ok=True)
 
         with open(file_path, "wb+") as destination:
             for chunk in uploaded_file.chunks():
@@ -294,6 +301,40 @@ def upload(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"message": "File was sent."})
 
     return JsonResponse({"error": "Error occurred while sending file."}, status=400)
+
+
+@require_GET
+@ajax_login_required
+def upload_status(request: HttpRequest) -> JsonResponse:
+    """
+    Return the current uploaded file status from the session.
+
+    Parameters
+    ----------
+    request : HttpRequest
+        The incoming HTTP request.
+
+    Returns
+    -------
+    JsonResponse
+        JSON with ``has_file``, ``filename``, and ``size`` when a file is
+        present, or ``has_file: false`` otherwise.
+    """
+    file_path = request.session.get("uploaded_file_path")
+    if file_path:
+        try:
+            size = os.path.getsize(file_path)
+            return JsonResponse(
+                {
+                    "has_file": True,
+                    "filename": os.path.basename(file_path),
+                    "size": size,
+                }
+            )
+        except OSError:
+            # File disappeared between session set and now – clean up
+            request.session.pop("uploaded_file_path", None)
+    return JsonResponse({"has_file": False})
 
 
 @ajax_login_required
@@ -443,7 +484,6 @@ def clear_session_variables(request: HttpRequest) -> None:
         "feature_name",
         "output_file_name",
         "output_file_url",
-        "uploaded_file_path",
         "ts_chart_config",
         "ts_time_to_peak",
         "ts_runoff_volume",
@@ -528,7 +568,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
 
             except Exception as e:
                 logger.error("Simulation failed: %s", e)
-                messages.error(request, f"Error running simulation: {e}")
+                messages.error(request, "An error occurred while running the simulation.")
     else:
         form = SimulationForm()
         session_data = get_session_variables(request)
@@ -679,7 +719,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
 
             except Exception as e:
                 logger.error("Timeseries analysis failed: %s", e)
-                messages.error(request, f"Error running analysis: {e}")
+                messages.error(request, "An error occurred while running the analysis.")
     else:
         form = TimeseriesForm()
         session_data = {
@@ -749,7 +789,7 @@ def calculations(request: HttpRequest) -> HttpResponse:
                 logger.error(e)
                 messages.error(
                     request,
-                    f"Error occurred while performing calculations: {str(e)}",
+                    "An error occurred while performing calculations.",
                 )
 
     df_is_empty = df is None or df.empty
