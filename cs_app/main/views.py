@@ -296,6 +296,9 @@ def upload(request: HttpRequest) -> JsonResponse:
                 destination.write(chunk)
 
         request.session["uploaded_file_path"] = file_path
+        # Invalidate cached subcatchment IDs so they are re-read from new file
+        request.session.pop("_subcatchment_ids", None)
+        request.session.pop("_subcatchment_ids_file", None)
         logger.info(f"File uploaded successfully: {file_path}")
 
         return JsonResponse({"message": "File was sent."})
@@ -359,7 +362,75 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
     if file_path and os.path.exists(file_path):
         os.remove(file_path)
 
+    # Clear cached subcatchment IDs
+    request.session.pop("_subcatchment_ids", None)
+    request.session.pop("_subcatchment_ids_file", None)
+
     return JsonResponse({"message": "Upload cleared."})
+
+
+def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
+    """
+    Return subcatchment IDs from the uploaded INP file, using session cache.
+
+    The result is cached in the session under ``_subcatchment_ids`` and
+    ``_subcatchment_ids_file``.  The cache is invalidated when the uploaded
+    file path changes.
+    """
+    file_path = request.session.get("uploaded_file_path")
+    cached_file = request.session.get("_subcatchment_ids_file")
+    if file_path and file_path == cached_file:
+        cached_ids = request.session.get("_subcatchment_ids")
+        if cached_ids is not None:
+            return cached_ids
+
+    if not file_path or not os.path.exists(file_path):
+        request.session.pop("_subcatchment_ids", None)
+        request.session.pop("_subcatchment_ids_file", None)
+        return []
+
+    try:
+        model = swmmio.Model(file_path)
+        ids = list(model.inp.subcatchments.index)
+    except Exception:
+        logger.warning("Failed to read subcatchments from %s", file_path, exc_info=True)
+        ids = []
+
+    request.session["_subcatchment_ids"] = ids
+    request.session["_subcatchment_ids_file"] = file_path
+    return ids
+
+
+def _get_catchment_choices(request: HttpRequest) -> list[tuple[str, str]]:
+    """
+    Extract subcatchment IDs from the uploaded INP file stored in the session.
+
+    Returns a list of (id, id) tuples suitable for a Select widget, or a
+    placeholder when no file is available.
+    """
+    ids = _get_subcatchment_ids(request)
+    if ids:
+        return [("", "--- Select catchment ---")] + [(sid, sid) for sid in ids]
+    return [("", "--- Upload a file first ---")]
+
+
+@require_GET
+@ajax_login_required
+def subcatchments(request: HttpRequest) -> JsonResponse:
+    """
+    Return the list of subcatchment IDs from the uploaded INP file.
+
+    Parameters
+    ----------
+    request : HttpRequest
+        The incoming HTTP request.
+
+    Returns
+    -------
+    JsonResponse
+        JSON with ``subcatchments`` list.
+    """
+    return JsonResponse({"subcatchments": _get_subcatchment_ids(request)})
 
 
 def get_feature_name(method_name: str) -> str:
@@ -515,7 +586,8 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     session_data = {}
 
     if request.method == "POST":
-        form = SimulationForm(request.POST)
+        catchment_choices = _get_catchment_choices(request)
+        form = SimulationForm(request.POST, catchment_choices=catchment_choices)
         if form.is_valid():
             option = form.cleaned_data["option"]
             is_predefined = option in SimulationForm.PREDEFINED_METHODS
@@ -570,7 +642,8 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                 logger.error("Simulation failed: %s", e)
                 messages.error(request, "An error occurred while running the simulation.")
     else:
-        form = SimulationForm()
+        catchment_choices = _get_catchment_choices(request)
+        form = SimulationForm(catchment_choices=catchment_choices)
         session_data = get_session_variables(request)
 
     return render(
@@ -627,7 +700,8 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
     session_data = {}
 
     if request.method == "POST":
-        form = TimeseriesForm(request.POST)
+        catchment_choices = _get_catchment_choices(request)
+        form = TimeseriesForm(request.POST, catchment_choices=catchment_choices)
         if form.is_valid():
             mode = form.cleaned_data["mode"]
             catchment_name = form.cleaned_data["catchment_name"]
@@ -721,7 +795,8 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                 logger.error("Timeseries analysis failed: %s", e)
                 messages.error(request, "An error occurred while running the analysis.")
     else:
-        form = TimeseriesForm()
+        catchment_choices = _get_catchment_choices(request)
+        form = TimeseriesForm(catchment_choices=catchment_choices)
         session_data = {
             "ts_chart_config": request.session.get("ts_chart_config"),
             "ts_time_to_peak": request.session.get("ts_time_to_peak"),

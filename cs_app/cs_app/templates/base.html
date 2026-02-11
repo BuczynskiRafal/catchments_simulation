@@ -132,6 +132,49 @@
                 const uploadUrl = '{% url "main:upload" %}';
                 const clearUrl = '{% url "main:upload_clear" %}';
                 const statusUrl = '{% url "main:upload_status" %}';
+                const subcatchmentsUrl = '{% url "main:subcatchments" %}';
+
+                function fetchSubcatchments() {
+                    var select = document.getElementById('id_catchment_name');
+                    if (!select) return;
+                    var previousValue = select.value;
+                    select.disabled = true;
+                    select.innerHTML = '<option value="">Loading...</option>';
+                    fetch(subcatchmentsUrl, {
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                    })
+                    .then(function(resp) { return resp.ok ? resp.json() : null; })
+                    .then(function(data) {
+                        select.innerHTML = '';
+                        if (!data || !data.subcatchments || data.subcatchments.length === 0) {
+                            var opt = document.createElement('option');
+                            opt.value = '';
+                            opt.textContent = '--- Upload a file first ---';
+                            select.appendChild(opt);
+                            return;
+                        }
+                        var placeholder = document.createElement('option');
+                        placeholder.value = '';
+                        placeholder.textContent = '--- Select catchment ---';
+                        select.appendChild(placeholder);
+                        data.subcatchments.forEach(function(name) {
+                            var opt = document.createElement('option');
+                            opt.value = name;
+                            opt.textContent = name;
+                            if (name === previousValue) opt.selected = true;
+                            select.appendChild(opt);
+                        });
+                    })
+                    .catch(function(err) { console.warn('subcatchments fetch failed:', err); })
+                    .finally(function() { select.disabled = false; });
+                }
+
+                function resetCatchmentDropdown() {
+                    var select = document.getElementById('id_catchment_name');
+                    if (!select) return;
+                    select.innerHTML = '<option value="">--- Upload a file first ---</option>';
+                }
+
                 var dzInstance = new Dropzone('#my-dropzone', {
                     url: uploadUrl,
                     acceptedFiles: '.inp',
@@ -161,6 +204,7 @@
                                         'X-Requested-With': 'XMLHttpRequest'
                                     }
                                 }).catch(function(err) { console.warn('upload clear failed:', err); });
+                                resetCatchmentDropdown();
                             }
                         });
                         this.on('addedfile', function() {
@@ -176,6 +220,7 @@
                                 statusText.textContent = 'Loaded: ' + file.name;
                                 statusEl.style.display = '';
                             }
+                            fetchSubcatchments();
                         });
                         this.on('maxfilesexceeded', function(file) {
                             _replacing = true;
@@ -225,6 +270,7 @@
                             statusText.textContent = 'Loaded: ' + data.filename;
                             statusEl.style.display = '';
                         }
+                        fetchSubcatchments();
                     }
                 })
                 .catch(function(err) { console.warn('upload status check failed:', err); });

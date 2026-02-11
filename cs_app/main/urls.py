@@ -15,6 +15,7 @@ from .views import (
     contact,
     main_view,
     simulation_view,
+    subcatchments,
     timeseries_view,
     upload,
     upload_clear,
@@ -36,4 +37,5 @@ urlpatterns = [
     path("calculations", calculations, name="calculations"),
     path("simulation", simulation_view, name="simulation"),
     path("timeseries", timeseries_view, name="timeseries"),
+    path("subcatchments/", subcatchments, name="subcatchments"),
 ]

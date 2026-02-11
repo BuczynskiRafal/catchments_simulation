@@ -13,10 +13,13 @@ from django.test import RequestFactory
 from django.urls import reverse
 
 from main.views import (
+    _get_catchment_choices,
+    _get_subcatchment_ids,
     calculations,
     clear_session_variables,
     save_output_file,
     simulation_view,
+    subcatchments,
     timeseries_view,
     upload,
     upload_clear,
@@ -338,7 +341,8 @@ def test_simulation_form_predefined_method_valid():
         data={
             "option": "simulate_n_imperv",
             "catchment_name": "S1",
-        }
+        },
+        catchment_choices=[("S1", "S1")],
     )
     assert form.is_valid(), f"Form errors: {form.errors}"
 
@@ -354,7 +358,8 @@ def test_simulation_form_range_method_requires_params():
         data={
             "option": "simulate_percent_slope",
             "catchment_name": "S1",
-        }
+        },
+        catchment_choices=[("S1", "S1")],
     )
     assert not form.is_valid()
     assert "start" in form.errors
@@ -377,7 +382,8 @@ def test_timeseries_form_sweep_start_zero_is_valid():
             "stop": "100",
             "step": "10",
             "catchment_name": "S1",
-        }
+        },
+        catchment_choices=[("S1", "S1")],
     )
     assert form.is_valid(), f"Form errors: {form.errors}"
 
@@ -397,7 +403,8 @@ def test_timeseries_form_sweep_too_many_steps():
             "stop": "1000",
             "step": "1",
             "catchment_name": "S1",
-        }
+        },
+        catchment_choices=[("S1", "S1")],
     )
     assert not form.is_valid()
     assert "step" in form.errors
@@ -749,3 +756,137 @@ def test_upload_replaces_old_file_on_disk(user):
     # Cleanup
     if os.path.exists(path_b):
         os.remove(path_b)
+
+
+# ── subcatchments endpoint tests ─────────────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_subcatchments_unauthenticated_ajax_returns_401():
+    """subcatchments returns 401 for unauthenticated AJAX requests."""
+    factory = RequestFactory()
+    request = factory.get(
+        "/subcatchments/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = AnonymousUser()
+
+    response = subcatchments(request)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_subcatchments_no_file(user):
+    """subcatchments returns empty list when no file is uploaded."""
+    factory = RequestFactory()
+    request = factory.get(
+        "/subcatchments/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = subcatchments(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["subcatchments"] == []
+
+
+@pytest.mark.django_db
+def test_subcatchments_stale_path(user):
+    """subcatchments returns empty list when session path points to non-existent file."""
+    factory = RequestFactory()
+    request = factory.get(
+        "/subcatchments/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = "/nonexistent/file.inp"
+    request.session.save()
+    request.user = user
+
+    response = subcatchments(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["subcatchments"] == []
+
+
+@pytest.mark.django_db
+def test_get_catchment_choices_no_file():
+    """_get_catchment_choices returns placeholder when no file in session."""
+    factory = RequestFactory()
+    request = factory.get("/")
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+
+    choices = _get_catchment_choices(request)
+
+    assert len(choices) == 1
+    assert choices[0][0] == ""
+    assert "Upload" in choices[0][1]
+
+
+@pytest.mark.django_db
+def test_subcatchments_with_real_inp_file(user):
+    """subcatchments returns correct IDs from a real INP file."""
+    fixture_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "tests", "fixtures", "example.inp"
+    )
+    fixture_path = os.path.abspath(fixture_path)
+    if not os.path.exists(fixture_path):
+        pytest.skip("example.inp fixture not found")
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/subcatchments/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = fixture_path
+    request.session.save()
+    request.user = user
+
+    response = subcatchments(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert "S1" in data["subcatchments"]
+    assert len(data["subcatchments"]) > 0
+
+
+@pytest.mark.django_db
+def test_subcatchment_ids_cached_in_session(user):
+    """_get_subcatchment_ids caches results in the session."""
+    fixture_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "tests", "fixtures", "example.inp"
+    )
+    fixture_path = os.path.abspath(fixture_path)
+    if not os.path.exists(fixture_path):
+        pytest.skip("example.inp fixture not found")
+
+    factory = RequestFactory()
+    request = factory.get("/")
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = fixture_path
+    request.session.save()
+
+    ids1 = _get_subcatchment_ids(request)
+    assert "S1" in ids1
+    assert request.session["_subcatchment_ids"] == ids1
+    assert request.session["_subcatchment_ids_file"] == fixture_path
+
+    # Second call should use cache (same result)
+    ids2 = _get_subcatchment_ids(request)
+    assert ids1 == ids2

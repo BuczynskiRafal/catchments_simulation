@@ -55,7 +55,9 @@ class TestSimulationProperties:
     def test_simulate_area_row_count_matches_range(self, params: dict[str, float]) -> None:
         with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
             df = sim.simulate_area(**params)
-            expected_count = len(np.arange(params["start"], params["stop"] + 0.001, params["step"]))
+            expected_count = len(
+                np.arange(params["start"], params["stop"] + params["step"] / 2, params["step"])
+            )
             assert len(df) == expected_count
 
     @given(params=small_range)
