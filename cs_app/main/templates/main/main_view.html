@@ -1,77 +1,118 @@
 {% extends 'base.html' %}
-{% load static %}
+
+{% block title %}Catchment Simulation — Documentation{% endblock %}
 
 {% block head_scripts %}
 {% include 'main/_chart_scripts.html' %}
 {% endblock %}
 
 {% block content %}
-    <h2 style="text-align: center;">Catchment simulation</h2>
-    <p>Package includes method for simulating subcatchment with different features values from Storm Water Management Model.</p>
+    <h2 class="text-center" id="overview">Catchment Simulation</h2>
 
     <p>The <code>catchment_simulation</code> package includes methods for simulating subcatchments with different feature values using the Storm Water Management Model. The <code>FeaturesSimulation</code> class contains all the methods.</p>
-    <p>The class constructor takes two arguments - <code>subcatchment_id</code> and <code>raw_file</code>. The <code>subcatchment_id</code> is the unique identifier of the subcatchment that you want to simulate. The <code>raw_file</code> argument is the path to the SWMM input file that you want to simulate.</p>
+    <p>The class constructor takes two arguments &mdash; <code>subcatchment_id</code> and <code>raw_file</code>. The <code>subcatchment_id</code> is the unique identifier of the subcatchment that you want to simulate. The <code>raw_file</code> argument is the path to the SWMM input file. The constructor raises <code>FileNotFoundError</code> if the file does not exist and <code>ValueError</code> if the subcatchment ID is not found in the model. The class supports the context manager protocol (<code>with</code> statement) for automatic cleanup of temporary files created during simulation.</p>
+
+    <p>Install the package with:</p>
+<pre class="code-snippet"><code class="language-python">pip install catchment_simulation</code></pre>
+
+    <h3 class="text-center" id="simulation-methods">Simulation Methods</h3>
     <p>The package has the following methods:</p>
     <ul>
-        <li><code>get_section:</code> Takes a SWMM input file and returns a pandas dataframe of the specified section.</li>
-        <li><code>copy_file:</code> Takes a SWMM input file and creates a copy of it with a suffix added to the end of the file name.</li>
-        <li><code>calculate:</code> Takes a SWMM model file and a subcatchment ID and returns the statistics of the subcatchment with the ID <code>subcatchment_id</code> in the SWMM model file.</li>
-        <li><code>simulate_subcatchment:</code> Takes a SWMM model, a subcatchment ID, and a feature (e.g. percent impervious) and runs the model for a range of values for that feature. The function returns a pandas.DataFrame with catchment statistics and analysed feature.</li>
-        <li><code>simulate_area:</code> This function simulates the area of the subcatchment in a selected range of areas.</li>
-        <li><code>simulate_percent_impervious:</code> This function simulates the percent impervious of a subcatchment and returns a dataframe with the results.</li>
-        <li><code>simulate_percent_slope:</code> This function simulates the subcatchment's percent slope in a selected range of values.</li>
-        <li><code>simulate_width:</code> This function simulates the width of the subcatchment and returns a dataframe with the results.</li>
-        <li><code>simulate_curb_length:</code> This function simulates the curb length of a subcatchment.</li>
-        <li><code>simulate_n_imperv:</code> This function simulates the Manning's n for impervious area.</li>
-        <li><code>simulate_n_perv:</code> This function simulates the Manning's n for pervious area.</li>
-        <li><code>simulate_s_imperv:</code> This function simulates the impervious depth of depression storage on area.</li>
-        <li><code>simulate_s_perv:</code> This function simulates the pervious depth of depression storage on area.</li>
-        <li><code>simulate_percent_zero_imperv:</code> This function runs a series of simulations, each with a different percent impervious area with no depression and returns a dataframe with the results.</li>
+        <li><code>get_section(section="subcatchments")</code> &mdash; Returns a pandas DataFrame of the specified section from the SWMM input file loaded during construction.</li>
+        <li><code>copy_file(copy=None, suffix="copy")</code> &mdash; Creates a copy of the SWMM input file with a suffix added to the file name. Defaults to copying the raw file.</li>
+        <li><code>calculate()</code> &mdash; Runs a SWMM simulation and returns summary statistics for the configured subcatchment as a dict with keys: <code>runoff</code>, <code>peak_runoff_rate</code>, <code>infiltration</code>, <code>evaporation</code>.</li>
+        <li><code>calculate_timeseries()</code> &mdash; Runs a simulation and collects per-timestep data for the subcatchment. Returns a <code>pd.DataFrame</code> with a <code>DatetimeIndex</code> and columns: <code>rainfall</code>, <code>runoff</code>, <code>infiltration_loss</code>, <code>evaporation_loss</code>, <code>runon</code>.</li>
+        <li><code>simulate_subcatchment(feature, start, stop, step)</code> &mdash; Varies a subcatchment feature over a range and returns a <code>pd.DataFrame</code> with summary statistics for each value.</li>
+        <li><code>simulate_subcatchment_timeseries(feature, start, stop, step)</code> &mdash; Like <code>simulate_subcatchment</code> but returns per-timestep timeseries data instead of summary statistics. Returns a <code>dict[float, pd.DataFrame]</code> mapping parameter values to DataFrames.</li>
+        <li><code>simulate_area(start=1, stop=10, step=1)</code> &mdash; Simulates the subcatchment area in a selected range.</li>
+        <li><code>simulate_percent_impervious(start=0, stop=100, step=10)</code> &mdash; Simulates the percent impervious of a subcatchment.</li>
+        <li><code>simulate_percent_slope(start=0, stop=100, step=10)</code> &mdash; Simulates the subcatchment's percent slope.</li>
+        <li><code>simulate_width(start=0, stop=100, step=10)</code> &mdash; Simulates the width of the subcatchment.</li>
+        <li><code>simulate_curb_length(start=0, stop=100, step=10)</code> &mdash; Simulates the curb length of a subcatchment.</li>
+        <li><code>simulate_percent_zero_imperv(start=0, stop=100, step=10)</code> &mdash; Simulates varying percent impervious area with no depression storage.</li>
+        <li><code>simulate_manning_n(param)</code> &mdash; Simulates a subcatchment using predefined Manning's n literature values (McCuen et al., 1996). Does not accept <code>start</code>/<code>stop</code>/<code>step</code>.</li>
+        <li><code>simulate_n_imperv()</code> &mdash; Simulates Manning's n for impervious area using predefined literature values.</li>
+        <li><code>simulate_n_perv()</code> &mdash; Simulates Manning's n for pervious area using predefined literature values.</li>
+        <li><code>simulate_destore(param)</code> &mdash; Simulates varying depth of depression storage using predefined values (ASCE, 1992). Does not accept <code>start</code>/<code>stop</code>/<code>step</code>.</li>
+        <li><code>simulate_s_imperv()</code> &mdash; Simulates the impervious depth of depression storage using predefined literature values.</li>
+        <li><code>simulate_s_perv()</code> &mdash; Simulates the pervious depth of depression storage using predefined literature values.</li>
     </ul>
-    <p>To use the package, you need to install it and import it into your Python code. Once imported, you can create an instance of the <code>FeaturesSimulation</code> class by passing in the <code>subcatchment_id</code> and <code>raw_file</code> arguments. You can then call any of the methods on the instance of the class, passing in any necessary arguments. The method will return a pandas dataframe with the results of the simulation.</p>
 
-    <br>
-    <br>
-    <h2 style="text-align: center;">Examples of How To Use</h2>
-    <br>
+    <h3 class="text-center" id="analysis-functions">Analysis Functions</h3>
+    <p>The <code>catchment_simulation.analysis</code> module provides analytical helpers for hydrograph data returned by <code>calculate_timeseries</code>:</p>
+    <ul>
+        <li><code>time_to_peak(timeseries, column="runoff")</code> &mdash; Calculates the elapsed time from simulation start to the peak value. Returns a <code>pd.Timedelta</code>.</li>
+        <li><code>runoff_volume(timeseries, column="runoff", start=None, end=None)</code> &mdash; Computes total runoff volume by integrating flow rate over time using the trapezoidal rule. Supports optional <code>start</code>/<code>end</code> time window. Returns volume in flow-unit &times; seconds.</li>
+    </ul>
 
-    <h3 style="text-align: center;">Simulate catchment slope in selected range.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+    <h3 class="text-center" id="validation-schemas">Validation Schemas</h3>
+    <p>The <code>catchment_simulation.schemas</code> module provides Pydantic models for runtime validation of simulation parameters. Invalid input raises <code>pydantic.ValidationError</code>.</p>
+    <ul>
+        <li><code>SimulationParams</code> &mdash; Validates range sweep parameters: <code>start &ge; 0</code>, <code>stop &ge; 0</code>, <code>start &le; stop</code>, and <code>step &gt; 0</code>.</li>
+        <li><code>SubcatchmentParams</code> &mdash; Validates physical parameters of a subcatchment (area, slope, imperviousness, width, Manning's n, depression storage, percent zero imperv).</li>
+        <li><code>SimulationMethodParams</code> &mdash; Validates method name, <code>catchment_name</code>, and associated range parameters. Predefined methods (Manning's n and depression storage) do not accept <code>start</code>/<code>stop</code>/<code>step</code>.</li>
+    </ul>
 
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_percent_slope(start=1, stop: = 10, step = 1)
-    </code></pre>
+    <p>To use the package, install it and import it into your Python code. It is recommended to use the context manager (<code>with</code> statement) to ensure temporary files are cleaned up automatically. You can then call any of the methods on the instance, passing in any necessary arguments. Methods return a pandas DataFrame with the results of the simulation.</p>
+
+    <h2 class="text-center mt-5" id="examples">Examples of How To Use</h2>
+
+    <h3 class="text-center mt-4" id="example-slope">Simulate catchment slope in selected range.</h3>
+<pre class="code-snippet"><code class="language-python">
+from catchment_simulation import FeaturesSimulation
+
+with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
+    df = model.simulate_percent_slope(start=1, stop=10, step=1)
+</code></pre>
     <!-- Plot slope data-->
-    <div id="plot-slope"><p class="text-muted text-center">Loading chart...</p></div>
+    <div id="plot-slope" role="img" aria-label="Chart: dependence of runoff on subcatchment slope"><p class="text-muted text-center">Loading chart...</p></div>
 
+    <h3 class="text-center mt-4" id="example-area">Simulate catchment area in selected range.</h3>
+<pre class="code-snippet"><code class="language-python">
+from catchment_simulation import FeaturesSimulation
 
-    <!-- Plot area-->
-    <h3 style="text-align: center;">Simulate catchment area in selected range.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
+    df = model.simulate_area(start=1, stop=100, step=1)
+</code></pre>
+    <div id="plot-area" role="img" aria-label="Chart: dependence of runoff on subcatchment area"><p class="text-muted text-center">Loading chart...</p></div>
 
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_area(start=1, stop: = 100, step = 1)
-    </code></pre>
-    <div id="plot-area"><p class="text-muted text-center">Loading chart...</p></div>
+    <h3 class="text-center mt-4" id="example-width">Simulate catchment width in selected range.</h3>
+<pre class="code-snippet"><code class="language-python">
+from catchment_simulation import FeaturesSimulation
 
+with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
+    df = model.simulate_width(start=1, stop=1000, step=1)
+</code></pre>
+    <div id="plot-width" role="img" aria-label="Chart: dependence of runoff on subcatchment width"><p class="text-muted text-center">Loading chart...</p></div>
 
-    <!-- Plot width-->
-    <h3 style="text-align: center;">Simulate catchment width in selected range.</h3>
-    <pre class="code-snippet"><code class="language-python">
-        from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+    <h3 class="text-center mt-4" id="example-predefined">Simulate Manning's n using predefined literature values.</h3>
+<pre class="code-snippet"><code class="language-python">
+from catchment_simulation import FeaturesSimulation
 
-        subcatchment_id = "S1"
-        raw_file = "catchment_simulation/example.inp"
-        model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-        df = model.simulate_width(start=1, stop: = 1000, step = 1)
-    </code></pre>
-    <div id="plot-width"><p class="text-muted text-center">Loading chart...</p></div>
+with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
+    df = model.simulate_n_imperv()
+</code></pre>
+
+    <h3 class="text-center mt-4" id="example-timeseries">Collect timeseries data and compute analytical metrics.</h3>
+<pre class="code-snippet"><code class="language-python">
+from catchment_simulation import FeaturesSimulation, time_to_peak, runoff_volume
+
+with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
+    ts = model.calculate_timeseries()
+    ttp = time_to_peak(ts, column="runoff")
+    vol = runoff_volume(ts, column="runoff")
+</code></pre>
+
+    <h3 class="text-center mt-4" id="example-sweep">Sweep a parameter and collect timeseries for each value.</h3>
+<pre class="code-snippet"><code class="language-python">
+from catchment_simulation import FeaturesSimulation
+
+with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
+    results = model.simulate_subcatchment_timeseries(
+        feature="PercImperv", start=0, stop=100, step=10
+    )
+    # results is dict[float, pd.DataFrame]
+</code></pre>
 
 {{ chart_data|json_script:"chart-data" }}
 {% endblock %}
