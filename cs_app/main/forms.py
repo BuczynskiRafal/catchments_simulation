@@ -133,11 +133,16 @@ class SimulationForm(forms.Form):
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
     catchment_name = forms.CharField(
-        max_length=100, widget=forms.TextInput(attrs={"class": "form-control"})
+        widget=forms.Select(
+            choices=[("", "--- Upload a file first ---")],
+            attrs={"class": "form-select"},
+        ),
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, catchment_choices=None, **kwargs):
         super().__init__(*args, **kwargs)
+        if catchment_choices is not None:
+            self.fields["catchment_name"].widget.choices = catchment_choices
         self.helper = FormHelper()
         self.helper.form_method = "post"
         self.helper.form_action = "simulation_view"
@@ -221,12 +226,16 @@ class TimeseriesForm(forms.Form):
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
     catchment_name = forms.CharField(
-        max_length=100,
-        widget=forms.TextInput(attrs={"class": "form-control"}),
+        widget=forms.Select(
+            choices=[("", "--- Upload a file first ---")],
+            attrs={"class": "form-select"},
+        ),
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, catchment_choices=None, **kwargs):
         super().__init__(*args, **kwargs)
+        if catchment_choices is not None:
+            self.fields["catchment_name"].widget.choices = catchment_choices
         self.helper = FormHelper()
         self.helper.form_method = "post"
         self.helper.form_action = "timeseries"
