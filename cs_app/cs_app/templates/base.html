@@ -133,11 +133,23 @@
                 const clearUrl = '{% url "main:upload_clear" %}';
                 const statusUrl = '{% url "main:upload_status" %}';
                 const subcatchmentsUrl = '{% url "main:subcatchments" %}';
+                var preferredCatchmentValue = '';
+                var catchmentSelect = document.getElementById('id_catchment_name');
+
+                if (catchmentSelect) {
+                    preferredCatchmentValue = catchmentSelect.value || '';
+                    catchmentSelect.addEventListener('change', function() {
+                        preferredCatchmentValue = this.value || '';
+                    });
+                }
 
                 function fetchSubcatchments() {
                     var select = document.getElementById('id_catchment_name');
                     if (!select) return;
-                    var previousValue = select.value;
+                    if (select.value) {
+                        preferredCatchmentValue = select.value;
+                    }
+                    var previousValue = preferredCatchmentValue;
                     select.disabled = true;
                     select.innerHTML = '<option value="">Loading...</option>';
                     fetch(subcatchmentsUrl, {
@@ -151,19 +163,27 @@
                             opt.value = '';
                             opt.textContent = '--- Upload a file first ---';
                             select.appendChild(opt);
+                            preferredCatchmentValue = '';
                             return;
                         }
                         var placeholder = document.createElement('option');
                         placeholder.value = '';
                         placeholder.textContent = '--- Select catchment ---';
                         select.appendChild(placeholder);
+                        var hasSelectedValue = false;
                         data.subcatchments.forEach(function(name) {
                             var opt = document.createElement('option');
                             opt.value = name;
                             opt.textContent = name;
-                            if (name === previousValue) opt.selected = true;
+                            if (name === previousValue) {
+                                opt.selected = true;
+                                hasSelectedValue = true;
+                            }
                             select.appendChild(opt);
                         });
+                        if (!hasSelectedValue) {
+                            preferredCatchmentValue = '';
+                        }
                     })
                     .catch(function(err) { console.warn('subcatchments fetch failed:', err); })
                     .finally(function() { select.disabled = false; });
@@ -172,6 +192,7 @@
                 function resetCatchmentDropdown() {
                     var select = document.getElementById('id_catchment_name');
                     if (!select) return;
+                    preferredCatchmentValue = '';
                     select.innerHTML = '<option value="">--- Upload a file first ---</option>';
                 }
 
