@@ -13,10 +13,12 @@ from functools import lru_cache, wraps
 import numpy as np
 import pandas as pd
 import swmmio
+from django import forms
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.http import (
     HttpRequest,
@@ -38,6 +40,10 @@ from main.schemas import ContactMessage
 from main.services import send_message
 
 logger = logging.getLogger(__name__)
+SIM_FORM_STATE_SESSION_KEY = "sim_form_state"
+TS_FORM_STATE_SESSION_KEY = "ts_form_state"
+SIM_FORM_STATE_FIELDS = ("option", "start", "stop", "step", "catchment_name")
+TS_FORM_STATE_FIELDS = ("mode", "feature", "start", "stop", "step", "catchment_name")
 
 
 def ajax_login_required(view_func):
@@ -296,6 +302,8 @@ def upload(request: HttpRequest) -> JsonResponse:
                 destination.write(chunk)
 
         request.session["uploaded_file_path"] = file_path
+        request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
+        request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
         # Invalidate cached subcatchment IDs so they are re-read from new file
         request.session.pop("_subcatchment_ids", None)
         request.session.pop("_subcatchment_ids_file", None)
@@ -362,6 +370,8 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
     if file_path and os.path.exists(file_path):
         os.remove(file_path)
 
+    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
+    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
     # Clear cached subcatchment IDs
     request.session.pop("_subcatchment_ids", None)
     request.session.pop("_subcatchment_ids_file", None)
@@ -561,9 +571,82 @@ def clear_session_variables(request: HttpRequest) -> None:
         "ts_show_results",
         "ts_output_file_url",
         "ts_output_file_name",
+        SIM_FORM_STATE_SESSION_KEY,
+        TS_FORM_STATE_SESSION_KEY,
     ]:
         if variable in request.session:
             del request.session[variable]
+
+
+def _save_form_state(
+    request: HttpRequest,
+    session_key: str,
+    cleaned_data: dict,
+    fields: tuple[str, ...],
+) -> None:
+    """
+    Persist selected form values in session for subsequent GET requests.
+
+    Values that are ``None`` are skipped so the form can fall back to field defaults.
+    """
+    state = {}
+    for field_name in fields:
+        value = cleaned_data.get(field_name)
+        if value is not None:
+            state[field_name] = value
+    request.session[session_key] = state
+
+
+def _get_form_initial(
+    request: HttpRequest,
+    session_key: str,
+    catchment_choices: list[tuple[str, str]],
+    form_class: type[forms.Form],
+    fields: tuple[str, ...],
+) -> dict:
+    """
+    Return sanitized initial values restored from session.
+
+    Dynamic ``catchment_name`` is validated against current catchment choices.
+    Other fields are validated/coerced using Django field ``to_python`` and
+    static choice sets where applicable.
+    """
+    state = request.session.get(session_key)
+    if not isinstance(state, dict):
+        return {}
+
+    initial = {}
+    for field_name in fields:
+        if field_name not in state:
+            continue
+
+        field = form_class.base_fields.get(field_name)
+        if field is None:
+            continue
+
+        try:
+            coerced_value = field.to_python(state[field_name])
+        except (ValidationError, TypeError, ValueError):
+            continue
+
+        if coerced_value is None:
+            continue
+
+        if isinstance(field, forms.ChoiceField) and field_name != "catchment_name":
+            if not field.valid_value(coerced_value):
+                continue
+
+        initial[field_name] = coerced_value
+
+    valid_catchments = {value for value, _ in catchment_choices if value}
+    catchment_name = initial.get("catchment_name")
+    if catchment_name and catchment_name not in valid_catchments:
+        initial["catchment_name"] = ""
+
+    if initial != state:
+        request.session[session_key] = initial
+
+    return initial
 
 
 @login_required
@@ -636,6 +719,9 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                 request.session["feature_name"] = feature_name
 
                 save_output_file(request, df, output_file_name)
+                _save_form_state(
+                    request, SIM_FORM_STATE_SESSION_KEY, form.cleaned_data, SIM_FORM_STATE_FIELDS
+                )
                 return redirect("main:simulation")
 
             except Exception as e:
@@ -643,7 +729,14 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                 messages.error(request, "An error occurred while running the simulation.")
     else:
         catchment_choices = _get_catchment_choices(request)
-        form = SimulationForm(catchment_choices=catchment_choices)
+        initial = _get_form_initial(
+            request,
+            SIM_FORM_STATE_SESSION_KEY,
+            catchment_choices,
+            SimulationForm,
+            SIM_FORM_STATE_FIELDS,
+        )
+        form = SimulationForm(catchment_choices=catchment_choices, initial=initial)
         session_data = get_session_variables(request)
 
     return render(
@@ -753,6 +846,12 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         request.session["ts_runoff_volume"] = vol_str
                         request.session["ts_show_results"] = True
 
+                        _save_form_state(
+                            request,
+                            TS_FORM_STATE_SESSION_KEY,
+                            form.cleaned_data,
+                            TS_FORM_STATE_FIELDS,
+                        )
                         return redirect("main:timeseries")
 
                     elif mode == "sweep":
@@ -789,6 +888,12 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         request.session["ts_time_to_peak"] = None
                         request.session["ts_runoff_volume"] = None
 
+                        _save_form_state(
+                            request,
+                            TS_FORM_STATE_SESSION_KEY,
+                            form.cleaned_data,
+                            TS_FORM_STATE_FIELDS,
+                        )
                         return redirect("main:timeseries")
 
             except Exception as e:
@@ -796,7 +901,14 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                 messages.error(request, "An error occurred while running the analysis.")
     else:
         catchment_choices = _get_catchment_choices(request)
-        form = TimeseriesForm(catchment_choices=catchment_choices)
+        initial = _get_form_initial(
+            request,
+            TS_FORM_STATE_SESSION_KEY,
+            catchment_choices,
+            TimeseriesForm,
+            TS_FORM_STATE_FIELDS,
+        )
+        form = TimeseriesForm(catchment_choices=catchment_choices, initial=initial)
         session_data = {
             "ts_chart_config": request.session.get("ts_chart_config"),
             "ts_time_to_peak": request.session.get("ts_time_to_peak"),

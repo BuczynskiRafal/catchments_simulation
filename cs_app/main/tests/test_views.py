@@ -132,6 +132,232 @@ def test_simulation_view_get(user):
     assert response.status_code == 200
 
 
+@pytest.mark.django_db
+def test_simulation_view_prefills_form_state_from_session(client, user):
+    """GET /simulation restores the previously selected form state."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1", "S2"]
+    session["sim_form_state"] = {
+        "option": "simulate_percent_slope",
+        "start": 1,
+        "stop": 11,
+        "step": 2,
+        "catchment_name": "S2",
+    }
+    session.save()
+
+    response = client.get(reverse("main:simulation"))
+
+    assert response.status_code == 200
+    form = response.context["form"]
+    assert form["option"].value() == "simulate_percent_slope"
+    assert int(form["start"].value()) == 1
+    assert int(form["stop"].value()) == 11
+    assert int(form["step"].value()) == 2
+    assert form["catchment_name"].value() == "S2"
+
+
+@pytest.mark.django_db
+def test_simulation_view_clears_unavailable_catchment_in_saved_state(client, user):
+    """Saved simulation catchment is reset when not present in current choices."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session["sim_form_state"] = {
+        "option": "simulate_percent_slope",
+        "start": 1,
+        "stop": 11,
+        "step": 2,
+        "catchment_name": "S2",
+    }
+    session.save()
+
+    response = client.get(reverse("main:simulation"))
+
+    assert response.status_code == 200
+    form = response.context["form"]
+    assert not form["catchment_name"].value()
+
+    updated_session = client.session
+    assert updated_session["sim_form_state"]["catchment_name"] == ""
+
+
+@pytest.mark.django_db
+def test_simulation_view_sanitizes_invalid_saved_form_values(client, user):
+    """Invalid saved values are dropped before being used as form initial data."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session["sim_form_state"] = {
+        "option": "invalid-option",
+        "start": "<script>alert(1)</script>",
+        "stop": "bad",
+        "step": "NaN",
+        "catchment_name": "S1",
+    }
+    session.save()
+
+    response = client.get(reverse("main:simulation"))
+
+    assert response.status_code == 200
+    form = response.context["form"]
+    assert form["catchment_name"].value() == "S1"
+    assert int(form["start"].value()) == 1
+    assert int(form["stop"].value()) == 10
+    assert int(form["step"].value()) == 1
+
+    updated_session = client.session
+    assert updated_session["sim_form_state"] == {"catchment_name": "S1"}
+
+
+@pytest.mark.django_db
+def test_simulation_view_ignores_none_numeric_values_in_saved_state(client, user):
+    """None numeric values from session should not override form defaults."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session["sim_form_state"] = {
+        "option": "simulate_n_imperv",
+        "start": None,
+        "stop": None,
+        "step": None,
+        "catchment_name": "S1",
+    }
+    session.save()
+
+    response = client.get(reverse("main:simulation"))
+
+    assert response.status_code == 200
+    form = response.context["form"]
+    assert form["option"].value() == "simulate_n_imperv"
+    assert int(form["start"].value()) == 1
+    assert int(form["stop"].value()) == 10
+    assert int(form["step"].value()) == 1
+    assert form["catchment_name"].value() == "S1"
+
+    updated_session = client.session
+    assert updated_session["sim_form_state"] == {
+        "option": "simulate_n_imperv",
+        "catchment_name": "S1",
+    }
+
+
+@pytest.mark.django_db
+def test_simulation_view_post_range_persists_form_state(client, user, monkeypatch):
+    """Successful simulation POST stores selections for subsequent GET requests."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    class DummyFeaturesSimulation:
+        def __init__(self, subcatchment_id, raw_file):
+            self.subcatchment_id = subcatchment_id
+            self.raw_file = raw_file
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def simulate_percent_slope(self, start, stop, step):
+            return pd.DataFrame(
+                {
+                    "PercSlope": [start, stop],
+                    "runoff": [1.0, 2.0],
+                }
+            )
+
+    def fake_save_output_file(request, df, output_file_name, session_prefix=""):
+        request.session[f"{session_prefix}output_file_url"] = "/media/fake.xlsx"
+        request.session[f"{session_prefix}output_file_name"] = output_file_name
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
+    monkeypatch.setattr("main.views.save_output_file", fake_save_output_file)
+
+    response = client.post(
+        reverse("main:simulation"),
+        data={
+            "option": "simulate_percent_slope",
+            "start": "1",
+            "stop": "5",
+            "step": "2",
+            "catchment_name": "S1",
+        },
+    )
+
+    assert response.status_code == 302
+    assert response.url == reverse("main:simulation")
+
+    updated_session = client.session
+    assert updated_session["sim_form_state"] == {
+        "option": "simulate_percent_slope",
+        "start": 1,
+        "stop": 5,
+        "step": 2,
+        "catchment_name": "S1",
+    }
+
+    get_response = client.get(reverse("main:simulation"))
+    assert get_response.status_code == 200
+    form = get_response.context["form"]
+    assert form["option"].value() == "simulate_percent_slope"
+    assert int(form["start"].value()) == 1
+    assert int(form["stop"].value()) == 5
+    assert int(form["step"].value()) == 2
+    assert form["catchment_name"].value() == "S1"
+
+
+@pytest.mark.django_db
+def test_simulation_view_post_failure_does_not_persist_form_state(client, user, monkeypatch):
+    """Failed simulation run must not persist form state in session."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    class FailingFeaturesSimulation:
+        def __init__(self, subcatchment_id, raw_file):
+            self.subcatchment_id = subcatchment_id
+            self.raw_file = raw_file
+
+        def __enter__(self):
+            raise RuntimeError("boom")
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", FailingFeaturesSimulation)
+
+    response = client.post(
+        reverse("main:simulation"),
+        data={
+            "option": "simulate_percent_slope",
+            "start": "1",
+            "stop": "5",
+            "step": "2",
+            "catchment_name": "S1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "sim_form_state" not in client.session
+
+
 # @pytest.mark.django_db
 # def test_download_result():
 #     """
@@ -259,22 +485,120 @@ def test_upload_authenticated_user_can_upload(user):
 
     request.user = user
 
-    response = upload(request)
+    expected_path = os.path.join("uploaded_files", str(user.id), "test_upload.inp")
+    try:
+        response = upload(request)
 
-    assert response.status_code == 200
-    data = json.loads(response.content)
-    assert "message" in data
+        assert response.status_code == 200
+        data = json.loads(response.content)
+        assert "message" in data
+        assert os.path.exists(expected_path), f"File was not saved at {expected_path}"
+
+        with open(expected_path, "rb") as f:
+            saved_content = f.read()
+        assert saved_content == inp_content, "Saved file content does not match uploaded content"
+        assert request.session.get("uploaded_file_path") == expected_path
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_upload_clears_timeseries_form_state(user):
+    """Uploading a file invalidates persisted timeseries form state."""
+    factory = RequestFactory()
+    inp_content = b"[TITLE]\nTest File\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile("test_upload.inp", inp_content, content_type="text/plain")
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["ts_form_state"] = {"mode": "sweep", "catchment_name": "S1"}
+    request.session.save()
+    request.user = user
 
     expected_path = os.path.join("uploaded_files", str(user.id), "test_upload.inp")
-    assert os.path.exists(expected_path), f"File was not saved at {expected_path}"
+    try:
+        response = upload(request)
 
-    with open(expected_path, "rb") as f:
-        saved_content = f.read()
-    assert saved_content == inp_content, "Saved file content does not match uploaded content"
-    assert request.session.get("uploaded_file_path") == expected_path
+        assert response.status_code == 200
+        assert "ts_form_state" not in request.session
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
 
-    if os.path.exists(expected_path):
-        os.remove(expected_path)
+
+@pytest.mark.django_db
+def test_upload_clears_simulation_form_state(user):
+    """Uploading a file invalidates persisted simulation form state."""
+    factory = RequestFactory()
+    inp_content = b"[TITLE]\nTest File\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile("test_upload.inp", inp_content, content_type="text/plain")
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S1"}
+    request.session.save()
+    request.user = user
+
+    expected_path = os.path.join("uploaded_files", str(user.id), "test_upload.inp")
+    try:
+        response = upload(request)
+
+        assert response.status_code == 200
+        assert "sim_form_state" not in request.session
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_upload_failure_preserves_existing_form_state_and_subcatchment_cache(user):
+    """Invalid upload should not mutate existing session state."""
+    factory = RequestFactory()
+    uploaded_file = SimpleUploadedFile(
+        "invalid.txt",
+        b"not an inp",
+        content_type="text/plain",
+    )
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = "uploaded_files/original.inp"
+    request.session["_subcatchment_ids_file"] = "uploaded_files/original.inp"
+    request.session["_subcatchment_ids"] = ["S1", "S2"]
+    request.session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S2"}
+    request.session["ts_form_state"] = {"mode": "sweep", "catchment_name": "S2"}
+    request.session.save()
+    request.user = user
+
+    response = upload(request)
+
+    assert response.status_code == 400
+    assert request.session["uploaded_file_path"] == "uploaded_files/original.inp"
+    assert request.session["_subcatchment_ids_file"] == "uploaded_files/original.inp"
+    assert request.session["_subcatchment_ids"] == ["S1", "S2"]
+    assert request.session["sim_form_state"] == {
+        "option": "simulate_percent_slope",
+        "catchment_name": "S2",
+    }
+    assert request.session["ts_form_state"] == {"mode": "sweep", "catchment_name": "S2"}
 
 
 @pytest.mark.django_db
@@ -328,6 +652,183 @@ def test_timeseries_view_get(user):
     response = timeseries_view(request)
 
     assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_timeseries_view_prefills_form_state_from_session(client, user):
+    """GET /timeseries restores the previously selected form state."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1", "S2"]
+    session["ts_form_state"] = {
+        "mode": "sweep",
+        "feature": "Area",
+        "start": 1.0,
+        "stop": 5.0,
+        "step": 0.5,
+        "catchment_name": "S2",
+    }
+    session.save()
+
+    response = client.get(reverse("main:timeseries"))
+
+    assert response.status_code == 200
+    form = response.context["form"]
+    assert form["mode"].value() == "sweep"
+    assert form["feature"].value() == "Area"
+    assert float(form["start"].value()) == 1.0
+    assert float(form["stop"].value()) == 5.0
+    assert float(form["step"].value()) == 0.5
+    assert form["catchment_name"].value() == "S2"
+
+
+@pytest.mark.django_db
+def test_timeseries_view_clears_unavailable_catchment_in_saved_state(client, user):
+    """Saved catchment is reset when it is not present in current choices."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session["ts_form_state"] = {
+        "mode": "sweep",
+        "feature": "Area",
+        "start": 1.0,
+        "stop": 5.0,
+        "step": 1.0,
+        "catchment_name": "S2",
+    }
+    session.save()
+
+    response = client.get(reverse("main:timeseries"))
+
+    assert response.status_code == 200
+    form = response.context["form"]
+    assert not form["catchment_name"].value()
+
+    updated_session = client.session
+    assert updated_session["ts_form_state"]["catchment_name"] == ""
+
+
+@pytest.mark.django_db
+def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatch):
+    """Successful sweep POST stores form selections for subsequent GET requests."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    class DummyFeaturesSimulation:
+        TIMESERIES_KEYS = ("rainfall", "runoff", "infiltration_loss", "evaporation_loss", "runon")
+
+        def __init__(self, subcatchment_id, raw_file):
+            self.subcatchment_id = subcatchment_id
+            self.raw_file = raw_file
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def simulate_subcatchment_timeseries(self, feature, start, stop, step):
+            idx = pd.date_range("2025-01-01", periods=2, freq="h", name="datetime")
+            df = pd.DataFrame(
+                {
+                    "rainfall": [0.1, 0.0],
+                    "runoff": [1.0, 0.5],
+                    "infiltration_loss": [0.0, 0.0],
+                    "evaporation_loss": [0.0, 0.0],
+                    "runon": [0.0, 0.0],
+                },
+                index=idx,
+            )
+            return {start: df}
+
+    def fake_save_sweep_output(request, results, output_file_name):
+        request.session["ts_output_file_url"] = "/media/fake.xlsx"
+        request.session["ts_output_file_name"] = output_file_name
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
+    monkeypatch.setattr("main.views._save_sweep_output", fake_save_sweep_output)
+
+    response = client.post(
+        reverse("main:timeseries"),
+        data={
+            "mode": "sweep",
+            "feature": "PercSlope",
+            "start": "0",
+            "stop": "20",
+            "step": "5",
+            "catchment_name": "S1",
+        },
+    )
+
+    assert response.status_code == 302
+    assert response.url == reverse("main:timeseries")
+
+    updated_session = client.session
+    assert updated_session["ts_form_state"] == {
+        "mode": "sweep",
+        "feature": "PercSlope",
+        "start": 0.0,
+        "stop": 20.0,
+        "step": 5.0,
+        "catchment_name": "S1",
+    }
+
+    get_response = client.get(reverse("main:timeseries"))
+    assert get_response.status_code == 200
+    form = get_response.context["form"]
+    assert form["mode"].value() == "sweep"
+    assert form["feature"].value() == "PercSlope"
+    assert float(form["start"].value()) == 0.0
+    assert float(form["stop"].value()) == 20.0
+    assert float(form["step"].value()) == 5.0
+    assert form["catchment_name"].value() == "S1"
+
+
+@pytest.mark.django_db
+def test_timeseries_view_post_failure_does_not_persist_form_state(client, user, monkeypatch):
+    """Failed timeseries run must not persist form state in session."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    class FailingFeaturesSimulation:
+        def __init__(self, subcatchment_id, raw_file):
+            self.subcatchment_id = subcatchment_id
+            self.raw_file = raw_file
+
+        def __enter__(self):
+            raise RuntimeError("boom")
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", FailingFeaturesSimulation)
+
+    response = client.post(
+        reverse("main:timeseries"),
+        data={
+            "mode": "sweep",
+            "feature": "PercSlope",
+            "start": "0",
+            "stop": "20",
+            "step": "5",
+            "catchment_name": "S1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "ts_form_state" not in client.session
 
 
 @pytest.mark.django_db
@@ -492,6 +993,8 @@ def test_clear_session_preserves_uploaded_file(user):
     request.session["uploaded_file_path"] = "uploaded_files/test.inp"
     request.session["show_download_button"] = True
     request.session["chart_config"] = {"data": []}
+    request.session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S1"}
+    request.session["ts_form_state"] = {"mode": "sweep", "catchment_name": "S1"}
     request.session.save()
 
     clear_session_variables(request)
@@ -499,6 +1002,8 @@ def test_clear_session_preserves_uploaded_file(user):
     assert request.session.get("uploaded_file_path") == "uploaded_files/test.inp"
     assert "show_download_button" not in request.session
     assert "chart_config" not in request.session
+    assert "sim_form_state" not in request.session
+    assert "ts_form_state" not in request.session
 
 
 # ── upload_clear tests (#4) ──────────────────────────────────────────────
@@ -604,6 +1109,49 @@ def test_upload_clear_stale_path(user):
     assert "uploaded_file_path" not in request.session
 
 
+@pytest.mark.django_db
+def test_upload_clear_removes_timeseries_form_state(user):
+    """upload_clear removes persisted timeseries form state."""
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/clear/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["ts_form_state"] = {"mode": "sweep", "catchment_name": "S1"}
+    request.session.save()
+    request.user = user
+
+    response = upload_clear(request)
+
+    assert response.status_code == 200
+    assert "ts_form_state" not in request.session
+
+
+@pytest.mark.django_db
+def test_upload_clear_removes_simulation_form_state(user):
+    """upload_clear removes persisted simulation form state."""
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/clear/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["sim_form_state"] = {
+        "option": "simulate_percent_slope",
+        "catchment_name": "S1",
+    }
+    request.session.save()
+    request.user = user
+
+    response = upload_clear(request)
+
+    assert response.status_code == 200
+    assert "sim_form_state" not in request.session
+
+
 # ── upload_status auth test (#5) ─────────────────────────────────────────
 
 
@@ -683,37 +1231,38 @@ def test_upload_persists_after_clear_session_and_new_simulation(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
-    assert response.status_code == 200
-    saved_path = request.session.get("uploaded_file_path")
-    assert saved_path is not None
+    saved_path = None
+    try:
+        response = upload(request)
+        assert response.status_code == 200
+        saved_path = request.session.get("uploaded_file_path")
+        assert saved_path is not None
 
-    # 2) Simulate what happens after a simulation run – clear results
-    request.session["show_download_button"] = True
-    request.session["chart_config"] = {"data": []}
-    clear_session_variables(request)
+        # 2) Simulate what happens after a simulation run – clear results
+        request.session["show_download_button"] = True
+        request.session["chart_config"] = {"data": []}
+        clear_session_variables(request)
 
-    # 3) Verify file path survived
-    assert request.session.get("uploaded_file_path") == saved_path
-    assert os.path.exists(saved_path)
+        # 3) Verify file path survived
+        assert request.session.get("uploaded_file_path") == saved_path
+        assert os.path.exists(saved_path)
 
-    # 4) Verify upload_status reports the file
-    status_request = factory.get(
-        "/upload/status/",
-        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
-    )
-    session_middleware.process_request(status_request)
-    status_request.session = request.session
-    status_request.user = user
+        # 4) Verify upload_status reports the file
+        status_request = factory.get(
+            "/upload/status/",
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        session_middleware.process_request(status_request)
+        status_request.session = request.session
+        status_request.user = user
 
-    status_response = upload_status(status_request)
-    data = json.loads(status_response.content)
-    assert data["has_file"] is True
-    assert data["filename"] == "persist_test.inp"
-
-    # Cleanup
-    if os.path.exists(saved_path):
-        os.remove(saved_path)
+        status_response = upload_status(status_request)
+        data = json.loads(status_response.content)
+        assert data["has_file"] is True
+        assert data["filename"] == "persist_test.inp"
+    finally:
+        if saved_path and os.path.exists(saved_path):
+            os.remove(saved_path)
 
 
 @pytest.mark.django_db
@@ -732,30 +1281,31 @@ def test_upload_replaces_old_file_on_disk(user):
     session_middleware.process_request(request)
     request.session.save()
     request.user = user
-    upload(request)
-    path_a = request.session["uploaded_file_path"]
-    assert os.path.exists(path_a)
+    path_b = None
+    try:
+        upload(request)
+        path_a = request.session["uploaded_file_path"]
+        assert os.path.exists(path_a)
 
-    # Upload second file (different name)
-    inp_b = b"[TITLE]\nFile B\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
-    request2 = factory.post(
-        "/upload/",
-        {"file": SimpleUploadedFile("file_b.inp", inp_b, content_type="text/plain")},
-        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
-    )
-    session_middleware.process_request(request2)
-    request2.session = request.session
-    request2.user = user
-    upload(request2)
-    path_b = request2.session["uploaded_file_path"]
+        # Upload second file (different name)
+        inp_b = b"[TITLE]\nFile B\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+        request2 = factory.post(
+            "/upload/",
+            {"file": SimpleUploadedFile("file_b.inp", inp_b, content_type="text/plain")},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        session_middleware.process_request(request2)
+        request2.session = request.session
+        request2.user = user
+        upload(request2)
+        path_b = request2.session["uploaded_file_path"]
 
-    # Old file should be gone, new file present
-    assert not os.path.exists(path_a), "Old file was not cleaned up"
-    assert os.path.exists(path_b)
-
-    # Cleanup
-    if os.path.exists(path_b):
-        os.remove(path_b)
+        # Old file should be gone, new file present
+        assert not os.path.exists(path_a), "Old file was not cleaned up"
+        assert os.path.exists(path_b)
+    finally:
+        if path_b and os.path.exists(path_b):
+            os.remove(path_b)
 
 
 # ── subcatchments endpoint tests ─────────────────────────────────────────
