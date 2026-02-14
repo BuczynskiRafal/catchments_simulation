@@ -55,7 +55,7 @@ web = [
     "plotly>=5.18.0",
     "dj-database-url==2.0.0",
     "whitenoise==6.4.0",
-    "gunicorn==20.1.0",
+    "gunicorn==25.1.0",
     "pydantic[email]>=2.0",
 ]
 docs = [
