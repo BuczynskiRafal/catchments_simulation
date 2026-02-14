@@ -1,7 +1,9 @@
 import json
 import os
 import shutil
+from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 from django.conf import settings
@@ -189,6 +191,58 @@ def test_calculations_get():
     response = calculations(request)
 
     assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_calculations_uses_model_after_simulation(monkeypatch):
+    """
+    Ensure calculations rebuilds swmmio.Model after SWMM run so report columns exist.
+    """
+    state = {"report_ready": False}
+
+    class FakeSimulation:
+        def __init__(self, _path):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __iter__(self):
+            yield object()
+
+        def __exit__(self, exc_type, exc, tb):
+            state["report_ready"] = True
+
+    class FakeModel:
+        def __init__(self, _path):
+            base = pd.DataFrame(index=["S1"], data={"PercImperv": [10.0]})
+            if state["report_ready"]:
+                base["TotalRunoffMG"] = [12.34]
+            self.subcatchments = SimpleNamespace(dataframe=base)
+
+    monkeypatch.setattr("main.views.Simulation", FakeSimulation)
+    monkeypatch.setattr("main.views.swmmio.Model", FakeModel)
+    monkeypatch.setattr("main.views.predict_runoff", lambda _model: np.array([4.56]))
+    monkeypatch.setattr("main.views._cleanup_swmm_side_files", lambda _path: None)
+
+    factory = RequestFactory()
+    request = factory.post("calculations")
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = "uploaded_files/test.inp"
+    request.session.save()
+
+    message_middleware = MessageMiddleware(lambda req: None)
+    message_middleware.process_request(request)
+
+    request.user = AnonymousUser()
+
+    response = calculations(request)
+
+    assert response.status_code == 200
+    assert b"S1" in response.content
+    assert b"12.34" in response.content
 
 
 @pytest.mark.django_db
