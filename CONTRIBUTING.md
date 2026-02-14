@@ -27,6 +27,13 @@ To start contributing to the project, follow these steps:
 5. Implement your changes, following the guidelines outlined in this document.
 6. Ensure your changes pass all tests and comply with our code style guidelines.
 
+### Dependency Workflow (uv)
+
+- Manage dependencies in `pyproject.toml` only.
+- Regenerate `uv.lock` after dependency changes using `uv lock`.
+- Commit `pyproject.toml` and `uv.lock` in the same pull request.
+- Install local environments with `uv sync --frozen --extra dev --extra web`.
+
 ## Submitting a Pull Request
 
 Once you have implemented your changes, you can submit a pull request. Please follow these steps:

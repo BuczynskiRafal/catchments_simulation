@@ -12,7 +12,7 @@ jobs:
     strategy:
       max-parallel: 4
       matrix:
-        python-version: ['3.9', '3.10', '3.11']
+        python-version: ['3.10', '3.11', '3.12']
 
     steps:
     - uses: actions/checkout@v4
@@ -26,7 +26,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install Dependencies
-      run: uv sync --frozen --extra dev --extra django
+      run: uv sync --frozen --extra dev --extra web
 
     - name: Run Tests
       run: |
@@ -40,3 +40,11 @@ jobs:
 
     - name: Minimize uv cache
       run: uv cache prune --ci
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build Django Docker image
+      run: docker build -f cs_app/Dockerfile .
