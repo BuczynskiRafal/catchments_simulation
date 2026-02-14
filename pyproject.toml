@@ -45,7 +45,7 @@ dev = [
 ]
 web = [
     "Django==3.2",
-    "Werkzeug==2.0.0",
+    "Werkzeug==3.1.5",
     "crispy-bootstrap4==2022.1",
     "python-dotenv==1.0.0",
     "django-crispy-forms==2.0",
