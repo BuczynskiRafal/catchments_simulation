@@ -1,6 +1,6 @@
 import json
 import os
-import shutil
+from io import BytesIO
 from types import SimpleNamespace
 
 import numpy as np
@@ -10,16 +10,19 @@ from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory
 from django.urls import reverse
 
 from main.views import (
+    SIM_RESULT_TOKEN_SESSION_KEY,
+    TS_RESULT_TOKEN_SESSION_KEY,
     _get_catchment_choices,
     _get_subcatchment_ids,
+    _result_cache_key,
     calculations,
     clear_session_variables,
-    save_output_file,
     simulation_view,
     subcatchments,
     timeseries_view,
@@ -282,12 +285,7 @@ def test_simulation_view_post_range_persists_form_state(client, user, monkeypatc
                 }
             )
 
-    def fake_save_output_file(request, df, output_file_name, session_prefix=""):
-        request.session[f"{session_prefix}output_file_url"] = "/media/fake.xlsx"
-        request.session[f"{session_prefix}output_file_name"] = output_file_name
-
     monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
-    monkeypatch.setattr("main.views.save_output_file", fake_save_output_file)
 
     response = client.post(
         reverse("main:simulation"),
@@ -311,6 +309,9 @@ def test_simulation_view_post_range_persists_form_state(client, user, monkeypatc
         "step": 2,
         "catchment_name": "S1",
     }
+    token = updated_session[SIM_RESULT_TOKEN_SESSION_KEY]
+    cached_payload = cache.get(_result_cache_key("sim", user.id, token))
+    assert cached_payload is not None
 
     get_response = client.get(reverse("main:simulation"))
     assert get_response.status_code == 200
@@ -358,6 +359,49 @@ def test_simulation_view_post_failure_does_not_persist_form_state(client, user, 
 
     assert response.status_code == 200
     assert "sim_form_state" not in client.session
+
+
+@pytest.mark.django_db
+def test_simulation_view_rejects_oversized_cached_payload(client, user, monkeypatch):
+    """Oversized simulation payload should not be stored in cache/session token."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    class HugeFeaturesSimulation:
+        def __init__(self, subcatchment_id, raw_file):
+            self.subcatchment_id = subcatchment_id
+            self.raw_file = raw_file
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def simulate_percent_slope(self, start, stop, step):
+            size = 2000
+            return pd.DataFrame({"PercSlope": list(range(size)), "runoff": list(range(size))})
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", HugeFeaturesSimulation)
+    monkeypatch.setattr("main.views.MAX_RESULT_CACHE_BYTES", 200)
+
+    response = client.post(
+        reverse("main:simulation"),
+        data={
+            "option": "simulate_percent_slope",
+            "start": "1",
+            "stop": "2000",
+            "step": "1",
+            "catchment_name": "S1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert SIM_RESULT_TOKEN_SESSION_KEY not in client.session
 
 
 # @pytest.mark.django_db
@@ -656,36 +700,94 @@ def test_upload_failure_preserves_existing_form_state_and_subcatchment_cache(use
 
 
 @pytest.mark.django_db
-def test_save_output_file_creates_directory(user):
-    """
-    Test that save_output_file saves to default_storage, sets session keys,
-    and cleans up the temp file.
-    """
-    from django.core.files.storage import default_storage
+def test_download_simulation_results_streams_excel(client, user):
+    """Simulation download endpoint returns an in-memory Excel attachment."""
+    client.force_login(user)
+    token = "11111111111111111111111111111111"
+    cache.set(
+        _result_cache_key("sim", user.id, token),
+        json.dumps(
+            {
+                "output_file_name": "simulation_result.xlsx",
+                "results_columns": ["PercSlope", "runoff"],
+                "results_data": [[1, 10.5], [2, 20.25]],
+            }
+        ),
+    )
 
-    output_dir = "output_files"
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
+    response = client.post(reverse("main:download_simulation_results"), data={"token": token})
 
-    factory = RequestFactory()
-    request = factory.get("/")
-    middleware = SessionMiddleware(lambda req: None)
-    middleware.process_request(request)
-    request.session.save()
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "simulation_result.xlsx" in response["Content-Disposition"]
 
-    df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
-    save_output_file(request, df, "test_result.xlsx")
+    body = b"".join(response.streaming_content)
+    df = pd.read_excel(BytesIO(body), sheet_name="results")
+    assert list(df.columns) == ["PercSlope", "runoff"]
+    assert df.shape == (2, 2)
 
-    assert request.session["output_file_name"] == "test_result.xlsx"
-    assert "output_file_url" in request.session
-    assert default_storage.exists("test_result.xlsx")
 
-    # Temp file should be cleaned up
-    if os.path.isdir(output_dir):
-        assert len(os.listdir(output_dir)) == 0
+@pytest.mark.django_db
+def test_download_simulation_results_without_data_redirects(client, user):
+    """Simulation download endpoint redirects when session has no results."""
+    client.force_login(user)
 
-    default_storage.delete("test_result.xlsx")
-    shutil.rmtree(output_dir, ignore_errors=True)
+    response = client.post(reverse("main:download_simulation_results"), data={"token": "missing"})
+
+    assert response.status_code == 302
+    assert response.url == reverse("main:simulation")
+
+
+@pytest.mark.django_db
+def test_download_simulation_results_get_not_allowed(client, user):
+    """Simulation download endpoint accepts POST only."""
+    client.force_login(user)
+
+    response = client.get(reverse("main:download_simulation_results"))
+
+    assert response.status_code == 405
+
+
+@pytest.mark.django_db
+def test_download_simulation_results_isolated_by_token(client, user):
+    """Two result tokens should download their own payloads (no cross-tab overwrite)."""
+    client.force_login(user)
+    cache.set(
+        _result_cache_key("sim", user.id, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        json.dumps(
+            {
+                "output_file_name": "a.xlsx",
+                "results_columns": ["PercSlope", "runoff"],
+                "results_data": [[1, 11.0]],
+            }
+        ),
+    )
+    cache.set(
+        _result_cache_key("sim", user.id, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        json.dumps(
+            {
+                "output_file_name": "b.xlsx",
+                "results_columns": ["PercSlope", "runoff"],
+                "results_data": [[2, 22.0]],
+            }
+        ),
+    )
+
+    response_a = client.post(
+        reverse("main:download_simulation_results"),
+        data={"token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    )
+    response_b = client.post(
+        reverse("main:download_simulation_results"),
+        data={"token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    )
+
+    df_a = pd.read_excel(BytesIO(b"".join(response_a.streaming_content)), sheet_name="results")
+    df_b = pd.read_excel(BytesIO(b"".join(response_b.streaming_content)), sheet_name="results")
+    assert df_a.iloc[0]["runoff"] == 11.0
+    assert df_b.iloc[0]["runoff"] == 22.0
 
 
 @pytest.mark.django_db
@@ -803,12 +905,7 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
             )
             return {start: df}
 
-    def fake_save_sweep_output(request, results, output_file_name):
-        request.session["ts_output_file_url"] = "/media/fake.xlsx"
-        request.session["ts_output_file_name"] = output_file_name
-
     monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
-    monkeypatch.setattr("main.views._save_sweep_output", fake_save_sweep_output)
 
     response = client.post(
         reverse("main:timeseries"),
@@ -834,6 +931,9 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
         "step": 5.0,
         "catchment_name": "S1",
     }
+    token = updated_session[TS_RESULT_TOKEN_SESSION_KEY]
+    cached_payload = cache.get(_result_cache_key("ts", user.id, token))
+    assert cached_payload is not None
 
     get_response = client.get(reverse("main:timeseries"))
     assert get_response.status_code == 200
@@ -844,6 +944,117 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
     assert float(form["stop"].value()) == 20.0
     assert float(form["step"].value()) == 5.0
     assert form["catchment_name"].value() == "S1"
+
+
+@pytest.mark.django_db
+def test_download_timeseries_results_single_streams_excel(client, user):
+    """Timeseries single-mode download returns one-sheet Excel attachment."""
+    client.force_login(user)
+    token = "22222222222222222222222222222222"
+    cache.set(
+        _result_cache_key("ts", user.id, token),
+        json.dumps(
+            {
+                "mode": "single",
+                "output_file_name": "timeseries_single.xlsx",
+                "data": [
+                    {"datetime": "2025-01-01 00:00:00", "runoff": 1.1},
+                    {"datetime": "2025-01-01 01:00:00", "runoff": 0.9},
+                ],
+            }
+        ),
+    )
+
+    response = client.post(reverse("main:download_timeseries_results"), data={"token": token})
+
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "timeseries_single.xlsx" in response["Content-Disposition"]
+
+    body = b"".join(response.streaming_content)
+    df = pd.read_excel(BytesIO(body), sheet_name="timeseries")
+    assert "datetime" in df.columns
+    assert "runoff" in df.columns
+    assert df.shape[0] == 2
+
+
+@pytest.mark.django_db
+def test_download_timeseries_results_sweep_streams_multisheet_excel(client, user):
+    """Timeseries sweep-mode download returns multi-sheet Excel attachment."""
+    client.force_login(user)
+    token = "33333333333333333333333333333333"
+    cache.set(
+        _result_cache_key("ts", user.id, token),
+        json.dumps(
+            {
+                "mode": "sweep",
+                "output_file_name": "timeseries_sweep.xlsx",
+                "data": {
+                    "0.0": [{"datetime": "2025-01-01 00:00:00", "runoff": 0.1}],
+                    "10.0": [{"datetime": "2025-01-01 00:00:00", "runoff": 0.5}],
+                },
+            }
+        ),
+    )
+
+    response = client.post(reverse("main:download_timeseries_results"), data={"token": token})
+
+    assert response.status_code == 200
+    assert "timeseries_sweep.xlsx" in response["Content-Disposition"]
+    body = b"".join(response.streaming_content)
+    workbook = pd.ExcelFile(BytesIO(body))
+    assert sorted(workbook.sheet_names) == ["val_0.0", "val_10.0"]
+
+
+@pytest.mark.django_db
+def test_download_timeseries_results_handles_sheet_name_collisions(client, user):
+    """Colliding long sheet names should be auto-deduplicated."""
+    client.force_login(user)
+    token = "44444444444444444444444444444444"
+    cache.set(
+        _result_cache_key("ts", user.id, token),
+        json.dumps(
+            {
+                "mode": "sweep",
+                "output_file_name": "timeseries_collision.xlsx",
+                "data": {
+                    "123456789012345678901234567890123": [{"runoff": 0.1}],
+                    "123456789012345678901234567890124": [{"runoff": 0.2}],
+                },
+            }
+        ),
+    )
+
+    response = client.post(reverse("main:download_timeseries_results"), data={"token": token})
+
+    assert response.status_code == 200
+    workbook = pd.ExcelFile(BytesIO(b"".join(response.streaming_content)))
+    assert len(workbook.sheet_names) == 2
+    assert workbook.sheet_names[0] != workbook.sheet_names[1]
+    assert all(len(name) <= 31 for name in workbook.sheet_names)
+
+
+@pytest.mark.django_db
+def test_download_timeseries_results_without_data_redirects(client, user):
+    """Timeseries download endpoint redirects when session has no results."""
+    client.force_login(user)
+
+    response = client.post(reverse("main:download_timeseries_results"), data={"token": "missing"})
+
+    assert response.status_code == 302
+    assert response.url == reverse("main:timeseries")
+
+
+@pytest.mark.django_db
+def test_download_timeseries_results_get_not_allowed(client, user):
+    """Timeseries download endpoint accepts POST only."""
+    client.force_login(user)
+
+    response = client.get(reverse("main:download_timeseries_results"))
+
+    assert response.status_code == 405
 
 
 @pytest.mark.django_db
@@ -1047,9 +1258,20 @@ def test_clear_session_preserves_uploaded_file(user):
     request.session["uploaded_file_path"] = "uploaded_files/test.inp"
     request.session["show_download_button"] = True
     request.session["chart_config"] = {"data": []}
+    request.session[SIM_RESULT_TOKEN_SESSION_KEY] = "cccccccccccccccccccccccccccccccc"
+    request.session[TS_RESULT_TOKEN_SESSION_KEY] = "dddddddddddddddddddddddddddddddd"
     request.session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S1"}
     request.session["ts_form_state"] = {"mode": "sweep", "catchment_name": "S1"}
     request.session.save()
+    request.user = user
+    cache.set(
+        _result_cache_key("sim", user.id, "cccccccccccccccccccccccccccccccc"),
+        json.dumps({"value": 1}),
+    )
+    cache.set(
+        _result_cache_key("ts", user.id, "dddddddddddddddddddddddddddddddd"),
+        json.dumps({"value": 1}),
+    )
 
     clear_session_variables(request)
 
@@ -1058,6 +1280,8 @@ def test_clear_session_preserves_uploaded_file(user):
     assert "chart_config" not in request.session
     assert "sim_form_state" not in request.session
     assert "ts_form_state" not in request.session
+    assert cache.get(_result_cache_key("sim", user.id, "cccccccccccccccccccccccccccccccc")) is None
+    assert cache.get(_result_cache_key("ts", user.id, "dddddddddddddddddddddddddddddddd")) is None
 
 
 # ── upload_clear tests (#4) ──────────────────────────────────────────────

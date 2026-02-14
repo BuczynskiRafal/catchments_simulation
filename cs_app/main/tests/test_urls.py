@@ -49,6 +49,18 @@ def test_timeseries_view_url():
     assert resolve(path).view_name == "main:timeseries"
 
 
+def test_download_simulation_results_url():
+    """Tests the URL of the simulation download endpoint."""
+    path = reverse("main:download_simulation_results")
+    assert resolve(path).view_name == "main:download_simulation_results"
+
+
+def test_download_timeseries_results_url():
+    """Tests the URL of the timeseries download endpoint."""
+    path = reverse("main:download_timeseries_results")
+    assert resolve(path).view_name == "main:download_timeseries_results"
+
+
 def test_subcatchments_url():
     """Tests the URL of the subcatchments endpoint."""
     path = reverse("main:subcatchments")
