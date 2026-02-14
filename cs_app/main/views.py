@@ -7,8 +7,11 @@ import datetime
 import json
 import logging
 import os
+import re
 import uuid
+from copy import deepcopy
 from functools import lru_cache, wraps
+from io import BytesIO
 
 import numpy as np
 import pandas as pd
@@ -18,9 +21,10 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.core.files.storage import default_storage
 from django.http import (
+    FileResponse,
     HttpRequest,
     HttpResponse,
     HttpResponseRedirect,
@@ -28,7 +32,7 @@ from django.http import (
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 from pyswmm import Simulation
 
 from catchment_simulation.analysis import runoff_volume, time_to_peak
@@ -44,6 +48,11 @@ SIM_FORM_STATE_SESSION_KEY = "sim_form_state"
 TS_FORM_STATE_SESSION_KEY = "ts_form_state"
 SIM_FORM_STATE_FIELDS = ("option", "start", "stop", "step", "catchment_name")
 TS_FORM_STATE_FIELDS = ("mode", "feature", "start", "stop", "step", "catchment_name")
+EXCEL_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+SIM_RESULT_TOKEN_SESSION_KEY = "sim_result_token"
+TS_RESULT_TOKEN_SESSION_KEY = "ts_result_token"
+RESULT_CACHE_TTL_SECONDS = 30 * 60
+MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 
 
 def ajax_login_required(view_func):
@@ -70,21 +79,118 @@ def ajax_login_required(view_func):
     return wrapper
 
 
-@lru_cache(maxsize=1)
-def _load_static_chart_data() -> dict:
-    """Load and cache static chart data from Excel files (read once at startup)."""
+def _load_chart_json(filename: str, x_key: str, y_key: str) -> list[dict]:
+    """Load and validate chart data JSON structure."""
     data_dir = os.path.join(settings.BASE_DIR, "data")
-    return {
-        "slope": json.loads(
-            pd.read_excel(os.path.join(data_dir, "df_slope.xlsx")).to_json(orient="records")
-        ),
-        "area": json.loads(
-            pd.read_excel(os.path.join(data_dir, "df_area.xlsx")).to_json(orient="records")
-        ),
-        "width": json.loads(
-            pd.read_excel(os.path.join(data_dir, "df_width.xlsx")).to_json(orient="records")
-        ),
-    }
+    path = os.path.join(data_dir, filename)
+    with open(path, encoding="utf-8") as file:
+        payload = json.load(file)
+
+    if not isinstance(payload, list):
+        raise ValueError(f"{filename} must contain a JSON list")
+
+    for idx, row in enumerate(payload):
+        if not isinstance(row, dict):
+            raise ValueError(f"{filename} row {idx} is not an object")
+        if x_key not in row or y_key not in row:
+            raise ValueError(f"{filename} row {idx} missing required keys")
+        if not isinstance(row[x_key], int | float) or not isinstance(row[y_key], int | float):
+            raise ValueError(f"{filename} row {idx} contains non-numeric values")
+
+    return payload
+
+
+@lru_cache(maxsize=1)
+def _load_static_chart_data_cached() -> dict:
+    """Load static chart data once per process."""
+    try:
+        return {
+            "slope": _load_chart_json("df_slope.json", "slope", "runoff"),
+            "area": _load_chart_json("df_area.json", "area", "runoff"),
+            "width": _load_chart_json("df_width.json", "width", "runoff"),
+        }
+    except Exception:
+        logger.exception("Failed to load static chart data from JSON files")
+        return {"slope": [], "area": [], "width": []}
+
+
+def _load_static_chart_data() -> dict:
+    """Return a defensive copy so cache data cannot be mutated by callers."""
+    return deepcopy(_load_static_chart_data_cached())
+
+
+def _result_cache_key(scope: str, user_id: int, token: str) -> str:
+    return f"result:{scope}:{user_id}:{token}"
+
+
+def _delete_cached_result(scope: str, user_id: int, token: str | None) -> None:
+    if token:
+        cache.delete(_result_cache_key(scope, user_id, token))
+
+
+def _store_cached_result(scope: str, user_id: int, payload: dict) -> str:
+    """Store result payload in cache and return opaque token."""
+    serialized = json.dumps(payload, separators=(",", ":"))
+    payload_size = len(serialized.encode("utf-8"))
+    if payload_size > MAX_RESULT_CACHE_BYTES:
+        raise ValueError("Result payload too large")
+
+    token = uuid.uuid4().hex
+    cache.set(
+        _result_cache_key(scope, user_id, token), serialized, timeout=RESULT_CACHE_TTL_SECONDS
+    )
+    return token
+
+
+def _load_cached_result(scope: str, user_id: int, token: str | None) -> dict | None:
+    if not token:
+        return None
+
+    serialized = cache.get(_result_cache_key(scope, user_id, token))
+    if serialized is None:
+        return None
+
+    try:
+        payload = json.loads(serialized)
+    except (TypeError, json.JSONDecodeError):
+        _delete_cached_result(scope, user_id, token)
+        return None
+
+    if not isinstance(payload, dict):
+        _delete_cached_result(scope, user_id, token)
+        return None
+
+    return payload
+
+
+def _safe_download_filename(name: str | None, fallback: str) -> str:
+    """Sanitize user-facing filenames used in Content-Disposition."""
+    candidate = os.path.basename(name or "").strip()
+    if not candidate:
+        candidate = fallback
+    candidate = re.sub(r'[\r\n"]+', "_", candidate)
+    if not candidate.lower().endswith(".xlsx"):
+        candidate = f"{candidate}.xlsx"
+    return candidate[:150]
+
+
+def _normalize_sheet_name(raw_name: str, used_names: set[str]) -> str:
+    """Create Excel-safe unique sheet names (<=31 chars)."""
+    sanitized = "".join("_" if char in r"[]:*?/\\" else char for char in (raw_name or "sheet"))
+    sanitized = sanitized.strip() or "sheet"
+    base = sanitized[:31]
+    candidate = base
+    suffix = 1
+    while candidate.lower() in used_names:
+        suffix_text = f"_{suffix}"
+        candidate = f"{base[: 31 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    used_names.add(candidate.lower())
+    return candidate
+
+
+def _is_valid_result_token(token: str | None) -> bool:
+    return bool(token and re.fullmatch(r"[0-9a-f]{32}", token))
 
 
 def main_view(request: HttpRequest) -> HttpResponse:
@@ -192,8 +298,6 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 
 def _sanitize_filename(filename: str) -> str:
     """Sanitize filename to prevent path traversal attacks."""
-    import re
-
     # Remove path separators and other dangerous characters
     sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename)
     # Remove leading/trailing dots and spaces
@@ -473,51 +577,24 @@ def get_feature_name(method_name: str) -> str:
     return feature_map.get(method_name, "")
 
 
-def _delete_stored_file(request: HttpRequest, session_key: str) -> None:
-    """Delete a file from default_storage using the name stored in a session key."""
-    name = request.session.get(session_key)
-    if name:
-        try:
-            default_storage.delete(name)
-        except Exception:
-            logger.warning("Failed to delete stored file %s", name, exc_info=True)
-
-
-def save_output_file(
-    request: HttpRequest,
-    df: pd.DataFrame,
-    output_file_name: str,
-    session_prefix: str = "",
-) -> None:
-    """
-    Save the output file to the server.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-    df : pd.DataFrame
-        The dataframe containing the simulation results.
-    output_file_name : str
-        The name of the output file.
-    session_prefix : str
-        Prefix for session keys (e.g. "ts_" for timeseries).
-    """
-    output_file_path = f"output_files/result_{uuid.uuid4().hex[:8]}.xlsx"
-    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
-
-    try:
-        df.to_excel(output_file_path, index=False)
-        with open(output_file_path, "rb") as file:
-            saved_name = default_storage.save(output_file_name, file)
-    finally:
-        if os.path.exists(output_file_path):
-            os.remove(output_file_path)
-
-    _delete_stored_file(request, f"{session_prefix}output_file_name")
-    output_file_url = default_storage.url(saved_name)
-    request.session[f"{session_prefix}output_file_url"] = output_file_url
-    request.session[f"{session_prefix}output_file_name"] = saved_name
+def _excel_attachment_response(
+    output_file_name: str, sheets: dict[str, pd.DataFrame]
+) -> HttpResponse:
+    """Return an in-memory Excel attachment from sheet->DataFrame mapping."""
+    buffer = BytesIO()
+    used_names: set[str] = set()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for sheet_name, df in sheets.items():
+            normalized_sheet_name = _normalize_sheet_name(sheet_name, used_names)
+            df.to_excel(writer, sheet_name=normalized_sheet_name, index=False)
+    buffer.seek(0)
+    safe_name = _safe_download_filename(output_file_name, "results.xlsx")
+    return FileResponse(
+        buffer,
+        as_attachment=True,
+        filename=safe_name,
+        content_type=EXCEL_CONTENT_TYPE,
+    )
 
 
 def get_session_variables(request: HttpRequest) -> dict:
@@ -534,14 +611,29 @@ def get_session_variables(request: HttpRequest) -> dict:
     dict
         A dictionary containing the session variables.
     """
+    token = request.session.get(SIM_RESULT_TOKEN_SESSION_KEY)
+    payload = _load_cached_result("sim", request.user.id, token)
+    if not payload:
+        if token:
+            request.session.pop(SIM_RESULT_TOKEN_SESSION_KEY, None)
+        return {
+            "show_download_button": False,
+            "chart_config": None,
+            "results_columns": [],
+            "results_data": [],
+            "feature_name": "",
+            "output_file_name": None,
+            "download_token": None,
+        }
+
     return {
-        "show_download_button": request.session.get("show_download_button", False),
-        "chart_config": request.session.get("chart_config", None),
-        "results_columns": request.session.get("results_columns", []),
-        "results_data": request.session.get("results_data", []),
-        "feature_name": request.session.get("feature_name", ""),
-        "output_file_name": request.session.get("output_file_name", None),
-        "output_file_url": request.session.get("output_file_url", None),
+        "show_download_button": True,
+        "chart_config": payload.get("chart_config"),
+        "results_columns": payload.get("results_columns", []),
+        "results_data": payload.get("results_data", []),
+        "feature_name": payload.get("feature_name", ""),
+        "output_file_name": payload.get("output_file_name"),
+        "download_token": token,
     }
 
 
@@ -554,8 +646,11 @@ def clear_session_variables(request: HttpRequest) -> None:
     request : HttpRequest
         The incoming HTTP request.
     """
-    _delete_stored_file(request, "output_file_name")
-    _delete_stored_file(request, "ts_output_file_name")
+    user = getattr(request, "user", None)
+    user_id = user.id if getattr(user, "is_authenticated", False) else None
+    if user_id is not None:
+        _delete_cached_result("sim", user_id, request.session.get(SIM_RESULT_TOKEN_SESSION_KEY))
+        _delete_cached_result("ts", user_id, request.session.get(TS_RESULT_TOKEN_SESSION_KEY))
 
     for variable in [
         "show_download_button",
@@ -564,13 +659,13 @@ def clear_session_variables(request: HttpRequest) -> None:
         "results_data",
         "feature_name",
         "output_file_name",
-        "output_file_url",
         "ts_chart_config",
         "ts_time_to_peak",
         "ts_runoff_volume",
         "ts_show_results",
-        "ts_output_file_url",
         "ts_output_file_name",
+        SIM_RESULT_TOKEN_SESSION_KEY,
+        TS_RESULT_TOKEN_SESSION_KEY,
         SIM_FORM_STATE_SESSION_KEY,
         TS_FORM_STATE_SESSION_KEY,
     ]:
@@ -664,8 +759,6 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     HttpResponse
         The HTTP response with the rendered simulation template.
     """
-    show_download_button = False
-    output_file_name = None
     session_data = {}
 
     if request.method == "POST":
@@ -702,28 +795,35 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                     other_cols = [c for c in df.columns if c != feature_name]
                     df = df[[feature_name] + other_cols]
 
-                show_download_button = True
-
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
-
-                request.session["show_download_button"] = show_download_button
-                request.session["chart_config"] = {
+                chart_config = {
                     "data": json.loads(df.to_json(orient="records")),
                     "x": feature_name,
                     "y": other_cols,
                     "title": f"Dependence of runoff on subcatchment {feature_name}.",
                 }
-                request.session["results_columns"] = df.columns.tolist()
-                request.session["results_data"] = df.values.tolist()
-                request.session["feature_name"] = feature_name
-
-                save_output_file(request, df, output_file_name)
+                payload = {
+                    "chart_config": chart_config,
+                    "results_columns": df.columns.tolist(),
+                    "results_data": df.values.tolist(),
+                    "feature_name": feature_name,
+                    "output_file_name": output_file_name,
+                }
+                old_token = request.session.get(SIM_RESULT_TOKEN_SESSION_KEY)
+                token = _store_cached_result("sim", request.user.id, payload)
+                _delete_cached_result("sim", request.user.id, old_token)
+                request.session[SIM_RESULT_TOKEN_SESSION_KEY] = token
                 _save_form_state(
                     request, SIM_FORM_STATE_SESSION_KEY, form.cleaned_data, SIM_FORM_STATE_FIELDS
                 )
                 return redirect("main:simulation")
 
+            except ValueError:
+                messages.error(
+                    request,
+                    "Result set is too large to keep for download. Narrow the simulation range.",
+                )
             except Exception as e:
                 logger.error("Simulation failed: %s", e)
                 messages.error(request, "An error occurred while running the simulation.")
@@ -746,27 +846,59 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     )
 
 
-def _save_sweep_output(
-    request: HttpRequest, results: dict[float, pd.DataFrame], output_file_name: str
-) -> None:
-    """Save timeseries sweep results to a multi-sheet Excel file."""
-    output_file_path = f"output_files/result_{uuid.uuid4().hex[:8]}.xlsx"
-    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
-    try:
-        with pd.ExcelWriter(output_file_path, engine="openpyxl") as writer:
-            for param_val, ts_df in results.items():
-                sheet_name = f"val_{param_val:.2f}"[:31]
-                ts_df.reset_index().to_excel(writer, sheet_name=sheet_name, index=False)
-        with open(output_file_path, "rb") as file:
-            saved_name = default_storage.save(output_file_name, file)
-    finally:
-        if os.path.exists(output_file_path):
-            os.remove(output_file_path)
+@login_required
+@require_POST
+def download_simulation_results(request: HttpRequest) -> HttpResponse:
+    """Download simulation results as an Excel file generated in memory."""
+    token = request.POST.get("token")
+    if not _is_valid_result_token(token):
+        messages.error(request, "Invalid download token.")
+        return redirect("main:simulation")
+    payload = _load_cached_result("sim", request.user.id, token)
+    if not payload:
+        messages.error(request, "No simulation results available to download.")
+        return redirect("main:simulation")
 
-    _delete_stored_file(request, "ts_output_file_name")
-    output_file_url = default_storage.url(saved_name)
-    request.session["ts_output_file_url"] = output_file_url
-    request.session["ts_output_file_name"] = saved_name
+    try:
+        df = pd.DataFrame(payload["results_data"], columns=payload["results_columns"])
+        return _excel_attachment_response(payload.get("output_file_name"), {"results": df})
+    except Exception:
+        logger.exception("Failed to generate simulation download")
+        messages.error(request, "Failed to generate the simulation output file.")
+        return redirect("main:simulation")
+
+
+@login_required
+@require_POST
+def download_timeseries_results(request: HttpRequest) -> HttpResponse:
+    """Download timeseries analysis results as an in-memory Excel file."""
+    token = request.POST.get("token")
+    if not _is_valid_result_token(token):
+        messages.error(request, "Invalid download token.")
+        return redirect("main:timeseries")
+    payload = _load_cached_result("ts", request.user.id, token)
+    if not payload:
+        messages.error(request, "No timeseries results available to download.")
+        return redirect("main:timeseries")
+
+    mode = payload.get("mode")
+    data = payload.get("data")
+    try:
+        if mode == "single" and isinstance(data, list):
+            df = pd.DataFrame(data)
+            return _excel_attachment_response(payload.get("output_file_name"), {"timeseries": df})
+
+        if mode == "sweep" and isinstance(data, dict):
+            sheets = {}
+            for param, rows in data.items():
+                sheet_name = f"val_{param}"
+                sheets[sheet_name] = pd.DataFrame(rows)
+            return _excel_attachment_response(payload.get("output_file_name"), sheets)
+    except Exception:
+        logger.exception("Failed to generate timeseries download")
+
+    messages.error(request, "Failed to generate the timeseries output file.")
+    return redirect("main:timeseries")
 
 
 @login_required
@@ -832,19 +964,25 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         # Save for download
                         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                         output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
-                        save_output_file(
-                            request, ts_df.reset_index(), output_file_name, session_prefix="ts_"
-                        )
-
-                        request.session["ts_chart_config"] = {
+                        chart_config = {
                             "mode": "single",
                             "data": json.loads(ts_df_reset.to_json(orient="records")),
                             "columns": ts_columns,
                             "title": f"Timeseries for subcatchment {catchment_name}",
                         }
-                        request.session["ts_time_to_peak"] = ttp_str
-                        request.session["ts_runoff_volume"] = vol_str
-                        request.session["ts_show_results"] = True
+                        payload = {
+                            "mode": "single",
+                            "data": chart_config["data"],
+                            "output_file_name": output_file_name,
+                            "chart_config": chart_config,
+                            "ts_time_to_peak": ttp_str,
+                            "ts_runoff_volume": vol_str,
+                            "ts_show_results": True,
+                        }
+                        old_token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
+                        token = _store_cached_result("ts", request.user.id, payload)
+                        _delete_cached_result("ts", request.user.id, old_token)
+                        request.session[TS_RESULT_TOKEN_SESSION_KEY] = token
 
                         _save_form_state(
                             request,
@@ -874,9 +1012,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         # Save multi-sheet Excel
                         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                         output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
-                        _save_sweep_output(request, results, output_file_name)
-
-                        request.session["ts_chart_config"] = {
+                        chart_config = {
                             "mode": "sweep",
                             "data": sweep_data,
                             "columns": ts_columns,
@@ -884,9 +1020,19 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                             "feature": feature,
                             "catchment": catchment_name,
                         }
-                        request.session["ts_show_results"] = True
-                        request.session["ts_time_to_peak"] = None
-                        request.session["ts_runoff_volume"] = None
+                        payload = {
+                            "mode": "sweep",
+                            "data": sweep_data,
+                            "output_file_name": output_file_name,
+                            "chart_config": chart_config,
+                            "ts_show_results": True,
+                            "ts_time_to_peak": None,
+                            "ts_runoff_volume": None,
+                        }
+                        old_token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
+                        token = _store_cached_result("ts", request.user.id, payload)
+                        _delete_cached_result("ts", request.user.id, old_token)
+                        request.session[TS_RESULT_TOKEN_SESSION_KEY] = token
 
                         _save_form_state(
                             request,
@@ -896,6 +1042,11 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         )
                         return redirect("main:timeseries")
 
+            except ValueError:
+                messages.error(
+                    request,
+                    "Result set is too large to keep for download. Narrow the timeseries range.",
+                )
             except Exception as e:
                 logger.error("Timeseries analysis failed: %s", e)
                 messages.error(request, "An error occurred while running the analysis.")
@@ -909,13 +1060,17 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
             TS_FORM_STATE_FIELDS,
         )
         form = TimeseriesForm(catchment_choices=catchment_choices, initial=initial)
+        token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
+        payload = _load_cached_result("ts", request.user.id, token)
+        if token and not payload:
+            request.session.pop(TS_RESULT_TOKEN_SESSION_KEY, None)
         session_data = {
-            "ts_chart_config": request.session.get("ts_chart_config"),
-            "ts_time_to_peak": request.session.get("ts_time_to_peak"),
-            "ts_runoff_volume": request.session.get("ts_runoff_volume"),
-            "ts_show_results": request.session.get("ts_show_results", False),
-            "output_file_url": request.session.get("ts_output_file_url"),
-            "output_file_name": request.session.get("ts_output_file_name"),
+            "ts_chart_config": payload.get("chart_config") if payload else None,
+            "ts_time_to_peak": payload.get("ts_time_to_peak") if payload else None,
+            "ts_runoff_volume": payload.get("ts_runoff_volume") if payload else None,
+            "ts_show_results": payload.get("ts_show_results", False) if payload else False,
+            "output_file_name": payload.get("output_file_name") if payload else None,
+            "download_token": token if payload else None,
         }
 
     return render(request, "main/timeseries.html", {"form": form, **session_data})

@@ -69,6 +69,12 @@ The 'Calculations' tab contains a neural network model trained to predict catchm
 ### Warning
 You will be asked to register and log in before performing the simulation. 
 
+## Model and static data artifacts
+
+- The Django app runtime loads ANN weights from `cs_app/swmm_model/weights.npz` (pure NumPy inference).
+- Static chart seed data in `cs_app/data` is stored as JSON files (`*.json`).
+- Simulation/timeseries downloads are generated in memory on demand (no persistent media files required).
+
 ---
 
 # Local Development Setup

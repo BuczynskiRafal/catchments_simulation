@@ -13,6 +13,8 @@ from .views import (
     about,
     calculations,
     contact,
+    download_simulation_results,
+    download_timeseries_results,
     main_view,
     simulation_view,
     subcatchments,
@@ -36,6 +38,16 @@ urlpatterns = [
     path("about", about, name="about"),
     path("calculations", calculations, name="calculations"),
     path("simulation", simulation_view, name="simulation"),
+    path(
+        "simulation/download/",
+        download_simulation_results,
+        name="download_simulation_results",
+    ),
     path("timeseries", timeseries_view, name="timeseries"),
+    path(
+        "timeseries/download/",
+        download_timeseries_results,
+        name="download_timeseries_results",
+    ),
     path("subcatchments/", subcatchments, name="subcatchments"),
 ]

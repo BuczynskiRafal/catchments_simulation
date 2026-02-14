@@ -92,10 +92,19 @@ document.addEventListener('DOMContentLoaded', function() {
         <div id="simulation-chart"><p class="text-muted text-center">Loading chart...</p></div>
         {{ chart_config|json_script:"chart-config" }}
 
-        {% if output_file_url %}
+        {% if output_file_name %}
         <div class="row mt-3">
             <div class="col-md-12 d-flex justify-content-center">
-                <a href="{{ output_file_url }}" download="{{ output_file_name }}" class="btn btn-success">Download Results</a>
+                <input type="hidden" name="token" value="{{ download_token }}">
+                <button
+                    type="submit"
+                    class="btn btn-success"
+                    formaction="{% url 'main:download_simulation_results' %}"
+                    formmethod="post"
+                    formnovalidate
+                >
+                    Download Results
+                </button>
             </div>
         </div>
         {% endif %}

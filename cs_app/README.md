@@ -93,10 +93,13 @@ cs_app/
 ├── main/             # Main application (analysis, calculations)
 ├── register/         # User registration app
 ├── static/           # Static files (CSS, JS)
-├── data/             # Sample data files
+├── data/             # Static chart data in JSON format
+├── swmm_model/       # ANN runtime artifact (weights.npz)
 ├── manage.py         # Django management script
 └── requirements.txt  # App-specific dependencies
 ```
+
+Note: simulation and timeseries result files are generated in-memory at download time and are not persisted in `MEDIA`.
 
 ## Deployment
 
