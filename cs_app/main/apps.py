@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
 FALSY_VALUES = frozenset({"0", "false", "no", "off"})
+WORKER_PROCESS_NAMES = frozenset({"celery", "rqworker", "dramatiq"})
 
 
 def _env_bool(name: str) -> bool | None:
@@ -44,6 +45,9 @@ def _should_preload_model() -> bool:
         return command in {"runserver", "runserver_plus"}
 
     if "pytest" in argv0:
+        return False
+
+    if argv0 in WORKER_PROCESS_NAMES:
         return False
 
     return True

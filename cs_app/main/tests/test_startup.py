@@ -1,26 +1,39 @@
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+
+import pytest
 
 from main import predictor
 from main.apps import MainConfig
 
 
+@pytest.fixture(autouse=True)
+def _reset_predictor_state(monkeypatch):
+    monkeypatch.setattr(predictor, "_model", None)
+    monkeypatch.delenv("CATCHMENT_SIMULATION_WEIGHTS_PATH", raising=False)
+
+
 def test_get_model_is_thread_safe(monkeypatch):
     created: list[str] = []
+    start_barrier = threading.Barrier(8)
 
     class FakeModel:
         def __init__(self, weights_path: str):
-            time.sleep(0.01)
+            time.sleep(0.02)
             created.append(weights_path)
 
+    def _worker() -> object:
+        start_barrier.wait(timeout=1)
+        return predictor._get_model()
+
     monkeypatch.setattr(predictor, "SimpleMLPModel", FakeModel)
-    monkeypatch.setattr(predictor, "_model", None)
     monkeypatch.setenv("CATCHMENT_SIMULATION_WEIGHTS_PATH", "/tmp/weights.npz")
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        list(pool.map(lambda _: predictor._get_model(), range(20)))
+        list(pool.map(lambda _: _worker(), range(8)))
 
     assert len(created) == 1
 
@@ -33,7 +46,6 @@ def test_preload_model_is_idempotent(monkeypatch):
             created.append(weights_path)
 
     monkeypatch.setattr(predictor, "SimpleMLPModel", FakeModel)
-    monkeypatch.setattr(predictor, "_model", None)
 
     first_loaded_now = predictor.preload_model()
     first_instance = predictor._model
@@ -90,12 +102,8 @@ def test_main_config_ready_raises_preload_failure(monkeypatch, caplog):
 
     app_config = MainConfig("main", import_module("main"))
     with caplog.at_level("ERROR"):
-        try:
+        with pytest.raises(RuntimeError, match="boom"):
             app_config.ready()
-        except RuntimeError:
-            pass
-        else:
-            raise AssertionError("ready() should re-raise preload failures")
 
     assert "Failed to preload ANN predictor model during app startup" in caplog.text
 
@@ -122,3 +130,23 @@ def test_should_preload_model_honors_env_override(monkeypatch):
     from main.apps import _should_preload_model
 
     assert _should_preload_model() is True
+
+
+def test_should_preload_model_skips_worker_process(monkeypatch):
+    monkeypatch.delenv("PRELOAD_MODEL", raising=False)
+    monkeypatch.setattr(sys, "argv", ["celery", "-A", "cs_app", "worker"])
+    from main.apps import _should_preload_model
+
+    assert _should_preload_model() is False
+
+
+def test_env_bool_invalid_value_logs_warning(monkeypatch, caplog):
+    monkeypatch.setenv("PRELOAD_MODEL", "maybe")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "runserver"])
+    from main.apps import _should_preload_model
+
+    with caplog.at_level("WARNING"):
+        result = _should_preload_model()
+
+    assert result is True
+    assert "Ignoring invalid PRELOAD_MODEL='maybe'" in caplog.text

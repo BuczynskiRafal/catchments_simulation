@@ -116,25 +116,37 @@ def _get_weights_path() -> str:
 
     try:
         from django.conf import settings
+        from django.core.exceptions import ImproperlyConfigured
+    except ImportError:
+        # Predictor can run outside Django environments.
+        return _default_weights_path()
 
+    try:
         configured_path = getattr(settings, "SWMM_MODEL_WEIGHTS_PATH", None)
-        if configured_path:
-            return str(configured_path)
-    except Exception:
-        # Predictor can also run outside Django context.
-        pass
+    except ImproperlyConfigured:
+        return _default_weights_path()
+
+    if configured_path:
+        return str(configured_path)
 
     return _default_weights_path()
 
 
-def _get_model() -> SimpleMLPModel:
-    """Get or create the model instance (lazy loading)."""
+def _get_or_create_model() -> tuple[SimpleMLPModel, bool]:
+    """Return model instance and whether it was created in this call."""
     global _model
     if _model is None:
         with _model_lock:
             if _model is None:
                 _model = SimpleMLPModel(_get_weights_path())
-    return _model
+                return _model, True
+    return _model, False
+
+
+def _get_model() -> SimpleMLPModel:
+    """Get or create the model instance (lazy loading)."""
+    model, _ = _get_or_create_model()
+    return model
 
 
 def preload_model() -> bool:
@@ -142,10 +154,9 @@ def preload_model() -> bool:
 
     Returns True when model was not loaded before this call.
     """
-    loaded_before = _model is not None
     started_at = time.perf_counter()
-    _get_model()
-    if not loaded_before:
+    _, loaded_now = _get_or_create_model()
+    if loaded_now:
         elapsed_ms = (time.perf_counter() - started_at) * 1000
         logger.info("ANN predictor model loaded in %.1f ms", elapsed_ms)
         return True
