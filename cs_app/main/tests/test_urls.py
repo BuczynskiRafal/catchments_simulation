@@ -13,6 +13,12 @@ def test_upload_url():
     assert resolve(path).view_name == "main:upload"
 
 
+def test_upload_sample_url():
+    """Tests the URL endpoint for sample upload."""
+    path = reverse("main:upload_sample")
+    assert resolve(path).view_name == "main:upload_sample"
+
+
 def test_user_profile_url():
     """Tests the URL of the user profile."""
     path = reverse("main:userprofile", kwargs={"user_id": 1})
@@ -59,6 +65,12 @@ def test_download_timeseries_results_url():
     """Tests the URL of the timeseries download endpoint."""
     path = reverse("main:download_timeseries_results")
     assert resolve(path).view_name == "main:download_timeseries_results"
+
+
+def test_download_timeseries_csv_url():
+    """Tests the URL of the timeseries CSV download endpoint."""
+    path = reverse("main:download_timeseries_csv")
+    assert resolve(path).view_name == "main:download_timeseries_csv"
 
 
 def test_subcatchments_url():

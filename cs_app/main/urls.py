@@ -14,6 +14,7 @@ from .views import (
     calculations,
     contact,
     download_simulation_results,
+    download_timeseries_csv,
     download_timeseries_results,
     main_view,
     simulation_view,
@@ -21,6 +22,7 @@ from .views import (
     timeseries_view,
     upload,
     upload_clear,
+    upload_sample,
     upload_status,
     user_profile,
 )
@@ -31,6 +33,7 @@ app_name = "main"
 urlpatterns = [
     path("", main_view, name="main_view"),
     path("upload/", upload, name="upload"),
+    path("upload/sample/", upload_sample, name="upload_sample"),
     path("upload/clear/", upload_clear, name="upload_clear"),
     path("upload/status/", upload_status, name="upload_status"),
     path("user/<int:user_id>/profile", user_profile, name="userprofile"),
@@ -48,6 +51,11 @@ urlpatterns = [
         "timeseries/download/",
         download_timeseries_results,
         name="download_timeseries_results",
+    ),
+    path(
+        "timeseries/download/csv/",
+        download_timeseries_csv,
+        name="download_timeseries_csv",
     ),
     path("subcatchments/", subcatchments, name="subcatchments"),
 ]

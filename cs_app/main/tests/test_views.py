@@ -1,6 +1,6 @@
 import json
 import os
-from io import BytesIO
+from io import BytesIO, StringIO
 from types import SimpleNamespace
 
 import numpy as np
@@ -21,6 +21,7 @@ from main.views import (
     _get_catchment_choices,
     _get_subcatchment_ids,
     _result_cache_key,
+    _safe_download_filename,
     calculations,
     clear_session_variables,
     simulation_view,
@@ -28,6 +29,7 @@ from main.views import (
     timeseries_view,
     upload,
     upload_clear,
+    upload_sample,
     upload_status,
 )
 
@@ -362,6 +364,44 @@ def test_simulation_view_post_failure_does_not_persist_form_state(client, user, 
 
 
 @pytest.mark.django_db
+def test_simulation_view_validation_error_shows_human_message(client, user, monkeypatch):
+    """Input-related ValueError should be shown as friendly flash message."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    class InvalidInputFeaturesSimulation:
+        def __init__(self, subcatchment_id, raw_file):
+            self.subcatchment_id = subcatchment_id
+            self.raw_file = raw_file
+
+        def __enter__(self):
+            raise ValueError("Expected numeric value in slope sheet.")
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", InvalidInputFeaturesSimulation)
+
+    response = client.post(
+        reverse("main:simulation"),
+        data={
+            "option": "simulate_percent_slope",
+            "start": "1",
+            "stop": "5",
+            "step": "2",
+            "catchment_name": "S1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert b"Input file contains non-numeric values where numbers are required." in response.content
+
+
+@pytest.mark.django_db
 def test_simulation_view_rejects_oversized_cached_payload(client, user, monkeypatch):
     """Oversized simulation payload should not be stored in cache/session token."""
     client.force_login(user)
@@ -583,7 +623,9 @@ def test_upload_authenticated_user_can_upload(user):
 
     request.user = user
 
-    expected_path = os.path.join("uploaded_files", str(user.id), "test_upload.inp")
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
+    )
     try:
         response = upload(request)
 
@@ -599,6 +641,84 @@ def test_upload_authenticated_user_can_upload(user):
     finally:
         if os.path.exists(expected_path):
             os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_upload_sample_unauthenticated_ajax_returns_401():
+    """Sample upload endpoint returns 401 for unauthenticated AJAX requests."""
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/sample/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = AnonymousUser()
+
+    response = upload_sample(request)
+
+    assert response.status_code == 401
+    data = json.loads(response.content)
+    assert "login_url" in data
+
+
+@pytest.mark.django_db
+def test_upload_sample_sets_session_and_clears_state(client, user):
+    """Sample upload should set uploaded path and invalidate cached form state."""
+    client.force_login(user)
+    session = client.session
+    session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S1"}
+    session["ts_form_state"] = {"mode": "sweep", "catchment_name": "S1"}
+    session["_subcatchment_ids"] = ["S1", "S2"]
+    session["_subcatchment_ids_file"] = "uploaded_files/old.inp"
+    session.save()
+
+    response = client.post(
+        reverse("main:upload_sample"),
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["filename"] == "example.inp"
+
+    updated_session = client.session
+    uploaded_path = updated_session.get("uploaded_file_path")
+    assert uploaded_path == os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "example.inp"
+    )
+    assert os.path.exists(uploaded_path)
+    assert "sim_form_state" not in updated_session
+    assert "ts_form_state" not in updated_session
+    assert "_subcatchment_ids" not in updated_session
+    assert "_subcatchment_ids_file" not in updated_session
+
+    if uploaded_path and os.path.exists(uploaded_path):
+        os.remove(uploaded_path)
+
+
+@pytest.mark.django_db
+def test_upload_sample_returns_500_when_fixture_missing(client, user, monkeypatch):
+    """Sample upload returns 500 when bundled example file is unavailable."""
+    client.force_login(user)
+
+    original_exists = os.path.exists
+
+    def fake_exists(path):
+        if path.endswith(os.path.join("data", "example.inp")):
+            return False
+        return original_exists(path)
+
+    monkeypatch.setattr("main.views.os.path.exists", fake_exists)
+
+    response = client.post(
+        reverse("main:upload_sample"),
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"] == "Sample file is not available."
 
 
 @pytest.mark.django_db
@@ -620,7 +740,9 @@ def test_upload_clears_timeseries_form_state(user):
     request.session.save()
     request.user = user
 
-    expected_path = os.path.join("uploaded_files", str(user.id), "test_upload.inp")
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
+    )
     try:
         response = upload(request)
 
@@ -650,7 +772,9 @@ def test_upload_clears_simulation_form_state(user):
     request.session.save()
     request.user = user
 
-    expected_path = os.path.join("uploaded_files", str(user.id), "test_upload.inp")
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
+    )
     try:
         response = upload(request)
 
@@ -1034,6 +1158,147 @@ def test_download_timeseries_results_handles_sheet_name_collisions(client, user)
     assert len(workbook.sheet_names) == 2
     assert workbook.sheet_names[0] != workbook.sheet_names[1]
     assert all(len(name) <= 31 for name in workbook.sheet_names)
+
+
+@pytest.mark.django_db
+def test_download_timeseries_csv_single_streams_csv(client, user):
+    """Timeseries single-mode CSV endpoint returns flat CSV payload."""
+    client.force_login(user)
+    token = "55555555555555555555555555555555"
+    cache.set(
+        _result_cache_key("ts", user.id, token),
+        json.dumps(
+            {
+                "mode": "single",
+                "output_file_name": "timeseries_single.xlsx",
+                "data": [
+                    {"datetime": "2025-01-01 00:00:00", "runoff": 1.1},
+                    {"datetime": "2025-01-01 01:00:00", "runoff": 0.9},
+                ],
+            }
+        ),
+    )
+
+    response = client.post(reverse("main:download_timeseries_csv"), data={"token": token})
+
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("text/csv")
+    assert "timeseries_single.csv" in response["Content-Disposition"]
+    df = pd.read_csv(StringIO(response.content.decode("utf-8")))
+    assert list(df.columns) == ["datetime", "runoff"]
+    assert df.shape == (2, 2)
+
+
+@pytest.mark.django_db
+def test_download_timeseries_csv_sweep_includes_parameter_column(client, user):
+    """Sweep CSV export should flatten records and include parameter value column."""
+    client.force_login(user)
+    token = "66666666666666666666666666666666"
+    cache.set(
+        _result_cache_key("ts", user.id, token),
+        json.dumps(
+            {
+                "mode": "sweep",
+                "output_file_name": "timeseries_sweep.xlsx",
+                "data": {
+                    "0.0": [{"datetime": "2025-01-01 00:00:00", "runoff": 0.1}],
+                    "10.0": [{"datetime": "2025-01-01 00:00:00", "runoff": 0.5}],
+                },
+            }
+        ),
+    )
+
+    response = client.post(reverse("main:download_timeseries_csv"), data={"token": token})
+
+    assert response.status_code == 200
+    df = pd.read_csv(StringIO(response.content.decode("utf-8")))
+    assert "parameter_value" in df.columns
+    assert df.shape[0] == 2
+    assert sorted(df["parameter_value"].astype(str).tolist()) == ["0.0", "10.0"]
+
+
+@pytest.mark.django_db
+def test_download_timeseries_csv_without_data_redirects(client, user):
+    """Timeseries CSV endpoint redirects when result token is missing."""
+    client.force_login(user)
+
+    response = client.post(reverse("main:download_timeseries_csv"), data={"token": "missing"})
+
+    assert response.status_code == 302
+    assert response.url == reverse("main:timeseries")
+
+
+@pytest.mark.django_db
+def test_download_timeseries_csv_get_not_allowed(client, user):
+    """Timeseries CSV endpoint accepts POST only."""
+    client.force_login(user)
+
+    response = client.get(reverse("main:download_timeseries_csv"))
+
+    assert response.status_code == 405
+
+
+def test_safe_download_filename_handles_empty_extension():
+    """Empty extension must not produce a trailing dot."""
+    filename = _safe_download_filename("results.xlsx", "fallback.xlsx", extension="")
+    assert filename == "results"
+
+
+@pytest.mark.django_db
+def test_simulation_template_contains_loading_state(client, user):
+    """Simulation page should include loading state container for submit feedback."""
+    client.force_login(user)
+    response = client.get(reverse("main:simulation"))
+
+    assert response.status_code == 200
+    assert b'id="simulation-loading-state"' in response.content
+
+
+@pytest.mark.django_db
+def test_timeseries_template_shows_csv_and_png_buttons_when_results_exist(client, user):
+    """Timeseries results view should render CSV and PNG export controls."""
+    client.force_login(user)
+    token = "77777777777777777777777777777777"
+    cache.set(
+        _result_cache_key("ts", user.id, token),
+        json.dumps(
+            {
+                "mode": "single",
+                "output_file_name": "timeseries_single.xlsx",
+                "chart_config": {
+                    "mode": "single",
+                    "data": [{"datetime": "2025-01-01 00:00:00", "runoff": 1.0}],
+                    "columns": ["runoff"],
+                    "title": "Timeseries",
+                },
+                "ts_show_results": True,
+            }
+        ),
+    )
+    session = client.session
+    session[TS_RESULT_TOKEN_SESSION_KEY] = token
+    session.save()
+
+    response = client.get(reverse("main:timeseries"))
+
+    assert response.status_code == 200
+    assert b"Export timeseries to CSV" in response.content
+    assert b'id="download-timeseries-png-button"' in response.content
+
+
+@pytest.mark.django_db
+def test_base_template_renders_flash_messages(client, user):
+    """Base template should render flash alerts from Django messages framework."""
+    client.force_login(user)
+    response = client.post(
+        reverse("main:download_simulation_results"),
+        data={"token": "invalid-token"},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert b"alert-danger" in response.content
+    assert b"Invalid download token." in response.content
 
 
 @pytest.mark.django_db

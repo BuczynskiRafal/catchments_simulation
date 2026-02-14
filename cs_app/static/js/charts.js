@@ -125,3 +125,26 @@ function renderSweepChart(containerId, sweepData, columns, feature, catchmentNam
 
     Plotly.newPlot(el, traces, layout, {responsive: true});
 }
+
+/**
+ * Download a rendered Plotly chart as PNG.
+ *
+ * @param {string} containerId
+ * @param {string} fileName
+ */
+function downloadChartAsPng(containerId, fileName) {
+    var chartEl = document.getElementById(containerId);
+    if (!chartEl || typeof Plotly === "undefined" || typeof Plotly.downloadImage !== "function") {
+        return false;
+    }
+    var safeFileName = (fileName || "chart")
+        .replace(/[\r\n]+/g, "_")
+        .replace(/[<>:"/\\|?*]+/g, "_")
+        .replace(/\.png$/i, "");
+    Plotly.downloadImage(chartEl, {
+        format: "png",
+        filename: safeFileName || "chart",
+        scale: 2
+    });
+    return true;
+}
