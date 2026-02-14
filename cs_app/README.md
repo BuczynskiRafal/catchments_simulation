@@ -95,6 +95,12 @@ cs_app/
 
 Note: simulation and timeseries result files are generated in-memory at download time and are not persisted in `MEDIA`.
 
+## Architecture Notes
+
+- Domain-level simulation validation schemas live in `src/catchment_simulation/schemas.py`.
+- Django web-only payload schemas (for example, contact form data) live in `cs_app/main/schemas.py`.
+- ANN weights are preloaded at app startup via `main.apps.MainConfig.ready()` and reused from a module-level predictor cache.
+
 ## Deployment
 
 For production deployment (e.g., on Render), ensure you have:

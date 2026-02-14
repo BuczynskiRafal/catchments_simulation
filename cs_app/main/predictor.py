@@ -10,7 +10,8 @@ This is a pure NumPy implementation - no TensorFlow/Keras required.
 
 import logging
 import os
-from typing import Optional
+import threading
+import time
 
 import numpy as np
 import swmmio
@@ -98,19 +99,68 @@ class SimpleMLPModel:
         return x
 
 
-# Load model at module level (lazy loading pattern could be used if needed)
-_current_directory = os.path.dirname(os.path.abspath(__file__))
-_weights_path = os.path.join(_current_directory, "..", "swmm_model", "weights.npz")
+_model: SimpleMLPModel | None = None
+_model_lock = threading.Lock()
 
-_model: Optional[SimpleMLPModel] = None
+
+def _default_weights_path() -> str:
+    current_directory = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(current_directory, "..", "swmm_model", "weights.npz")
+
+
+def _get_weights_path() -> str:
+    """Resolve model weights path from env/settings with a safe default."""
+    env_path = os.environ.get("CATCHMENT_SIMULATION_WEIGHTS_PATH")
+    if env_path:
+        return env_path
+
+    try:
+        from django.conf import settings
+        from django.core.exceptions import ImproperlyConfigured
+    except ImportError:
+        # Predictor can run outside Django environments.
+        return _default_weights_path()
+
+    try:
+        configured_path = getattr(settings, "SWMM_MODEL_WEIGHTS_PATH", None)
+    except ImproperlyConfigured:
+        return _default_weights_path()
+
+    if configured_path:
+        return str(configured_path)
+
+    return _default_weights_path()
+
+
+def _get_or_create_model() -> tuple[SimpleMLPModel, bool]:
+    """Return model instance and whether it was created in this call."""
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                _model = SimpleMLPModel(_get_weights_path())
+                return _model, True
+    return _model, False
 
 
 def _get_model() -> SimpleMLPModel:
     """Get or create the model instance (lazy loading)."""
-    global _model
-    if _model is None:
-        _model = SimpleMLPModel(_weights_path)
-    return _model
+    model, _ = _get_or_create_model()
+    return model
+
+
+def preload_model() -> bool:
+    """Eagerly load model weights into process memory.
+
+    Returns True when model was not loaded before this call.
+    """
+    started_at = time.perf_counter()
+    _, loaded_now = _get_or_create_model()
+    if loaded_now:
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info("ANN predictor model loaded in %.1f ms", elapsed_ms)
+        return True
+    return False
 
 
 def predict_runoff(swmmio_model: swmmio.Model) -> np.ndarray:
