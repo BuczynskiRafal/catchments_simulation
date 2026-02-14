@@ -955,11 +955,11 @@ def calculations(request: HttpRequest) -> HttpResponse:
             messages.error(request, "Please upload a file first.")
         else:
             try:
-                swmmio_model = swmmio.Model(uploaded_file_path)
-
                 with Simulation(uploaded_file_path) as sim:
                     for _ in sim:
                         pass
+                # Build the model after SWMM run so report-derived columns are available.
+                swmmio_model = swmmio.Model(uploaded_file_path)
                 ann_predictions = predict_runoff(swmmio_model).transpose()
                 df = pd.DataFrame(
                     data={
@@ -972,8 +972,8 @@ def calculations(request: HttpRequest) -> HttpResponse:
                 )
                 _cleanup_swmm_side_files(uploaded_file_path)
 
-            except Exception as e:
-                logger.error(e)
+            except Exception:
+                logger.exception("Error while performing calculations.")
                 messages.error(
                     request,
                     "An error occurred while performing calculations.",
