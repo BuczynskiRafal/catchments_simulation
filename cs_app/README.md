@@ -6,8 +6,8 @@ This is the Django web application for the Catchment Simulation project. It prov
 
 ### Prerequisites
 
-- Python 3.9 or higher
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- Python 3.10 or higher
+- [uv](https://docs.astral.sh/uv/)
 
 ### Installation
 
@@ -19,22 +19,19 @@ This is the Django web application for the Catchment Simulation project. It prov
 
 2. **Create virtual environment with uv**:
    ```bash
-   uv venv --python 3.12
+   uv venv --python 3.12  # any Python 3.10+ is supported
    source .venv/bin/activate  # On macOS/Linux
    # or .venv\Scripts\activate on Windows
    ```
 
-3. **Install the main package and dev dependencies**:
+3. **Install dependencies for app development**:
    ```bash
-   uv pip install -e ".[dev]"
+   uv sync --frozen --extra dev --extra web
    ```
 
-4. **Install Django app dependencies**:
+4. **Optional: install docs toolchain**:
    ```bash
-   uv pip install Django==3.2 Werkzeug==2.0.0 crispy-bootstrap4==2022.1 \
-       python-dotenv==1.0.0 django-crispy-forms==2.0 django-import-export==3.2.0 \
-       django-storages==1.13.2 plotly==5.18.0 dj-database-url==2.0.0 \
-       whitenoise==6.4.0 gunicorn==20.1.0 pytest-django email-validator
+   uv sync --frozen --extra docs --extra web
    ```
 
 5. **macOS only - Fix code signature issues** (if you encounter `SIGKILL` errors):
@@ -44,11 +41,9 @@ This is the Django web application for the Catchment Simulation project. It prov
 
 ### Configuration
 
-1. **Environment variables**: The app uses a `.env` file in `cs_app/` directory. Default configuration for local development:
+1. **Environment variables**: The app uses a `.env` file in `cs_app/` directory. Start from `.env.example` and adjust values:
    ```
-   DATABASE_URL=sqlite:///db.sqlite3
-   DEBUG=True
-   SECRET_KEY=your-secret-key-here
+   cp cs_app/.env.example cs_app/.env
    ```
 
 ### Running the Application
@@ -60,17 +55,17 @@ This is the Django web application for the Catchment Simulation project. It prov
 
 2. **Run database migrations**:
    ```bash
-   python manage.py migrate
+   uv run python manage.py migrate
    ```
 
 3. **Create a superuser** (optional, for admin access):
    ```bash
-   python manage.py createsuperuser
+   uv run python manage.py createsuperuser
    ```
 
 4. **Start the development server**:
    ```bash
-   python manage.py runserver
+   uv run python manage.py runserver
    ```
 
 5. **Open your browser** at http://127.0.0.1:8000/
@@ -79,7 +74,7 @@ This is the Django web application for the Catchment Simulation project. It prov
 
 ```bash
 cd cs_app
-pytest --ds=cs_app.test_settings
+uv run pytest --ds=cs_app.test_settings
 ```
 
 ## Project Structure
@@ -96,7 +91,6 @@ cs_app/
 ├── data/             # Static chart data in JSON format
 ├── swmm_model/       # ANN runtime artifact (weights.npz)
 ├── manage.py         # Django management script
-└── requirements.txt  # App-specific dependencies
 ```
 
 Note: simulation and timeseries result files are generated in-memory at download time and are not persisted in `MEDIA`.

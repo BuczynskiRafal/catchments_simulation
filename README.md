@@ -82,7 +82,7 @@ You will be asked to register and log in before performing the simulation.
 ## Running the Django Web Application Locally
 
 ### Prerequisites
-- Python 3.9+ 
+- Python 3.10+
 - [uv](https://docs.astral.sh/uv/) package manager (recommended)
 
 ### Quick Start
@@ -93,31 +93,31 @@ git clone https://github.com/BuczynskiRafal/catchments_simulation.git
 cd catchments_simulation
 
 # Create virtual environment with uv
-uv venv --python 3.12
+uv venv --python 3.12  # any Python 3.10+ is supported
 source .venv/bin/activate  # macOS/Linux
 # .venv\Scripts\activate   # Windows
 
-# Install main package
-uv pip install -e ".[dev]"
+# Install project dependencies for app development
+uv sync --frozen --extra dev --extra web
 
-# Install Django dependencies
-uv pip install Django==3.2 Werkzeug==2.0.0 crispy-bootstrap4==2022.1 \
-    python-dotenv==1.0.0 django-crispy-forms==2.0 django-import-export==3.2.0 \
-    django-storages==1.13.2 plotly==5.18.0 dj-database-url==2.0.0 \
-    whitenoise==6.4.0 gunicorn==20.1.0 pytest-django email-validator
+# Optional: install docs toolchain
+uv sync --frozen --extra docs --extra web
 
-# macOS only: Fix code signature issues
+# macOS only: Run this only if you see killed process/SIGKILL errors
 find .venv -name "*.so" -o -name "*.dylib" | xargs codesign --force --sign -
 
 # Run the app
 cd cs_app
-python manage.py migrate
-python manage.py runserver
+uv run python manage.py migrate
+uv run python manage.py runserver
 ```
 
 Open http://127.0.0.1:8000/ in your browser.
 
 For detailed instructions, see [cs_app/README.md](cs_app/README.md).
+
+`uv.lock` is committed to the repository. If you change dependencies in
+`pyproject.toml`, regenerate it with `uv lock` and commit both files together.
 
 ---
 

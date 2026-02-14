@@ -2,7 +2,12 @@
 
 set -o errexit  # exit on error
 
-pip install -r requirements.txt
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-python manage.py collectstatic --no-input
-python manage.py migrate
+cd "${PROJECT_ROOT}"
+uv sync --frozen --no-dev --extra web
+
+cd "${SCRIPT_DIR}"
+uv run python manage.py collectstatic --no-input
+uv run python manage.py migrate

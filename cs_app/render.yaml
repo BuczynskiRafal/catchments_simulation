@@ -2,7 +2,7 @@ services:
   - type: web
     name: catchment-simulations
     env: docker
-    buildCommand: "docker build -t catchment-simulations ."
+    buildCommand: "docker build -t catchment-simulations -f cs_app/Dockerfile ."
     startCommand: "docker run -p 8000:8000 catchment-simulations"
     healthCheckPath: "/"
     envVars:
