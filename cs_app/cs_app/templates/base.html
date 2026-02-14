@@ -78,6 +78,16 @@
     </header>
 
     <div class="container content-wrapper">
+        {% if messages %}
+        <div class="mt-3">
+            {% for message in messages %}
+            <div class="alert {% if 'error' in message.tags %}alert-danger{% elif 'success' in message.tags %}alert-success{% elif 'warning' in message.tags %}alert-warning{% else %}alert-info{% endif %} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
         {% block content %}
         {% endblock %}
     </div>
@@ -130,6 +140,7 @@
                 const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
                     || '{{ csrf_token }}';
                 const uploadUrl = '{% url "main:upload" %}';
+                const sampleUploadUrl = '{% url "main:upload_sample" %}';
                 const clearUrl = '{% url "main:upload_clear" %}';
                 const statusUrl = '{% url "main:upload_status" %}';
                 const subcatchmentsUrl = '{% url "main:subcatchments" %}';
@@ -196,6 +207,27 @@
                     select.innerHTML = '<option value="">--- Upload a file first ---</option>';
                 }
 
+                function showUploadStatus(filename) {
+                    var statusEl = document.getElementById('upload-status');
+                    var statusText = document.getElementById('upload-status-text');
+                    if (statusEl && statusText) {
+                        statusText.textContent = 'Loaded: ' + filename;
+                        statusEl.style.display = '';
+                    }
+                }
+
+                function parseJsonSafely(resp) {
+                    return resp.text().then(function(body) {
+                        if (!body) return {};
+                        try {
+                            return JSON.parse(body);
+                        } catch (err) {
+                            return {};
+                        }
+                    });
+                }
+
+                var replacingUpload = false;
                 var dzInstance = new Dropzone('#my-dropzone', {
                     url: uploadUrl,
                     acceptedFiles: '.inp',
@@ -208,8 +240,6 @@
                         'X-CSRFToken': csrfToken
                     },
                     init: function() {
-                        var _replacing = false;
-                        var dz = this;
                         this.on('removedfile', function() {
                             var msgEl = document.querySelector('#my-dropzone .dz-message');
                             if (msgEl) {
@@ -217,7 +247,7 @@
                             }
                             var statusEl = document.getElementById('upload-status');
                             if (statusEl) { statusEl.style.display = 'none'; }
-                            if (!_replacing) {
+                            if (!replacingUpload) {
                                 fetch(clearUrl, {
                                     method: 'POST',
                                     headers: {
@@ -244,9 +274,9 @@
                             fetchSubcatchments();
                         });
                         this.on('maxfilesexceeded', function(file) {
-                            _replacing = true;
+                            replacingUpload = true;
                             this.removeAllFiles();
-                            _replacing = false;
+                            replacingUpload = false;
                             this.addFile(file);
                         });
                     },
@@ -273,6 +303,66 @@
                     }
                 });
 
+                function showMockFile(filename, size) {
+                    replacingUpload = true;
+                    dzInstance.removeAllFiles();
+                    replacingUpload = false;
+                    var mockFile = {
+                        name: filename,
+                        size: size || 0,
+                        status: Dropzone.SUCCESS,
+                        accepted: true
+                    };
+                    dzInstance.files.push(mockFile);
+                    dzInstance.emit('addedfile', mockFile);
+                    dzInstance.emit('success', mockFile);
+                    dzInstance.emit('complete', mockFile);
+                }
+
+                var sampleButton = document.getElementById('load-sample-data-button');
+                if (sampleButton) {
+                    var sampleButtonDefaultText = sampleButton.textContent;
+                    sampleButton.addEventListener('click', function() {
+                        sampleButton.disabled = true;
+                        sampleButton.textContent = 'Loading sample data...';
+                        fetch(sampleUploadUrl, {
+                            method: 'POST',
+                            headers: {
+                                'X-CSRFToken': csrfToken,
+                                'X-Requested-With': 'XMLHttpRequest'
+                            }
+                        })
+                        .then(function(resp) {
+                            if (resp.status === 401) {
+                                return parseJsonSafely(resp).then(function(payload) {
+                                    var redirectUrl = payload && payload.login_url ? payload.login_url : loginUrl;
+                                    window.location.href = redirectUrl + '?next=' + encodeURIComponent(window.location.pathname);
+                                    return null;
+                                });
+                            }
+                            if (!resp.ok) {
+                                return parseJsonSafely(resp).then(function(payload) {
+                                    throw new Error((payload && payload.error) || 'Failed to load sample data.');
+                                });
+                            }
+                            return parseJsonSafely(resp);
+                        })
+                        .then(function(data) {
+                            if (!data) return;
+                            var filename = data.filename || 'example.inp';
+                            showMockFile(filename, data.size);
+                            showUploadStatus(filename);
+                        })
+                        .catch(function(err) {
+                            alert(err.message || 'Failed to load sample data.');
+                        })
+                        .finally(function() {
+                            sampleButton.disabled = false;
+                            sampleButton.textContent = sampleButtonDefaultText;
+                        });
+                    });
+                }
+
                 // Restore previously uploaded file from session
                 fetch(statusUrl, {
                     headers: { 'X-Requested-With': 'XMLHttpRequest' }
@@ -280,17 +370,8 @@
                 .then(function(resp) { return resp.ok ? resp.json() : null; })
                 .then(function(data) {
                     if (data && data.has_file) {
-                        var mockFile = { name: data.filename, size: data.size, status: Dropzone.SUCCESS, accepted: true };
-                        dzInstance.files.push(mockFile);
-                        dzInstance.emit('addedfile', mockFile);
-                        dzInstance.emit('success', mockFile);
-                        dzInstance.emit('complete', mockFile);
-                        var statusEl = document.getElementById('upload-status');
-                        var statusText = document.getElementById('upload-status-text');
-                        if (statusEl && statusText) {
-                            statusText.textContent = 'Loaded: ' + data.filename;
-                            statusEl.style.display = '';
-                        }
+                        showMockFile(data.filename, data.size);
+                        showUploadStatus(data.filename);
                         fetchSubcatchments();
                     }
                 })

@@ -39,6 +39,43 @@ document.addEventListener('DOMContentLoaded', function() {
         toggleRangeFields();
     }
 
+    var runSimulationButton = document.getElementById('run-simulation-button');
+    var simulationLoadingState = document.getElementById('simulation-loading-state');
+    var simulationForm = runSimulationButton ? runSimulationButton.closest('form') : null;
+    var isSubmitting = false;
+    function resetSimulationSubmitState() {
+        isSubmitting = false;
+        if (runSimulationButton) {
+            runSimulationButton.disabled = false;
+            runSimulationButton.removeAttribute('aria-disabled');
+        }
+        if (simulationLoadingState) {
+            simulationLoadingState.classList.add('d-none');
+        }
+    }
+
+    if (simulationForm && runSimulationButton) {
+        simulationForm.addEventListener('submit', function(event) {
+            var submitter = event.submitter || document.activeElement;
+            if (submitter && submitter.id && submitter.id !== 'run-simulation-button') {
+                return;
+            }
+            if (isSubmitting) {
+                event.preventDefault();
+                return;
+            }
+            isSubmitting = true;
+            runSimulationButton.disabled = true;
+            runSimulationButton.setAttribute('aria-disabled', 'true');
+            if (simulationLoadingState) {
+                simulationLoadingState.classList.remove('d-none');
+            }
+        });
+        window.addEventListener('pageshow', function() {
+            resetSimulationSubmitState();
+        });
+    }
+
     var configEl = document.getElementById('chart-config');
     if (configEl) {
         try {
@@ -84,6 +121,12 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="row mt-3">
             <div class="col-md-12 d-flex justify-content-center">
                 <button type="submit" class="btn btn-primary" id="run-simulation-button" data-authenticated="{{ request.user.is_authenticated }}">Run Simulation</button>
+            </div>
+        </div>
+        <div id="simulation-loading-state" class="row mt-2 d-none" aria-live="polite">
+            <div class="col-md-12 d-flex justify-content-center align-items-center gap-2 text-muted">
+                <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+                <span>Analyzing catchment with neural network...</span>
             </div>
         </div>
 

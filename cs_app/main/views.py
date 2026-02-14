@@ -8,10 +8,12 @@ import json
 import logging
 import os
 import re
+import shutil
 import uuid
+from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache, wraps
-from io import BytesIO
+from io import BytesIO, StringIO
 
 import numpy as np
 import pandas as pd
@@ -33,6 +35,7 @@ from django.http import (
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
+from pydantic import ValidationError as PydanticValidationError
 from pyswmm import Simulation
 
 from catchment_simulation.analysis import runoff_volume, time_to_peak
@@ -53,6 +56,15 @@ SIM_RESULT_TOKEN_SESSION_KEY = "sim_result_token"
 TS_RESULT_TOKEN_SESSION_KEY = "ts_result_token"
 RESULT_CACHE_TTL_SECONDS = 30 * 60
 MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
+UPLOAD_SUBDIR = "uploaded_files"
+
+
+class ResultPayloadTooLargeError(ValueError):
+    """Raised when serialized result payload exceeds configured cache limit."""
+
+
+class InputValidationError(ValueError):
+    """Raised for user-correctable input issues."""
 
 
 def ajax_login_required(view_func):
@@ -133,7 +145,7 @@ def _store_cached_result(scope: str, user_id: int, payload: dict) -> str:
     serialized = json.dumps(payload, separators=(",", ":"))
     payload_size = len(serialized.encode("utf-8"))
     if payload_size > MAX_RESULT_CACHE_BYTES:
-        raise ValueError("Result payload too large")
+        raise ResultPayloadTooLargeError("Result payload too large")
 
     token = uuid.uuid4().hex
     cache.set(
@@ -163,15 +175,19 @@ def _load_cached_result(scope: str, user_id: int, token: str | None) -> dict | N
     return payload
 
 
-def _safe_download_filename(name: str | None, fallback: str) -> str:
+def _safe_download_filename(name: str | None, fallback: str, extension: str = ".xlsx") -> str:
     """Sanitize user-facing filenames used in Content-Disposition."""
     candidate = os.path.basename(name or "").strip()
     if not candidate:
         candidate = fallback
     candidate = re.sub(r'[\r\n"]+', "_", candidate)
-    if not candidate.lower().endswith(".xlsx"):
-        candidate = f"{candidate}.xlsx"
-    return candidate[:150]
+    base_name = os.path.splitext(candidate)[0] or os.path.splitext(fallback)[0] or "results"
+    if not extension:
+        normalized_extension = ""
+    else:
+        normalized_extension = extension if extension.startswith(".") else f".{extension}"
+    safe_name = f"{base_name}{normalized_extension}"
+    return safe_name[:150]
 
 
 def _normalize_sheet_name(raw_name: str, used_names: set[str]) -> str:
@@ -191,6 +207,62 @@ def _normalize_sheet_name(raw_name: str, used_names: set[str]) -> str:
 
 def _is_valid_result_token(token: str | None) -> bool:
     return bool(token and re.fullmatch(r"[0-9a-f]{32}", token))
+
+
+def _user_upload_dir(user_id: int) -> str:
+    """Return absolute per-user upload directory rooted in MEDIA_ROOT."""
+    return os.path.join(settings.MEDIA_ROOT, UPLOAD_SUBDIR, str(user_id))
+
+
+def _safe_remove_file(path: str | None) -> None:
+    """Best-effort file removal safe for concurrent requests."""
+    if not path:
+        return
+    with suppress(OSError):
+        os.remove(path)
+
+
+def _coerce_input_validation_error(error: Exception) -> InputValidationError | None:
+    """Normalize known user-facing errors to InputValidationError."""
+    if isinstance(error, InputValidationError):
+        return error
+
+    if isinstance(error, PydanticValidationError | ValidationError):
+        return InputValidationError("validation")
+
+    if isinstance(error, FileNotFoundError):
+        return InputValidationError("missing_file")
+
+    if isinstance(error, UnicodeDecodeError):
+        return InputValidationError("encoding")
+
+    if isinstance(error, ValueError):
+        lowered = str(error).lower()
+        if "subcatchment" in lowered and "not found" in lowered:
+            return InputValidationError("subcatchment")
+        if "must be <=" in lowered:
+            return InputValidationError("range")
+        if "could not convert string to float" in lowered:
+            return InputValidationError("non_numeric")
+        if "expected numeric" in lowered:
+            return InputValidationError("non_numeric")
+    return None
+
+
+def _format_input_error_message(error: InputValidationError) -> str:
+    """Return safe, user-facing message without leaking internal details."""
+    code = str(error)
+    if code == "missing_file":
+        return "Input file is missing. Please upload the model again."
+    if code == "encoding":
+        return "Input file encoding is not supported."
+    if code == "subcatchment":
+        return "Selected catchment was not found in the uploaded model."
+    if code == "range":
+        return "Invalid range values. Ensure start is less than or equal to stop."
+    if code == "non_numeric":
+        return "Input file contains non-numeric values where numbers are required."
+    return "Input file error. Please validate your model and selected parameters."
 
 
 def main_view(request: HttpRequest) -> HttpResponse:
@@ -390,13 +462,13 @@ def upload(request: HttpRequest) -> JsonResponse:
 
         # Sanitize filename and scope to user
         safe_filename = _sanitize_filename(filename)
-        user_dir = os.path.join("uploaded_files", str(request.user.id))
+        user_dir = _user_upload_dir(request.user.id)
         file_path = os.path.join(user_dir, safe_filename + file_extension)
 
         # Remove previous uploaded file from disk
         old_path = request.session.get("uploaded_file_path")
-        if old_path and old_path != file_path and os.path.exists(old_path):
-            os.remove(old_path)
+        if old_path and old_path != file_path:
+            _safe_remove_file(old_path)
 
         # Ensure upload directory exists
         os.makedirs(user_dir, exist_ok=True)
@@ -416,6 +488,57 @@ def upload(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"message": "File was sent."})
 
     return JsonResponse({"error": "Error occurred while sending file."}, status=400)
+
+
+@require_POST
+@ajax_login_required
+def upload_sample(request: HttpRequest) -> JsonResponse:
+    """Load bundled sample INP file into the current user session."""
+    sample_source_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
+    if not os.path.exists(sample_source_path):
+        logger.error("Sample INP file is missing: %s", sample_source_path)
+        return JsonResponse({"error": "Sample file is not available."}, status=500)
+
+    try:
+        with open(sample_source_path, "rb") as sample_file:
+            if not _validate_inp_file_content(sample_file.read()):
+                logger.error("Sample INP file failed validation: %s", sample_source_path)
+                return JsonResponse({"error": "Sample file is invalid."}, status=500)
+    except OSError:
+        logger.exception("Failed to read sample INP file at %s", sample_source_path)
+        return JsonResponse({"error": "Sample file is not available."}, status=500)
+
+    user_dir = _user_upload_dir(request.user.id)
+    os.makedirs(user_dir, exist_ok=True)
+    file_path = os.path.join(user_dir, "example.inp")
+
+    try:
+        shutil.copyfile(sample_source_path, file_path)
+    except OSError:
+        logger.exception("Failed to copy sample INP file for user %s", request.user.id)
+        return JsonResponse({"error": "Failed to load sample file."}, status=500)
+
+    old_path = request.session.get("uploaded_file_path")
+    if old_path and old_path != file_path:
+        _safe_remove_file(old_path)
+
+    request.session["uploaded_file_path"] = file_path
+    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
+    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
+    request.session.pop("_subcatchment_ids", None)
+    request.session.pop("_subcatchment_ids_file", None)
+    try:
+        sample_size = os.path.getsize(file_path)
+    except OSError:
+        sample_size = 0
+
+    return JsonResponse(
+        {
+            "message": "Sample data loaded.",
+            "filename": os.path.basename(file_path),
+            "size": sample_size,
+        }
+    )
 
 
 @require_GET
@@ -471,8 +594,7 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Method not allowed."}, status=405)
 
     file_path = request.session.pop("uploaded_file_path", None)
-    if file_path and os.path.exists(file_path):
-        os.remove(file_path)
+    _safe_remove_file(file_path)
 
     request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
     request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
@@ -768,20 +890,19 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             option = form.cleaned_data["option"]
             is_predefined = option in SimulationForm.PREDEFINED_METHODS
 
-            params = SimulationMethodParams(
-                method_name=option,
-                start=form.cleaned_data.get("start") if not is_predefined else None,
-                stop=form.cleaned_data.get("stop") if not is_predefined else None,
-                step=form.cleaned_data.get("step") if not is_predefined else None,
-                catchment_name=form.cleaned_data["catchment_name"],
-            )
-
             uploaded_file_path = request.session.get(
                 "uploaded_file_path",
                 os.path.abspath("catchment_simulation/example.inp"),
             )
 
             try:
+                params = SimulationMethodParams(
+                    method_name=option,
+                    start=form.cleaned_data.get("start") if not is_predefined else None,
+                    stop=form.cleaned_data.get("stop") if not is_predefined else None,
+                    step=form.cleaned_data.get("step") if not is_predefined else None,
+                    catchment_name=form.cleaned_data["catchment_name"],
+                )
                 with FeaturesSimulation(
                     subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
                 ) as model:
@@ -819,13 +940,22 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                 )
                 return redirect("main:simulation")
 
-            except ValueError:
+            except ResultPayloadTooLargeError:
                 messages.error(
                     request,
                     "Result set is too large to keep for download. Narrow the simulation range.",
                 )
-            except Exception as e:
-                logger.error("Simulation failed: %s", e)
+            except Exception as error:
+                input_error = _coerce_input_validation_error(error)
+                if input_error:
+                    logger.warning("Simulation input validation failed", exc_info=True)
+                    messages.error(request, _format_input_error_message(input_error))
+                    return render(
+                        request,
+                        "main/simulation.html",
+                        {"form": form, **get_session_variables(request)},
+                    )
+                logger.exception("Simulation failed")
                 messages.error(request, "An error occurred while running the simulation.")
     else:
         catchment_choices = _get_catchment_choices(request)
@@ -899,6 +1029,59 @@ def download_timeseries_results(request: HttpRequest) -> HttpResponse:
 
     messages.error(request, "Failed to generate the timeseries output file.")
     return redirect("main:timeseries")
+
+
+def _timeseries_payload_to_csv_df(payload: dict) -> pd.DataFrame:
+    """Convert cached timeseries payload to a single CSV-friendly DataFrame."""
+    mode = payload.get("mode")
+    data = payload.get("data")
+
+    if mode == "single" and isinstance(data, list):
+        return pd.DataFrame(data)
+
+    if mode == "sweep" and isinstance(data, dict):
+        frames: list[pd.DataFrame] = []
+        for parameter_value, rows in data.items():
+            frame = pd.DataFrame(rows)
+            frame.insert(0, "parameter_value", parameter_value)
+            frames.append(frame)
+        if frames:
+            return pd.concat(frames, ignore_index=True)
+        return pd.DataFrame(columns=["parameter_value"])
+
+    raise ValueError("Invalid timeseries payload for CSV export.")
+
+
+@login_required
+@require_POST
+def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
+    """Download timeseries analysis results as CSV."""
+    token = request.POST.get("token")
+    if not _is_valid_result_token(token):
+        messages.error(request, "Invalid download token.")
+        return redirect("main:timeseries")
+
+    payload = _load_cached_result("ts", request.user.id, token)
+    if not payload:
+        messages.error(request, "No timeseries results available to download.")
+        return redirect("main:timeseries")
+
+    try:
+        df = _timeseries_payload_to_csv_df(payload)
+        buffer = StringIO()
+        df.to_csv(buffer, index=False)
+        output_file_name = _safe_download_filename(
+            payload.get("output_file_name"),
+            "timeseries_results.csv",
+            extension=".csv",
+        )
+        response = HttpResponse(buffer.getvalue(), content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{output_file_name}"'
+        return response
+    except Exception:
+        logger.exception("Failed to generate timeseries CSV download")
+        messages.error(request, "Failed to generate the timeseries CSV file.")
+        return redirect("main:timeseries")
 
 
 @login_required
@@ -1042,13 +1225,22 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         )
                         return redirect("main:timeseries")
 
-            except ValueError:
+            except ResultPayloadTooLargeError:
                 messages.error(
                     request,
                     "Result set is too large to keep for download. Narrow the timeseries range.",
                 )
-            except Exception as e:
-                logger.error("Timeseries analysis failed: %s", e)
+            except Exception as error:
+                input_error = _coerce_input_validation_error(error)
+                if input_error:
+                    logger.warning("Timeseries input validation failed", exc_info=True)
+                    messages.error(request, _format_input_error_message(input_error))
+                    return render(
+                        request,
+                        "main/timeseries.html",
+                        {"form": form, "ts_show_results": False},
+                    )
+                logger.exception("Timeseries analysis failed")
                 messages.error(request, "An error occurred while running the analysis.")
     else:
         catchment_choices = _get_catchment_choices(request)
