@@ -108,5 +108,22 @@ For production deployment (e.g., on Render), ensure you have:
 - `DEBUG=False`
 - Proper `SECRET_KEY`
 - `psycopg2-binary` installed for PostgreSQL support
+- Upload limits aligned across layers:
+  - Django app limits (`INP_UPLOAD_MAX_BYTES`, `INP_UPLOAD_MAX_BODY_BYTES`) are defined in settings.
+  - Reverse proxy request-body limit should be greater than or equal to `INP_UPLOAD_MAX_BODY_BYTES`.
+
+Example Nginx setting:
+
+```nginx
+client_max_body_size 11m;
+```
+
+Proxy-level limits are the first line of defense; Django limits are the second.
+
+Threat model notes:
+- This hardening primarily protects Django worker memory (no full-file `read()` during upload validation).
+- Spoofed or missing `Content-Length` is additionally constrained by server-side streamed body limiting.
+- Disk/CPU pressure from many concurrent large uploads still requires infrastructure controls (proxy limits,
+  rate limiting, and worker sizing).
 
 See `render.yaml` for Render-specific configuration.
