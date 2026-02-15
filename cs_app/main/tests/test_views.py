@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from io import BytesIO, StringIO
 from types import SimpleNamespace
 
@@ -1664,6 +1665,115 @@ def test_simulation_template_contains_loading_state(client, user):
 
 
 @pytest.mark.django_db
+def test_main_view_uses_refactored_chart_assets(client):
+    """Main view should load namespaced chart assets and keep json_script contract."""
+    response = client.get(reverse("main:main_view"))
+
+    assert response.status_code == 200
+    assert b"/static/main/js/charts.js" in response.content
+    assert b"/static/main/js/pages/main_view.js" in response.content
+    assert b'id="chart-data"' in response.content
+    assert b"/static/js/charts.js" not in response.content
+
+
+@pytest.mark.django_db
+def test_simulation_view_uses_refactored_assets_and_has_no_chart_json_without_results(client, user):
+    """Simulation page should load new assets and omit chart-config json when no results exist."""
+    client.force_login(user)
+    response = client.get(reverse("main:simulation"))
+
+    assert response.status_code == 200
+    assert b"/static/main/css/upload_zone.css" in response.content
+    assert b"/static/main/js/charts.js" in response.content
+    assert b"/static/main/js/pages/simulation.js" in response.content
+    assert b'id="chart-config"' not in response.content
+    assert b"/static/js/charts.js" not in response.content
+
+
+@pytest.mark.django_db
+def test_timeseries_view_uses_refactored_assets_and_has_no_chart_json_without_results(client, user):
+    """Timeseries page should load new assets and omit ts-chart-config json when no results exist."""
+    client.force_login(user)
+    response = client.get(reverse("main:timeseries"))
+
+    assert response.status_code == 200
+    assert b"/static/main/css/upload_zone.css" in response.content
+    assert b"/static/main/css/timeseries.css" in response.content
+    assert b"/static/main/js/charts.js" in response.content
+    assert b"/static/main/js/pages/timeseries.js" in response.content
+    assert b'id="ts-chart-config"' not in response.content
+    assert b"/static/js/charts.js" not in response.content
+
+
+@pytest.mark.django_db
+def test_calculations_view_uses_upload_zone_component_contract(client):
+    """Calculations page should include the shared upload-zone contract."""
+    response = client.get(reverse("main:calculations"))
+
+    assert response.status_code == 200
+    assert b"/static/main/css/upload_zone.css" in response.content
+    assert b'id="my-dropzone"' in response.content
+    assert b'data-upload-url="' in response.content
+    assert b'data-upload-sample-url="' in response.content
+    assert b'data-upload-clear-url="' in response.content
+    assert b'data-upload-status-url="' in response.content
+    assert b'data-subcatchments-url="' in response.content
+    assert b'id="upload-status"' in response.content
+    assert b'id="upload-status-text"' in response.content
+    assert b'id="load-sample-data-button"' in response.content
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "requires_login"),
+    [
+        ("main:main_view", False),
+        ("main:simulation", True),
+        ("main:timeseries", True),
+        ("main:calculations", False),
+    ],
+)
+def test_base_template_exposes_login_url_data_contract(client, user, url_name, requires_login):
+    """All key pages should expose login redirect URL through body data attribute."""
+    if requires_login:
+        client.force_login(user)
+
+    response = client.get(reverse(url_name))
+
+    assert response.status_code == 200
+    assert b"data-login-url=" in response.content
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "requires_login"),
+    [
+        ("main:simulation", True),
+        ("main:timeseries", True),
+        ("main:calculations", False),
+    ],
+)
+def test_upload_zone_contract_is_rendered_consistently(client, user, url_name, requires_login):
+    """Pages with upload zone should expose identical dataset endpoints and status hooks."""
+    if requires_login:
+        client.force_login(user)
+
+    response = client.get(reverse(url_name))
+    content = response.content
+
+    assert response.status_code == 200
+    assert b'id="my-dropzone"' in content
+    assert b'data-upload-url="' in content
+    assert b'data-upload-sample-url="' in content
+    assert b'data-upload-clear-url="' in content
+    assert b'data-upload-status-url="' in content
+    assert b'data-subcatchments-url="' in content
+    assert b'id="upload-status"' in content
+    assert b'id="upload-status-text"' in content
+    assert b'id="load-sample-data-button"' in content
+
+
+@pytest.mark.django_db
 def test_timeseries_template_shows_csv_and_png_buttons_when_results_exist(client, user):
     """Timeseries results view should render CSV and PNG export controls."""
     client.force_login(user)
@@ -1693,6 +1803,66 @@ def test_timeseries_template_shows_csv_and_png_buttons_when_results_exist(client
     assert response.status_code == 200
     assert b"Export timeseries to CSV" in response.content
     assert b'id="download-timeseries-png-button"' in response.content
+    assert b'data-filename="timeseries_single.xlsx"' in response.content
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "requires_login"),
+    [
+        ("main:main_view", False),
+        ("main:simulation", True),
+        ("main:timeseries", True),
+        ("main:calculations", False),
+    ],
+)
+def test_refactored_pages_do_not_reference_legacy_chart_assets(
+    client, user, url_name, requires_login
+):
+    """Rendered pages should not include legacy chart asset path."""
+    if requires_login:
+        client.force_login(user)
+
+    response = client.get(reverse(url_name))
+
+    assert response.status_code == 200
+    assert b"/static/js/charts.js" not in response.content
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "requires_login"),
+    [
+        ("main:main_view", False),
+        ("main:simulation", True),
+        ("main:timeseries", True),
+        ("main:calculations", False),
+    ],
+)
+def test_templates_keep_only_allowlisted_inline_scripts(client, user, url_name, requires_login):
+    """Inline scripts are restricted to Dropzone auto-discover flag and json_script payloads."""
+    if requires_login:
+        client.force_login(user)
+
+    response = client.get(reverse(url_name))
+    assert response.status_code == 200
+
+    script_tags = re.findall(
+        rb"<script(?P<attrs>[^>]*)>(?P<body>.*?)</script>",
+        response.content,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    assert script_tags
+
+    for attrs, body in script_tags:
+        attrs_lower = attrs.lower()
+        if re.search(rb"\bsrc\s*=", attrs_lower):
+            continue
+        if re.search(rb"\btype\s*=\s*[\"']application/json[\"']", attrs_lower):
+            continue
+
+        inline_body = re.sub(rb"\s+", b"", body)
+        assert inline_body == b"Dropzone.autoDiscover=false;"
 
 
 @pytest.mark.django_db

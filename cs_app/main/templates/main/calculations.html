@@ -1,6 +1,11 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}Catchment Calculations{% endblock %}
+
+{% block style %}
+<link rel="stylesheet" href="{% static 'main/css/upload_zone.css' %}">
+{% endblock %}
 
 {% block content %}
 
@@ -9,7 +14,6 @@
         <div class="col-md-6">
             <!-- Left column -->
             <div class="bg-light p-3" style="min-height: 100%;">
-                {% load static %}
                 <h3 style="text-align: center;">Catchment Area Neural Network Model</h3>
                 <p  style="text-align: justify;">The Catchment Area Neural Network Model is a machine learning model designed to analyze and predict the behavior of water flow in catchment areas. The model takes into account various features of the catchment area, such as the land surface, slope, imperviousness, and infiltration properties. By understanding the relationships between these features, the model can provide valuable insights for water resource management, flood control, and environmental conservation efforts.</p>
                 <p>
@@ -55,19 +59,11 @@
         <div class="col-md-6">
             <!-- Roght column -->
             <div class="bg-light p-3" style="min-height: 100%;">
-           
+
                 <h3 style="text-align: center;">Comparison of SWMM and ANN in runoff calculation.</h3>
 
-                <!-- Drop file -->
-                <div class="d-flex justify-content-center">
-                    <form action="/upload/" method="post" enctype="multipart/form-data" class="dropzone" id="my-dropzone">
-                        {% csrf_token %}
-                        <div class="fallback">
-                            <input name="file" type="file" multiple class="custom-file-input" />
-                            <input type="submit" value="Upload" class="btn btn-primary mt-3" />
-                        </div>
-                    </form>
-                </div>
+                {% include 'main/_upload_zone.html' %}
+
                 <!-- Run calculations button -->
                 <form method="post">
                     {% csrf_token %}
@@ -77,15 +73,15 @@
                         </div>
                     </div>
                 </form>
-                
-                
+
+
                 <br>
                 <h6>Warning!</h6>
-                <p>Sensitivity analysis indicates that the model works correctly only within a certain range of precipitation. This is due to the small training set. 
+                <p>Sensitivity analysis indicates that the model works correctly only within a certain range of precipitation. This is due to the small training set.
                 </p>
                 <h4 style="text-align: center;">Results Comparison</h4>
 
-                
+
 
                 <table class="table table-striped">
                     <thead>
@@ -111,13 +107,13 @@
                                 <td class="text-center">-</td>
                             </tr>
                         {% endif %}
-                    </tbody>                    
+                    </tbody>
                 </table>
 
 
             </div>
         </div>
-        
+
     </div>
 </div>
 
