@@ -4,91 +4,14 @@
 {% block title %}Catchment Simulations{% endblock %}
 
 {% block head_scripts %}
-{% include 'main/_chart_scripts.html' %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
+        integrity="sha384-cCVCZkAjYNxaYKbM8lsArLznDF/SvMFr1jcZrvOpSTCa0W40ZAdLzHCEulnUa5i7"
+        crossorigin="anonymous"></script>
+<script src="{% static 'main/js/charts.js' %}"></script>
 {% endblock %}
 
 {% block style %}
-{% include 'main/_upload_zone_styles.html' %}
-{% endblock %}
-
-{% block additional_scripts %}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    var optionSelect = document.getElementById('id_option');
-    var predefinedMethods = [
-        'simulate_n_imperv', 'simulate_n_perv',
-        'simulate_s_imperv', 'simulate_s_perv'
-    ];
-
-    function toggleRangeFields() {
-        var isPredefined = predefinedMethods.indexOf(optionSelect.value) !== -1;
-        var fieldIds = ['id_start', 'id_stop', 'id_step'];
-        fieldIds.forEach(function(fieldId) {
-            var field = document.getElementById(fieldId);
-            if (field) {
-                var wrapper = field.closest('.col-md-2');
-                if (wrapper) {
-                    wrapper.style.display = isPredefined ? 'none' : '';
-                }
-            }
-        });
-    }
-
-    if (optionSelect) {
-        optionSelect.addEventListener('change', toggleRangeFields);
-        toggleRangeFields();
-    }
-
-    var runSimulationButton = document.getElementById('run-simulation-button');
-    var simulationLoadingState = document.getElementById('simulation-loading-state');
-    var simulationForm = runSimulationButton ? runSimulationButton.closest('form') : null;
-    var isSubmitting = false;
-    function resetSimulationSubmitState() {
-        isSubmitting = false;
-        if (runSimulationButton) {
-            runSimulationButton.disabled = false;
-            runSimulationButton.removeAttribute('aria-disabled');
-        }
-        if (simulationLoadingState) {
-            simulationLoadingState.classList.add('d-none');
-        }
-    }
-
-    if (simulationForm && runSimulationButton) {
-        simulationForm.addEventListener('submit', function(event) {
-            var submitter = event.submitter || document.activeElement;
-            if (submitter && submitter.id && submitter.id !== 'run-simulation-button') {
-                return;
-            }
-            if (isSubmitting) {
-                event.preventDefault();
-                return;
-            }
-            isSubmitting = true;
-            runSimulationButton.disabled = true;
-            runSimulationButton.setAttribute('aria-disabled', 'true');
-            if (simulationLoadingState) {
-                simulationLoadingState.classList.remove('d-none');
-            }
-        });
-        window.addEventListener('pageshow', function() {
-            resetSimulationSubmitState();
-        });
-    }
-
-    var configEl = document.getElementById('chart-config');
-    if (configEl) {
-        try {
-            var config = JSON.parse(configEl.textContent);
-            renderLineChart('simulation-chart', config.data, config.x, config.y, {title: config.title});
-        } catch (e) {
-            console.error('Failed to render chart:', e);
-            var el = document.getElementById('simulation-chart');
-            if (el) el.innerHTML = '<p class="text-danger text-center">Failed to load chart.</p>';
-        }
-    }
-});
-</script>
+<link rel="stylesheet" href="{% static 'main/css/upload_zone.css' %}">
 {% endblock %}
 
 {% block content %}
@@ -179,4 +102,8 @@ document.addEventListener('DOMContentLoaded', function() {
     {% endif %}
 </form>
 
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="{% static 'main/js/pages/simulation.js' %}"></script>
 {% endblock %}

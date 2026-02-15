@@ -1,9 +1,13 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block title %}Catchment Simulation — Documentation{% endblock %}
 
 {% block head_scripts %}
-{% include 'main/_chart_scripts.html' %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
+        integrity="sha384-cCVCZkAjYNxaYKbM8lsArLznDF/SvMFr1jcZrvOpSTCa0W40ZAdLzHCEulnUa5i7"
+        crossorigin="anonymous"></script>
+<script src="{% static 'main/js/charts.js' %}"></script>
 {% endblock %}
 
 {% block content %}
@@ -110,35 +114,5 @@ with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
 {% endblock %}
 
 {% block additional_scripts %}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    try {
-        var data = JSON.parse(document.getElementById('chart-data').textContent);
-
-        renderLineChart('plot-slope', data.slope, 'slope', 'runoff', {
-            title: 'Dependence of runoff on subcatchment slope.',
-            xLabel: 'Percent Slope [-]',
-            yLabel: 'Runoff [m3]',
-            xRange: [0, 100]
-        });
-        renderLineChart('plot-area', data.area, 'area', 'runoff', {
-            title: 'Dependence of runoff on subcatchment area.',
-            xLabel: 'Area [ha]',
-            yLabel: 'Runoff [m3]'
-        });
-        renderLineChart('plot-width', data.width, 'width', 'runoff', {
-            title: 'Dependence of runoff on subcatchment width.',
-            xLabel: 'Width [m]',
-            yLabel: 'Runoff [m3]',
-            xRange: [0, 1000]
-        });
-    } catch (e) {
-        console.error('Failed to render charts:', e);
-        ['plot-slope', 'plot-area', 'plot-width'].forEach(function(id) {
-            var el = document.getElementById(id);
-            if (el) el.innerHTML = '<p class="text-danger text-center">Failed to load chart.</p>';
-        });
-    }
-});
-</script>
+<script src="{% static 'main/js/pages/main_view.js' %}"></script>
 {% endblock %}

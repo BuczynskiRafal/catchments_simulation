@@ -10,18 +10,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
     <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet"
-    integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
+    <link
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css"
+        rel="stylesheet"
+        integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3"
+        crossorigin="anonymous"
+    >
 
-    <!-- Color codesnipet  -->
-    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/themes/prism.css" rel="stylesheet" />
+    <!-- Color snippet -->
+    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/themes/prism.css" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/dropzone@5.9.3/dist/dropzone.css">
 
+    <!-- Upload zone font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="{% static 'main/css/base.css' %}">
+
     <title>
-        {% block title %} {% endblock %}
+        {% block title %}{% endblock %}
     </title>
 
-    <!-- Latest compiled JavaScript -->
+    <!-- Vendor JavaScript -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/prism.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.25.0/components/prism-python.min.js"></script>
@@ -29,29 +40,10 @@
     <script>Dropzone.autoDiscover = false;</script>
 
     {% block head_scripts %}{% endblock %}
-
-    <style>
-        html,
-        body {
-            height: 100%;
-        }
-        .content-wrapper {
-            min-height: calc(90% - 100px);
-        }
-        /* Default dropzone reset — page-specific styles take over */
-        .dropzone {
-            border-radius: 0.5rem;
-        }
-        .dz-message {
-            border-radius: 0.25rem;
-        }
-    </style>
-
-
-    {% block style %} {% endblock %}
+    {% block style %}{% endblock %}
 </head>
 
-<body>
+<body data-login-url="{% url 'login' %}">
     <header class="py-3 mb-4 border-bottom">
         <div class="container">
             <div class="d-flex flex-wrap align-items-center justify-content-center justify-content-md-between">
@@ -106,283 +98,10 @@
             </div>
         </div>
     </footer>
-    
+
+    <script src="{% static 'main/js/base_ui.js' %}"></script>
+    <script src="{% static 'main/js/upload_zone.js' %}"></script>
+
     {% block additional_scripts %}{% endblock %}
-
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const loginUrl = '{% url "login" %}';
-            const runSimulationButton = document.getElementById('run-simulation-button');
-            const runCalculationsButton = document.getElementById('run-calculations-button');
-            const runTimeseriesButton = document.getElementById('run-timeseries-button');
-            const buttons = [runSimulationButton, runCalculationsButton, runTimeseriesButton];
-
-            buttons.forEach(function(button) {
-                if (button) {
-                    button.addEventListener('click', function(event) {
-                        const isAuthenticated = button.getAttribute('data-authenticated') === 'True';
-                        if (!isAuthenticated) {
-                            event.preventDefault();
-                            window.location.href = loginUrl;
-                        }
-                    });
-                }
-            });
-
-            function initDropzone() {
-                if (typeof Dropzone === 'undefined') {
-                    return;
-                }
-                var el = document.querySelector('#my-dropzone');
-                if (!el || el.dropzone) {
-                    return;
-                }
-                const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
-                    || '{{ csrf_token }}';
-                const uploadUrl = '{% url "main:upload" %}';
-                const sampleUploadUrl = '{% url "main:upload_sample" %}';
-                const clearUrl = '{% url "main:upload_clear" %}';
-                const statusUrl = '{% url "main:upload_status" %}';
-                const subcatchmentsUrl = '{% url "main:subcatchments" %}';
-                var preferredCatchmentValue = '';
-                var catchmentSelect = document.getElementById('id_catchment_name');
-
-                if (catchmentSelect) {
-                    preferredCatchmentValue = catchmentSelect.value || '';
-                    catchmentSelect.addEventListener('change', function() {
-                        preferredCatchmentValue = this.value || '';
-                    });
-                }
-
-                function fetchSubcatchments() {
-                    var select = document.getElementById('id_catchment_name');
-                    if (!select) return;
-                    if (select.value) {
-                        preferredCatchmentValue = select.value;
-                    }
-                    var previousValue = preferredCatchmentValue;
-                    select.disabled = true;
-                    select.innerHTML = '<option value="">Loading...</option>';
-                    fetch(subcatchmentsUrl, {
-                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                    })
-                    .then(function(resp) { return resp.ok ? resp.json() : null; })
-                    .then(function(data) {
-                        select.innerHTML = '';
-                        if (!data || !data.subcatchments || data.subcatchments.length === 0) {
-                            var opt = document.createElement('option');
-                            opt.value = '';
-                            opt.textContent = '--- Upload a file first ---';
-                            select.appendChild(opt);
-                            preferredCatchmentValue = '';
-                            return;
-                        }
-                        var placeholder = document.createElement('option');
-                        placeholder.value = '';
-                        placeholder.textContent = '--- Select catchment ---';
-                        select.appendChild(placeholder);
-                        var hasSelectedValue = false;
-                        data.subcatchments.forEach(function(name) {
-                            var opt = document.createElement('option');
-                            opt.value = name;
-                            opt.textContent = name;
-                            if (name === previousValue) {
-                                opt.selected = true;
-                                hasSelectedValue = true;
-                            }
-                            select.appendChild(opt);
-                        });
-                        if (!hasSelectedValue) {
-                            preferredCatchmentValue = '';
-                        }
-                    })
-                    .catch(function(err) { console.warn('subcatchments fetch failed:', err); })
-                    .finally(function() { select.disabled = false; });
-                }
-
-                function resetCatchmentDropdown() {
-                    var select = document.getElementById('id_catchment_name');
-                    if (!select) return;
-                    preferredCatchmentValue = '';
-                    select.innerHTML = '<option value="">--- Upload a file first ---</option>';
-                }
-
-                function showUploadStatus(filename) {
-                    var statusEl = document.getElementById('upload-status');
-                    var statusText = document.getElementById('upload-status-text');
-                    if (statusEl && statusText) {
-                        statusText.textContent = 'Loaded: ' + filename;
-                        statusEl.style.display = '';
-                    }
-                }
-
-                function parseJsonSafely(resp) {
-                    return resp.text().then(function(body) {
-                        if (!body) return {};
-                        try {
-                            return JSON.parse(body);
-                        } catch (err) {
-                            return {};
-                        }
-                    });
-                }
-
-                var replacingUpload = false;
-                var dzInstance = new Dropzone('#my-dropzone', {
-                    url: uploadUrl,
-                    acceptedFiles: '.inp',
-                    maxFilesize: 10,
-                    maxFiles: 1,
-                    addRemoveLinks: true,
-                    dictRemoveFile: '\u00d7',
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'X-CSRFToken': csrfToken
-                    },
-                    init: function() {
-                        this.on('removedfile', function() {
-                            var msgEl = document.querySelector('#my-dropzone .dz-message');
-                            if (msgEl) {
-                                msgEl.style.display = '';
-                            }
-                            var statusEl = document.getElementById('upload-status');
-                            if (statusEl) { statusEl.style.display = 'none'; }
-                            if (!replacingUpload) {
-                                fetch(clearUrl, {
-                                    method: 'POST',
-                                    headers: {
-                                        'X-CSRFToken': csrfToken,
-                                        'X-Requested-With': 'XMLHttpRequest'
-                                    }
-                                }).catch(function(err) { console.warn('upload clear failed:', err); });
-                                resetCatchmentDropdown();
-                            }
-                        });
-                        this.on('addedfile', function() {
-                            var msgEl = document.querySelector('#my-dropzone .dz-message');
-                            if (msgEl) {
-                                msgEl.style.display = 'none';
-                            }
-                        });
-                        this.on('success', function(file) {
-                            var statusEl = document.getElementById('upload-status');
-                            var statusText = document.getElementById('upload-status-text');
-                            if (statusEl && statusText) {
-                                statusText.textContent = 'Loaded: ' + file.name;
-                                statusEl.style.display = '';
-                            }
-                            fetchSubcatchments();
-                        });
-                        this.on('maxfilesexceeded', function(file) {
-                            replacingUpload = true;
-                            this.removeAllFiles();
-                            replacingUpload = false;
-                            this.addFile(file);
-                        });
-                    },
-                    error: function(file, response, xhr) {
-                        if (xhr && xhr.status === 401) {
-                            const redirectUrl = (response && response.login_url) ? response.login_url : loginUrl;
-                            alert('You must be logged in to upload files.');
-                            window.location.href = redirectUrl + '?next=' + encodeURIComponent(window.location.pathname);
-                            return;
-                        }
-                        let message = 'Upload failed.';
-                        if (xhr && xhr.status === 413) {
-                            message = (response && response.error)
-                                ? response.error
-                                : 'File too large.';
-                        } else if (typeof response === 'string') {
-                            message = response;
-                        } else if (response && response.error) {
-                            message = response.error;
-                        }
-                        if (file.previewElement) {
-                            file.previewElement.classList.add('dz-error');
-                            const errorEl = file.previewElement.querySelector('[data-dz-errormessage]');
-                            if (errorEl) {
-                                errorEl.textContent = message;
-                            }
-                        }
-                    }
-                });
-
-                function showMockFile(filename, size) {
-                    replacingUpload = true;
-                    dzInstance.removeAllFiles();
-                    replacingUpload = false;
-                    var mockFile = {
-                        name: filename,
-                        size: size || 0,
-                        status: Dropzone.SUCCESS,
-                        accepted: true
-                    };
-                    dzInstance.files.push(mockFile);
-                    dzInstance.emit('addedfile', mockFile);
-                    dzInstance.emit('success', mockFile);
-                    dzInstance.emit('complete', mockFile);
-                }
-
-                var sampleButton = document.getElementById('load-sample-data-button');
-                if (sampleButton) {
-                    var sampleButtonDefaultText = sampleButton.textContent;
-                    sampleButton.addEventListener('click', function() {
-                        sampleButton.disabled = true;
-                        sampleButton.textContent = 'Loading sample data...';
-                        fetch(sampleUploadUrl, {
-                            method: 'POST',
-                            headers: {
-                                'X-CSRFToken': csrfToken,
-                                'X-Requested-With': 'XMLHttpRequest'
-                            }
-                        })
-                        .then(function(resp) {
-                            if (resp.status === 401) {
-                                return parseJsonSafely(resp).then(function(payload) {
-                                    var redirectUrl = payload && payload.login_url ? payload.login_url : loginUrl;
-                                    window.location.href = redirectUrl + '?next=' + encodeURIComponent(window.location.pathname);
-                                    return null;
-                                });
-                            }
-                            if (!resp.ok) {
-                                return parseJsonSafely(resp).then(function(payload) {
-                                    throw new Error((payload && payload.error) || 'Failed to load sample data.');
-                                });
-                            }
-                            return parseJsonSafely(resp);
-                        })
-                        .then(function(data) {
-                            if (!data) return;
-                            var filename = data.filename || 'example.inp';
-                            showMockFile(filename, data.size);
-                            showUploadStatus(filename);
-                        })
-                        .catch(function(err) {
-                            alert(err.message || 'Failed to load sample data.');
-                        })
-                        .finally(function() {
-                            sampleButton.disabled = false;
-                            sampleButton.textContent = sampleButtonDefaultText;
-                        });
-                    });
-                }
-
-                // Restore previously uploaded file from session
-                fetch(statusUrl, {
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                })
-                .then(function(resp) { return resp.ok ? resp.json() : null; })
-                .then(function(data) {
-                    if (data && data.has_file) {
-                        showMockFile(data.filename, data.size);
-                        showUploadStatus(data.filename);
-                        fetchSubcatchments();
-                    }
-                })
-                .catch(function(err) { console.warn('upload status check failed:', err); });
-            }
-            initDropzone();
-        });
-    </script>
 </body>
 </html>

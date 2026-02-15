@@ -1,0 +1,31 @@
+html,
+body {
+    height: 100%;
+    background-color: #fff;
+}
+
+.content-wrapper {
+    min-height: calc(90% - 100px);
+}
+
+/* Default dropzone reset. Upload page styles provide the full look. */
+.dropzone {
+    border-radius: 0.5rem;
+}
+
+.dz-message {
+    border-radius: 0.25rem;
+}
+
+.code-snippet {
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 1em;
+    white-space: pre-wrap;
+    font-family: monospace;
+    background-color: #f0f0f0;
+}
+
+pre[class*="code-snippet"] {
+    background-color: #f0f0f0;
+}
