@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import uuid
+from codecs import getincrementaldecoder
 from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache, wraps
@@ -25,6 +26,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+from django.core.files.uploadhandler import FileUploadHandler, StopUpload
 from django.http import (
     FileResponse,
     HttpRequest,
@@ -32,6 +34,7 @@ from django.http import (
     HttpResponseRedirect,
     JsonResponse,
 )
+from django.http.multipartparser import MultiPartParserError
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
@@ -365,7 +368,14 @@ def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
     return render(request, "main/userprofile.html", {"form": form})
 
 
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_UPLOAD_SIZE = settings.INP_UPLOAD_MAX_BYTES
+MAX_UPLOAD_BODY_SIZE = settings.INP_UPLOAD_MAX_BODY_BYTES
+UPLOAD_VALIDATION_CHUNK_SIZE = 8192
+UPLOAD_VALIDATION_MAX_LINE_BUFFER = 8192
+MIN_SWMM_SECTION_MATCHES = 2
+SWMM_SECTION_HEADERS = frozenset(
+    {"[TITLE]", "[OPTIONS]", "[RAINGAGES]", "[SUBCATCHMENTS]", "[SUBAREAS]"}
+)
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -405,6 +415,84 @@ def _validate_inp_file_content(file_content: bytes) -> bool:
         return False
 
 
+def _detect_inp_encoding_prefix(prefix: bytes) -> tuple[str, int]:
+    """Detect encoding from BOM prefix and return (encoding, BOM bytes to strip)."""
+    if prefix.startswith(b"\xef\xbb\xbf"):
+        return "utf-8", 3
+    if prefix.startswith(b"\xff\xfe"):
+        return "utf-16-le", 2
+    if prefix.startswith(b"\xfe\xff"):
+        return "utf-16-be", 2
+    return "utf-8", 0
+
+
+def _validate_inp_file_stream(
+    uploaded_file: object, chunk_size: int = UPLOAD_VALIDATION_CHUNK_SIZE
+) -> bool:
+    """Validate SWMM INP headers without loading the entire file into memory."""
+    decoder = None
+    pending = ""
+    matched_sections: set[str] = set()
+    try:
+        for chunk in uploaded_file.chunks(chunk_size):
+            if decoder is None:
+                encoding, bom_size = _detect_inp_encoding_prefix(chunk[:4])
+                decoder = getincrementaldecoder(encoding)(errors="replace")
+                chunk = chunk[bom_size:]
+
+            pending += decoder.decode(chunk, final=False)
+            pending = pending.replace("\r\n", "\n").replace("\r", "\n")
+            lines = pending.split("\n")
+            pending = lines.pop()[-UPLOAD_VALIDATION_MAX_LINE_BUFFER:] if lines else pending
+
+            for line in lines:
+                normalized_line = line.strip().upper()
+                if normalized_line in SWMM_SECTION_HEADERS:
+                    matched_sections.add(normalized_line)
+                    if len(matched_sections) >= MIN_SWMM_SECTION_MATCHES:
+                        return True
+
+        if decoder is None:
+            return False
+
+        pending += decoder.decode(b"", final=True)
+        pending = pending.replace("\r\n", "\n").replace("\r", "\n")
+        for line in pending.split("\n"):
+            normalized_line = line.strip().upper()
+            if normalized_line in SWMM_SECTION_HEADERS:
+                matched_sections.add(normalized_line)
+                if len(matched_sections) >= MIN_SWMM_SECTION_MATCHES:
+                    return True
+
+        return False
+    except (OSError, UnicodeError, AttributeError):
+        logger.warning("Failed to validate uploaded INP file stream", exc_info=True)
+        return False
+    finally:
+        with suppress(Exception):
+            uploaded_file.seek(0)
+
+
+class BodySizeLimitUploadHandler(FileUploadHandler):
+    """Abort multipart parsing when streamed request body exceeds configured limit."""
+
+    def __init__(self, request: HttpRequest, max_bytes: int):
+        super().__init__(request)
+        self.max_bytes = max_bytes
+        self.bytes_received = 0
+
+    def receive_data_chunk(self, raw_data: bytes, start: int) -> bytes:
+        self.bytes_received += len(raw_data)
+        if self.bytes_received > self.max_bytes:
+            self.request._upload_body_too_large = True
+            raise StopUpload(connection_reset=True)
+        return raw_data
+
+    def file_complete(self, file_size: int) -> None:
+        return None
+
+
+@require_POST
 @ajax_login_required
 def upload(request: HttpRequest) -> JsonResponse:
     """
@@ -423,71 +511,92 @@ def upload(request: HttpRequest) -> JsonResponse:
     JsonResponse
         JSON response containing a success message if the file was uploaded successfully, or an error message if not.
     """
-    if request.method == "POST":
-        if "file" not in request.FILES:
-            return JsonResponse({"error": "No file provided."}, status=400)
+    raw_content_length = request.META.get("CONTENT_LENGTH")
+    if raw_content_length in ("",):
+        return JsonResponse({"error": "Invalid Content-Length header."}, status=400)
+    try:
+        content_length = int(raw_content_length or 0)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Invalid Content-Length header."}, status=400)
+    if content_length < 0:
+        return JsonResponse({"error": "Invalid Content-Length header."}, status=400)
 
-        uploaded_file = request.FILES["file"]
-        filename, file_extension = os.path.splitext(uploaded_file.name)
+    if content_length > MAX_UPLOAD_BODY_SIZE:
+        return JsonResponse(
+            {"error": (f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.")},
+            status=413,
+        )
 
-        # Check file extension
-        if file_extension.lower() != ".inp":
-            return JsonResponse(
-                {"error": "Invalid file type. Please upload a .inp file."},
-                status=400,
-            )
+    request.upload_handlers = [
+        BodySizeLimitUploadHandler(request, MAX_UPLOAD_BODY_SIZE),
+        *request.upload_handlers,
+    ]
+    try:
+        files = request.FILES
+    except MultiPartParserError:
+        return JsonResponse({"error": "Malformed multipart request."}, status=400)
+    if getattr(request, "_upload_body_too_large", False):
+        return JsonResponse(
+            {"error": (f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.")},
+            status=413,
+        )
 
-        # Check file size
-        if uploaded_file.size > MAX_UPLOAD_SIZE:
-            return JsonResponse(
-                {
-                    "error": f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB."
-                },
-                status=400,
-            )
+    if "file" not in files:
+        return JsonResponse({"error": "No file provided."}, status=400)
 
-        # Read file content for validation
-        file_content = uploaded_file.read()
-        uploaded_file.seek(0)  # Reset file pointer
+    uploaded_file = files["file"]
+    filename, file_extension = os.path.splitext(uploaded_file.name)
 
-        # Validate file content
-        if not _validate_inp_file_content(file_content):
-            logger.warning(f"Invalid .inp file content uploaded: {uploaded_file.name}")
-            return JsonResponse(
-                {
-                    "error": "Invalid file content. The file does not appear to be a valid SWMM .inp file."
-                },
-                status=400,
-            )
+    # Check file extension
+    if file_extension.lower() != ".inp":
+        return JsonResponse(
+            {"error": "Invalid file type. Please upload a .inp file."},
+            status=400,
+        )
 
-        # Sanitize filename and scope to user
-        safe_filename = _sanitize_filename(filename)
-        user_dir = _user_upload_dir(request.user.id)
-        file_path = os.path.join(user_dir, safe_filename + file_extension)
+    # Check file size
+    if uploaded_file.size > MAX_UPLOAD_SIZE:
+        return JsonResponse(
+            {"error": f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB."},
+            status=413,
+        )
 
-        # Remove previous uploaded file from disk
-        old_path = request.session.get("uploaded_file_path")
-        if old_path and old_path != file_path:
-            _safe_remove_file(old_path)
+    # Validate file content
+    if not _validate_inp_file_stream(uploaded_file):
+        logger.warning(f"Invalid .inp file content uploaded: {uploaded_file.name}")
+        return JsonResponse(
+            {
+                "error": "Invalid file content. The file does not appear to be a valid SWMM .inp file."
+            },
+            status=400,
+        )
 
-        # Ensure upload directory exists
-        os.makedirs(user_dir, exist_ok=True)
+    # Sanitize filename and scope to user
+    safe_filename = _sanitize_filename(filename)
+    user_dir = _user_upload_dir(request.user.id)
+    file_path = os.path.join(user_dir, safe_filename + file_extension)
 
-        with open(file_path, "wb+") as destination:
-            for chunk in uploaded_file.chunks():
-                destination.write(chunk)
+    # Remove previous uploaded file from disk
+    old_path = request.session.get("uploaded_file_path")
+    if old_path and old_path != file_path:
+        _safe_remove_file(old_path)
 
-        request.session["uploaded_file_path"] = file_path
-        request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
-        request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
-        # Invalidate cached subcatchment IDs so they are re-read from new file
-        request.session.pop("_subcatchment_ids", None)
-        request.session.pop("_subcatchment_ids_file", None)
-        logger.info(f"File uploaded successfully: {file_path}")
+    # Ensure upload directory exists
+    os.makedirs(user_dir, exist_ok=True)
 
-        return JsonResponse({"message": "File was sent."})
+    with open(file_path, "wb+") as destination:
+        for chunk in uploaded_file.chunks():
+            destination.write(chunk)
 
-    return JsonResponse({"error": "Error occurred while sending file."}, status=400)
+    request.session["uploaded_file_path"] = file_path
+    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
+    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
+    # Invalidate cached subcatchment IDs so they are re-read from new file
+    request.session.pop("_subcatchment_ids", None)
+    request.session.pop("_subcatchment_ids_file", None)
+    logger.info(f"File uploaded successfully: {file_path}")
+
+    return JsonResponse({"message": "File was sent."})
 
 
 @require_POST

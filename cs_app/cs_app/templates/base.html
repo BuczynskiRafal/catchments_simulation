@@ -288,7 +288,11 @@
                             return;
                         }
                         let message = 'Upload failed.';
-                        if (typeof response === 'string') {
+                        if (xhr && xhr.status === 413) {
+                            message = (response && response.error)
+                                ? response.error
+                                : 'File too large.';
+                        } else if (typeof response === 'string') {
                             message = response;
                         } else if (response && response.error) {
                             message = response.error;

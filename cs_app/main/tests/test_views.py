@@ -22,6 +22,7 @@ from main.views import (
     _get_subcatchment_ids,
     _result_cache_key,
     _safe_download_filename,
+    _validate_inp_file_stream,
     calculations,
     clear_session_variables,
     simulation_view,
@@ -602,6 +603,165 @@ def test_upload_unauthenticated_regular_request_redirects():
 
 
 @pytest.mark.django_db
+def test_upload_rejects_get_with_405(client, user):
+    """upload rejects GET requests (require_POST)."""
+    client.force_login(user)
+
+    response = client.get(
+        reverse("main:upload"),
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    assert response.status_code == 405
+
+
+@pytest.mark.django_db
+def test_upload_unauthenticated_ajax_get_returns_405(client):
+    """GET is rejected by method guard before auth check."""
+    response = client.get(
+        reverse("main:upload"),
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    assert response.status_code == 405
+
+
+@pytest.mark.django_db
+def test_upload_returns_413_when_content_length_exceeds_body_limit(user):
+    """upload returns 413 before multipart parsing when CONTENT_LENGTH is too large."""
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    request.META["CONTENT_LENGTH"] = str(settings.INP_UPLOAD_MAX_BODY_BYTES + 1)
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload(request)
+
+    assert response.status_code == 413
+    data = json.loads(response.content)
+    assert "Maximum size is" in data["error"]
+
+
+@pytest.mark.django_db
+def test_upload_returns_413_when_uploaded_file_size_exceeds_limit(user):
+    """upload returns 413 for files larger than configured size limit."""
+    factory = RequestFactory()
+    inp_content = b"[TITLE]\n" + (b"x" * settings.INP_UPLOAD_MAX_BYTES)
+    uploaded_file = SimpleUploadedFile("too_large.inp", inp_content, content_type="text/plain")
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload(request)
+
+    assert response.status_code == 413
+    data = json.loads(response.content)
+    assert "Maximum size is" in data["error"]
+
+
+@pytest.mark.django_db
+def test_upload_returns_413_when_content_length_is_spoofed_low(user, monkeypatch):
+    """Streaming body limit still returns 413 when CONTENT_LENGTH is spoofed below real body size."""
+    monkeypatch.setattr("main.views.MAX_UPLOAD_BODY_SIZE", 100)
+    monkeypatch.setattr("main.views.MAX_UPLOAD_SIZE", 10 * 1024 * 1024)
+
+    factory = RequestFactory()
+    inp_content = b"[TITLE]\n" + (b"x" * 2048) + b"\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile("spoofed_size.inp", inp_content, content_type="text/plain")
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    request.META["CONTENT_LENGTH"] = "1"
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload(request)
+
+    assert response.status_code == 413
+    data = json.loads(response.content)
+    assert "Maximum size is" in data["error"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("raw_content_length", ["", "not-a-number", "-123"])
+def test_upload_handles_invalid_or_negative_content_length(user, raw_content_length):
+    """Invalid CONTENT_LENGTH variants should be rejected with 400."""
+    factory = RequestFactory()
+    inp_content = b"[TITLE]\nTest\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile(
+        "content_length_variants.inp", inp_content, content_type="text/plain"
+    )
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    request.META["CONTENT_LENGTH"] = raw_content_length
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "content_length_variants.inp"
+    )
+    try:
+        response = upload(request)
+        assert response.status_code == 400
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_upload_handles_missing_content_length(user):
+    """Missing CONTENT_LENGTH is treated as malformed multipart request metadata."""
+    factory = RequestFactory()
+    inp_content = b"[TITLE]\nMissing length\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile("missing_length.inp", inp_content, content_type="text/plain")
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    request.META.pop("CONTENT_LENGTH", None)
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "missing_length.inp"
+    )
+    try:
+        response = upload(request)
+        assert response.status_code == 400
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+@pytest.mark.django_db
 def test_upload_authenticated_user_can_upload(user):
     """
     Test that authenticated users can upload files and the file is saved to disk.
@@ -638,6 +798,255 @@ def test_upload_authenticated_user_can_upload(user):
             saved_content = f.read()
         assert saved_content == inp_content, "Saved file content does not match uploaded content"
         assert request.session.get("uploaded_file_path") == expected_path
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_upload_uses_stream_validator_not_bytes_validator(user, monkeypatch):
+    """upload should validate INP content from file chunks, not full-file bytes."""
+    factory = RequestFactory()
+    inp_content = b"[TITLE]\nStreamed validation test\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile(
+        "streamed_validation.inp", inp_content, content_type="text/plain"
+    )
+
+    called_stream_validator = {"called": False}
+
+    def fake_stream_validator(uploaded_stream, chunk_size=8192):
+        called_stream_validator["called"] = True
+        uploaded_stream.seek(0)
+        return True
+
+    def fail_bytes_validator(_file_content):
+        raise AssertionError("Legacy bytes validator must not be used in upload().")
+
+    monkeypatch.setattr("main.views._validate_inp_file_stream", fake_stream_validator)
+    monkeypatch.setattr("main.views._validate_inp_file_content", fail_bytes_validator)
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "streamed_validation.inp"
+    )
+    try:
+        response = upload(request)
+
+        assert response.status_code == 200
+        assert called_stream_validator["called"] is True
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_upload_valid_small_inp_still_succeeds(user):
+    """A valid INP under size limit should still upload successfully."""
+    factory = RequestFactory()
+    inp_content = b"[TITLE]\nValid small file\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile("valid_small.inp", inp_content, content_type="text/plain")
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "valid_small.inp"
+    )
+    try:
+        response = upload(request)
+
+        assert response.status_code == 200
+        data = json.loads(response.content)
+        assert data["message"] == "File was sent."
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_upload_invalid_content_returns_400(user):
+    """upload returns 400 when file extension is valid but SWMM headers are missing."""
+    factory = RequestFactory()
+    uploaded_file = SimpleUploadedFile(
+        "invalid_content.inp",
+        b"this file does not contain expected swmm sections",
+        content_type="text/plain",
+    )
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload(request)
+
+    assert response.status_code == 400
+    data = json.loads(response.content)
+    assert "Invalid file content" in data["error"]
+
+
+@pytest.mark.django_db
+def test_upload_binary_blob_with_single_marker_returns_400(user):
+    """Single marker embedded in binary-like content should not pass validation."""
+    factory = RequestFactory()
+    payload = b"\x00\xff\x10garbage[TITLE]\x00\x01still-not-valid"
+    uploaded_file = SimpleUploadedFile(
+        "binary_single_marker.inp", payload, content_type="text/plain"
+    )
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    response = upload(request)
+
+    assert response.status_code == 400
+    data = json.loads(response.content)
+    assert "Invalid file content" in data["error"]
+
+
+@pytest.mark.django_db
+def test_upload_valid_utf16_bom_file_succeeds(user):
+    """upload accepts valid UTF-16 LE files with BOM."""
+    factory = RequestFactory()
+    inp_text = "[TITLE]\nUTF16 file\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    inp_content = inp_text.encode("utf-16")
+    uploaded_file = SimpleUploadedFile("utf16_valid.inp", inp_content, content_type="text/plain")
+
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "utf16_valid.inp"
+    )
+    try:
+        response = upload(request)
+
+        assert response.status_code == 200
+        assert request.session.get("uploaded_file_path") == expected_path
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+def test_validate_inp_file_stream_handles_chunk_boundary():
+    """Header detection should work when markers are split across chunk boundaries."""
+
+    class ChunkedUpload:
+        def __init__(self, chunks):
+            self._chunks = chunks
+            self.seek_calls = []
+
+        def chunks(self, _chunk_size):
+            yield from self._chunks
+
+        def seek(self, offset):
+            self.seek_calls.append(offset)
+
+    upload_obj = ChunkedUpload(
+        [
+            b"[TI",
+            b"TLE]\nExample\n",
+            b"[OP",
+            b"TIONS]\nFLOW_UNITS LPS\n",
+        ]
+    )
+
+    assert _validate_inp_file_stream(upload_obj, chunk_size=4) is True
+    assert upload_obj.seek_calls == [0]
+
+
+@pytest.mark.django_db
+def test_upload_size_equal_limit_is_allowed(user, monkeypatch):
+    """File size equal to MAX_UPLOAD_SIZE should be accepted."""
+    content = b"[TITLE]\nA\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    monkeypatch.setattr("main.views.MAX_UPLOAD_SIZE", len(content))
+    monkeypatch.setattr("main.views.MAX_UPLOAD_BODY_SIZE", len(content) + 1024)
+
+    factory = RequestFactory()
+    uploaded_file = SimpleUploadedFile("equal_limit.inp", content, content_type="text/plain")
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "equal_limit.inp"
+    )
+    try:
+        response = upload(request)
+        assert response.status_code == 200
+    finally:
+        if os.path.exists(expected_path):
+            os.remove(expected_path)
+
+
+@pytest.mark.django_db
+def test_upload_body_length_equal_limit_is_allowed(user, monkeypatch):
+    """CONTENT_LENGTH equal to MAX_UPLOAD_BODY_SIZE should not be rejected by pre-check."""
+    factory = RequestFactory()
+    content = b"[TITLE]\nA\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    uploaded_file = SimpleUploadedFile("equal_body_limit.inp", content, content_type="text/plain")
+    request = factory.post(
+        "/upload/",
+        {"file": uploaded_file},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    monkeypatch.setattr("main.views.MAX_UPLOAD_SIZE", len(content) + 1024)
+    monkeypatch.setattr(
+        "main.views.MAX_UPLOAD_BODY_SIZE", int(request.META.get("CONTENT_LENGTH", "0"))
+    )
+
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session.save()
+    request.user = user
+
+    expected_path = os.path.join(
+        settings.MEDIA_ROOT, "uploaded_files", str(user.id), "equal_body_limit.inp"
+    )
+    try:
+        response = upload(request)
+        assert response.status_code == 200
     finally:
         if os.path.exists(expected_path):
             os.remove(expected_path)

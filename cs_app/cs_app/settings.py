@@ -24,6 +24,18 @@ RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
 if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
+# Upload hard limits for SWMM INP files.
+INP_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+INP_UPLOAD_MAX_BODY_BYTES = INP_UPLOAD_MAX_BYTES + 256 * 1024
+
+# Keep request memory limits strict and stream larger file uploads to disk.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 2621440
+FILE_UPLOAD_MAX_MEMORY_SIZE = 1 * 1024 * 1024
+FILE_UPLOAD_HANDLERS = [
+    "django.core.files.uploadhandler.MemoryFileUploadHandler",
+    "django.core.files.uploadhandler.TemporaryFileUploadHandler",
+]
+
 
 INSTALLED_APPS = [
     "django.contrib.admin",
