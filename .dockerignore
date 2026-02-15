@@ -1,0 +1,15 @@
+.git
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+db.sqlite3
+cs_app/db.sqlite3
+cs_app/media/
+cs_app/data/db/
+docs/_build/
+output_files/
+uploaded_files/
