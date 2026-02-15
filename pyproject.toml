@@ -45,7 +45,7 @@ dev = [
 ]
 web = [
     "Django==3.2",
-    "Werkzeug==2.0.0",
+    "Werkzeug==3.1.5",
     "crispy-bootstrap4==2022.1",
     "python-dotenv==1.0.0",
     "django-crispy-forms==2.0",
@@ -55,7 +55,8 @@ web = [
     "plotly>=5.18.0",
     "dj-database-url==2.0.0",
     "whitenoise==6.4.0",
-    "gunicorn==20.1.0",
+    "gunicorn==25.1.0",
+    "setuptools>=70",
     "pydantic[email]>=2.0",
 ]
 docs = [
