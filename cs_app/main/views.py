@@ -60,6 +60,8 @@ TS_RESULT_TOKEN_SESSION_KEY = "ts_result_token"
 RESULT_CACHE_TTL_SECONDS = 30 * 60
 MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 UPLOAD_SUBDIR = "uploaded_files"
+SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
+US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
 
 
 class ResultPayloadTooLargeError(ValueError):
@@ -808,6 +810,131 @@ def get_feature_name(method_name: str) -> str:
     return feature_map.get(method_name, "")
 
 
+def _normalize_flow_units(flow_units: str | None) -> str:
+    """Normalize FLOW_UNITS token for comparisons and labels."""
+    return str(flow_units or "").strip().upper()
+
+
+def _read_flow_units(inp_path: str) -> str | None:
+    """Read FLOW_UNITS from a SWMM input file."""
+    if not inp_path or not os.path.exists(inp_path):
+        return None
+
+    try:
+        options = swmmio.Model(inp_path).inp.options
+    except Exception:
+        logger.warning("Failed to read FLOW_UNITS from %s", inp_path, exc_info=True)
+        return None
+
+    flow_units: object | None = None
+    if isinstance(options, pd.DataFrame):
+        if "FLOW_UNITS" in options.index and not options.columns.empty:
+            value_column = "Value" if "Value" in options.columns else options.columns[0]
+            flow_units = options.loc["FLOW_UNITS", value_column]
+    elif isinstance(options, dict):
+        flow_units = options.get("FLOW_UNITS")
+
+    if isinstance(flow_units, pd.Series):
+        flow_units = flow_units.iloc[0] if not flow_units.empty else None
+
+    normalized = _normalize_flow_units(str(flow_units) if flow_units is not None else None)
+    return normalized or None
+
+
+def _unit_system(flow_units: str | None) -> str:
+    """Classify FLOW_UNITS into SI/US/UNKNOWN buckets."""
+    normalized = _normalize_flow_units(flow_units)
+    if normalized in SI_FLOW_UNITS:
+        return "SI"
+    if normalized in US_FLOW_UNITS:
+        return "US"
+    return "UNKNOWN"
+
+
+def _unit_labels(flow_units: str | None) -> dict[str, str]:
+    """Return display units for chart labels."""
+    normalized = _normalize_flow_units(flow_units)
+    system = _unit_system(normalized)
+    if system == "SI":
+        return {
+            "length": "m",
+            "area": "ha",
+            "storage": "mm",
+            "depth_rate": "mm/h",
+            "volume": "m3",
+            "flow_rate": normalized,
+        }
+    if system == "US":
+        return {
+            "length": "ft",
+            "area": "acre",
+            "storage": "in",
+            "depth_rate": "in/h",
+            "volume": "ft3",
+            "flow_rate": normalized,
+        }
+    return {
+        "length": "model length units",
+        "area": "model area units",
+        "storage": "model storage units",
+        "depth_rate": "model depth/time units",
+        "volume": "model volume units",
+        "flow_rate": normalized or "model flow units",
+    }
+
+
+def _build_simulation_axis_labels(
+    feature_name: str, y_columns: list[str], flow_units: str | None
+) -> tuple[str, dict[str, str]]:
+    """Build X and Y labels for simulation charts."""
+    units = _unit_labels(flow_units)
+    x_templates = {
+        "PercSlope": "Percent Slope [%]",
+        "Area": "Area [{area}]",
+        "Width": "Width [{length}]",
+        "PercImperv": "Impervious Area [%]",
+        "Zero-Imperv": "Zero-Impervious Area [%]",
+        "CurbLength": "Curb Length [{length}]",
+        "N-Imperv": "Manning n (Impervious) [-]",
+        "N-Perv": "Manning n (Pervious) [-]",
+        "Destore-Imperv": "Depression Storage (Impervious) [{storage}]",
+        "Destore-Perv": "Depression Storage (Pervious) [{storage}]",
+    }
+    y_templates = {
+        "runoff": "Total Runoff Volume [{volume}]",
+        "peak_runoff_rate": "Peak Runoff Rate [{flow_rate}]",
+        "infiltration": "Total Infiltration Volume [{volume}]",
+        "evaporation": "Total Evaporation Volume [{volume}]",
+    }
+
+    x_template = x_templates.get(feature_name)
+    x_label = x_template.format(**units) if x_template else feature_name or "Parameter"
+    y_labels = {}
+    for column in y_columns:
+        y_template = y_templates.get(column)
+        y_labels[column] = y_template.format(**units) if y_template else column
+    return x_label, y_labels
+
+
+def _build_timeseries_axis_labels(
+    columns: list[str], flow_units: str | None
+) -> tuple[str, dict[str, str]]:
+    """Build X and Y labels for timeseries charts."""
+    units = _unit_labels(flow_units)
+    y_templates = {
+        "rainfall": "Rainfall Intensity [{depth_rate}]",
+        "runoff": "Runoff Rate [{flow_rate}]",
+        "infiltration_loss": "Infiltration Loss [{depth_rate}]",
+        "evaporation_loss": "Evaporation Loss [{depth_rate}]",
+        "runon": "Runon Rate [{flow_rate}]",
+    }
+    y_labels = {}
+    for column in columns:
+        y_template = y_templates.get(column)
+        y_labels[column] = y_template.format(**units) if y_template else column
+    return "Time", y_labels
+
+
 def _excel_attachment_response(
     output_file_name: str, sheets: dict[str, pd.DataFrame]
 ) -> HttpResponse:
@@ -1025,6 +1152,12 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                     other_cols = [c for c in df.columns if c != feature_name]
                     df = df[[feature_name] + other_cols]
 
+                flow_units = _read_flow_units(uploaded_file_path)
+                x_label, y_labels = _build_simulation_axis_labels(
+                    feature_name=feature_name,
+                    y_columns=other_cols,
+                    flow_units=flow_units,
+                )
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
                 chart_config = {
@@ -1032,6 +1165,8 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                     "x": feature_name,
                     "y": other_cols,
                     "title": f"Dependence of runoff on subcatchment {feature_name}.",
+                    "xLabel": x_label,
+                    "yLabels": y_labels,
                 }
                 payload = {
                     "chart_config": chart_config,
@@ -1227,6 +1362,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                 "uploaded_file_path",
                 os.path.abspath("catchment_simulation/example.inp"),
             )
+            flow_units = _read_flow_units(uploaded_file_path)
 
             try:
                 with FeaturesSimulation(
@@ -1252,6 +1388,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                         ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
                         ts_df_reset = ts_df.reset_index()
                         ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
+                        x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
 
                         # Save for download
                         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1261,6 +1398,8 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                             "data": json.loads(ts_df_reset.to_json(orient="records")),
                             "columns": ts_columns,
                             "title": f"Timeseries for subcatchment {catchment_name}",
+                            "xLabel": x_label,
+                            "yLabels": y_labels,
                         }
                         payload = {
                             "mode": "single",
@@ -1300,6 +1439,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                             ts_df_reset = ts_df.reset_index()
                             ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
                             sweep_data[str(param_val)] = ts_df_reset.to_dict(orient="records")
+                        x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
 
                         # Save multi-sheet Excel
                         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1311,6 +1451,8 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
                             "title": f"Timeseries sweep: {feature} for {catchment_name}",
                             "feature": feature,
                             "catchment": catchment_name,
+                            "xLabel": x_label,
+                            "yLabels": y_labels,
                         }
                         payload = {
                             "mode": "sweep",

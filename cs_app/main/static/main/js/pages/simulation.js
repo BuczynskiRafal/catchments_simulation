@@ -69,7 +69,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
     try {
         var config = JSON.parse(configElement.textContent);
-        renderLineChart("simulation-chart", config.data, config.x, config.y, { title: config.title });
+        renderLineChart("simulation-chart", config.data, config.x, config.y, {
+            title: config.title,
+            xLabel: config.xLabel,
+            yLabels: config.yLabels,
+        });
     } catch (error) {
         console.error("Failed to render chart:", error);
         var chartElement = document.getElementById("simulation-chart");

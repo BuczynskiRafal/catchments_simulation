@@ -264,9 +264,10 @@ def test_simulation_view_ignores_none_numeric_values_in_saved_state(client, user
 def test_simulation_view_post_range_persists_form_state(client, user, monkeypatch):
     """Successful simulation POST stores selections for subsequent GET requests."""
     client.force_login(user)
+    uploaded_file_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
     session = client.session
-    session["uploaded_file_path"] = "uploaded_files/test.inp"
-    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["uploaded_file_path"] = uploaded_file_path
+    session["_subcatchment_ids_file"] = uploaded_file_path
     session["_subcatchment_ids"] = ["S1"]
     session.save()
 
@@ -316,6 +317,10 @@ def test_simulation_view_post_range_persists_form_state(client, user, monkeypatc
     token = updated_session[SIM_RESULT_TOKEN_SESSION_KEY]
     cached_payload = cache.get(_result_cache_key("sim", user.id, token))
     assert cached_payload is not None
+    payload = json.loads(cached_payload)
+    chart_config = payload["chart_config"]
+    assert chart_config["xLabel"] == "Percent Slope [%]"
+    assert chart_config["yLabels"]["runoff"] == "Total Runoff Volume [m3]"
 
     get_response = client.get(reverse("main:simulation"))
     assert get_response.status_code == 200
@@ -325,6 +330,60 @@ def test_simulation_view_post_range_persists_form_state(client, user, monkeypatc
     assert int(form["stop"].value()) == 5
     assert int(form["step"].value()) == 2
     assert form["catchment_name"].value() == "S1"
+
+
+@pytest.mark.django_db
+def test_simulation_view_post_uses_fallback_labels_when_flow_units_missing(
+    client, user, monkeypatch
+):
+    """Missing FLOW_UNITS source should still produce readable fallback labels."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "uploaded_files/missing_flow_units.inp"
+    session["_subcatchment_ids_file"] = "uploaded_files/missing_flow_units.inp"
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    class DummyFeaturesSimulation:
+        def __init__(self, subcatchment_id, raw_file):
+            self.subcatchment_id = subcatchment_id
+            self.raw_file = raw_file
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def simulate_percent_slope(self, start, stop, step):
+            return pd.DataFrame(
+                {
+                    "PercSlope": [start, stop],
+                    "runoff": [1.0, 2.0],
+                    "peak_runoff_rate": [0.3, 0.6],
+                }
+            )
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
+
+    response = client.post(
+        reverse("main:simulation"),
+        data={
+            "option": "simulate_percent_slope",
+            "start": "1",
+            "stop": "5",
+            "step": "2",
+            "catchment_name": "S1",
+        },
+    )
+
+    assert response.status_code == 302
+    token = client.session[SIM_RESULT_TOKEN_SESSION_KEY]
+    payload = json.loads(cache.get(_result_cache_key("sim", user.id, token)))
+    chart_config = payload["chart_config"]
+    assert chart_config["xLabel"] == "Percent Slope [%]"
+    assert chart_config["yLabels"]["runoff"] == "Total Runoff Volume [model volume units]"
+    assert chart_config["yLabels"]["peak_runoff_rate"] == "Peak Runoff Rate [model flow units]"
 
 
 @pytest.mark.django_db
@@ -1406,9 +1465,10 @@ def test_timeseries_view_clears_unavailable_catchment_in_saved_state(client, use
 def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatch):
     """Successful sweep POST stores form selections for subsequent GET requests."""
     client.force_login(user)
+    uploaded_file_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
     session = client.session
-    session["uploaded_file_path"] = "uploaded_files/test.inp"
-    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    session["uploaded_file_path"] = uploaded_file_path
+    session["_subcatchment_ids_file"] = uploaded_file_path
     session["_subcatchment_ids"] = ["S1"]
     session.save()
 
@@ -1468,6 +1528,11 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
     token = updated_session[TS_RESULT_TOKEN_SESSION_KEY]
     cached_payload = cache.get(_result_cache_key("ts", user.id, token))
     assert cached_payload is not None
+    payload = json.loads(cached_payload)
+    chart_config = payload["chart_config"]
+    assert chart_config["xLabel"] == "Time"
+    assert chart_config["yLabels"]["runoff"] == "Runoff Rate [CMS]"
+    assert chart_config["yLabels"]["rainfall"] == "Rainfall Intensity [mm/h]"
 
     get_response = client.get(reverse("main:timeseries"))
     assert get_response.status_code == 200
@@ -1478,6 +1543,62 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
     assert float(form["stop"].value()) == 20.0
     assert float(form["step"].value()) == 5.0
     assert form["catchment_name"].value() == "S1"
+
+
+@pytest.mark.django_db
+def test_timeseries_view_post_single_adds_axis_labels(client, user, monkeypatch):
+    """Single-mode timeseries payload should include chart axis labels and units."""
+    client.force_login(user)
+    uploaded_file_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
+    session = client.session
+    session["uploaded_file_path"] = uploaded_file_path
+    session["_subcatchment_ids_file"] = uploaded_file_path
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    class DummyFeaturesSimulation:
+        TIMESERIES_KEYS = ("rainfall", "runoff", "infiltration_loss", "evaporation_loss", "runon")
+
+        def __init__(self, subcatchment_id, raw_file):
+            self.subcatchment_id = subcatchment_id
+            self.raw_file = raw_file
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def calculate_timeseries(self):
+            idx = pd.date_range("2025-01-01", periods=3, freq="h", name="datetime")
+            return pd.DataFrame(
+                {
+                    "rainfall": [0.2, 0.1, 0.0],
+                    "runoff": [0.5, 1.2, 0.3],
+                    "infiltration_loss": [0.1, 0.1, 0.1],
+                    "evaporation_loss": [0.0, 0.0, 0.0],
+                    "runon": [0.0, 0.0, 0.0],
+                },
+                index=idx,
+            )
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
+
+    response = client.post(
+        reverse("main:timeseries"),
+        data={
+            "mode": "single",
+            "catchment_name": "S1",
+        },
+    )
+
+    assert response.status_code == 302
+    token = client.session[TS_RESULT_TOKEN_SESSION_KEY]
+    payload = json.loads(cache.get(_result_cache_key("ts", user.id, token)))
+    chart_config = payload["chart_config"]
+    assert chart_config["xLabel"] == "Time"
+    assert chart_config["yLabels"]["runoff"] == "Runoff Rate [CMS]"
+    assert chart_config["yLabels"]["infiltration_loss"] == "Infiltration Loss [mm/h]"
 
 
 @pytest.mark.django_db

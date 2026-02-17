@@ -61,6 +61,8 @@ document.addEventListener("DOMContentLoaded", function () {
             if (config.mode === "single") {
                 renderLineChart("timeseries-chart", config.data, "datetime", config.columns, {
                     title: config.title,
+                    xLabel: config.xLabel,
+                    yLabels: config.yLabels,
                 });
             } else if (config.mode === "sweep") {
                 renderSweepChart(
@@ -68,7 +70,11 @@ document.addEventListener("DOMContentLoaded", function () {
                     config.data,
                     config.columns,
                     config.feature,
-                    config.catchment
+                    config.catchment,
+                    {
+                        xLabel: config.xLabel,
+                        yLabels: config.yLabels,
+                    }
                 );
             }
         } catch (error) {
