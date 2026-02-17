@@ -65,6 +65,10 @@ docs = [
     "sphinx-autobuild>=2021.3.14",
     "myst-parser>=2.0.0",
 ]
+e2e = [
+    "playwright>=1.52",
+    "pytest-playwright>=0.5.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/BuczynskiRafal/catchments_simulation"

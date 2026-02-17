@@ -77,6 +77,15 @@ cd cs_app
 uv run pytest --ds=cs_app.test_settings
 ```
 
+### Running Playwright E2E Tests
+
+```bash
+# From repository root
+uv sync --frozen --extra dev --extra web --extra e2e
+uv run playwright install chromium
+uv run pytest cs_app/e2e -m e2e --browser chromium
+```
+
 ## Project Structure
 
 ```
