@@ -11,10 +11,12 @@
  * @param {string}   [opts.title]
  * @param {string}   [opts.xLabel]
  * @param {string}   [opts.yLabel]
+ * @param {Object}   [opts.yLabels] - Mapping: column -> axis label
  * @param {number[]} [opts.xRange]  - e.g. [0, 100]
  */
 function renderLineChart(containerId, records, xField, yFields, opts) {
     opts = opts || {};
+    var yLabelMap = opts.yLabels || {};
     var cols = Array.isArray(yFields) ? yFields : [yFields];
     var el = document.getElementById(containerId);
     if (!el) return;
@@ -32,8 +34,6 @@ function renderLineChart(containerId, records, xField, yFields, opts) {
         };
 
         cols.forEach(function(col, i) {
-            var r = Math.floor(i / nCols) + 1;
-            var c = (i % nCols) + 1;
             var axisIdx = i === 0 ? '' : String(i + 1);
             traces.push({
                 x: records.map(function(row) { return row[xField]; }),
@@ -45,7 +45,10 @@ function renderLineChart(containerId, records, xField, yFields, opts) {
                 yaxis: 'y' + axisIdx
             });
             layout['xaxis' + axisIdx] = {};
-            layout['yaxis' + axisIdx] = {title: col};
+            if (opts.xLabel) {
+                layout['xaxis' + axisIdx].title = opts.xLabel;
+            }
+            layout['yaxis' + axisIdx] = {title: yLabelMap[col] || col};
             if (opts.xRange) {
                 layout['xaxis' + axisIdx].range = opts.xRange;
             }
@@ -65,8 +68,9 @@ function renderLineChart(containerId, records, xField, yFields, opts) {
             height: 450,
             title: {text: opts.title || '', x: 0.5, xanchor: 'center'}
         };
+        var resolvedYLabel = yLabelMap[yCol] || opts.yLabel;
         if (opts.xLabel) singleLayout.xaxis = {title: opts.xLabel};
-        if (opts.yLabel) singleLayout.yaxis = {title: opts.yLabel};
+        if (resolvedYLabel) singleLayout.yaxis = {title: resolvedYLabel};
         if (opts.xRange) {
             singleLayout.xaxis = singleLayout.xaxis || {};
             singleLayout.xaxis.range = opts.xRange;
@@ -83,8 +87,13 @@ function renderLineChart(containerId, records, xField, yFields, opts) {
  * @param {string[]} columns     - Timeseries column names to plot
  * @param {string}   feature     - Name of the swept parameter
  * @param {string}   catchmentName
+ * @param {Object}   [opts]
+ * @param {string}   [opts.xLabel]
+ * @param {Object}   [opts.yLabels] - Mapping: column -> axis label
  */
-function renderSweepChart(containerId, sweepData, columns, feature, catchmentName) {
+function renderSweepChart(containerId, sweepData, columns, feature, catchmentName, opts) {
+    opts = opts || {};
+    var yLabelMap = opts.yLabels || {};
     var el = document.getElementById(containerId);
     if (!el) return;
     el.innerHTML = '';
@@ -119,7 +128,11 @@ function renderSweepChart(containerId, sweepData, columns, feature, catchmentNam
                 yaxis: 'y' + axisIdx
             });
             layout['xaxis' + axisIdx] = layout['xaxis' + axisIdx] || {};
-            layout['yaxis' + axisIdx] = layout['yaxis' + axisIdx] || {title: col};
+            if (opts.xLabel) {
+                layout['xaxis' + axisIdx].title = opts.xLabel;
+            }
+            layout['yaxis' + axisIdx] = layout['yaxis' + axisIdx] || {};
+            layout['yaxis' + axisIdx].title = yLabelMap[col] || col;
         });
     });
 
