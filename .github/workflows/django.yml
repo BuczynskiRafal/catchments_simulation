@@ -44,6 +44,34 @@ jobs:
     - name: Minimize uv cache
       run: uv cache prune --ci
 
+  e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
+    - name: Install Dependencies
+      run: uv sync --frozen --extra dev --extra web --extra e2e
+
+    - name: Install Playwright browser
+      run: uv run playwright install --with-deps chromium
+
+    - name: Run Playwright E2E tests (headless)
+      run: |
+        export DJANGO_SETTINGS_MODULE=cs_app.test_settings
+        uv run pytest cs_app/e2e -m e2e --browser chromium --tracing off --video off --screenshot off
+
+    - name: Minimize uv cache
+      run: uv cache prune --ci
+
   docker-build:
     runs-on: ubuntu-latest
     steps:

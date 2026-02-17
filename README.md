@@ -119,6 +119,22 @@ For detailed instructions, see [cs_app/README.md](cs_app/README.md).
 `uv.lock` is committed to the repository. If you change dependencies in
 `pyproject.toml`, regenerate it with `uv lock` and commit both files together.
 
+## E2E Playwright (Django)
+
+Playwright E2E tests for the Django app are implemented with `pytest` and are marked as `e2e`.
+They are excluded from default `pytest` runs and should be executed explicitly.
+
+```bash
+# Install dependencies including E2E tooling
+uv sync --frozen --extra dev --extra web --extra e2e
+
+# Install Chromium browser for Playwright
+uv run playwright install chromium
+
+# Run E2E tests
+uv run pytest cs_app/e2e -m e2e --browser chromium
+```
+
 ---
 
 # Timeseries (hydrograph) data
