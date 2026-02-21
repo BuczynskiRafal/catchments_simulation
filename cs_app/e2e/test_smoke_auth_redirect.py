@@ -1,11 +1,8 @@
-import os
 import re
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import Page, expect
-
-os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
 
 pytestmark = pytest.mark.e2e
 
