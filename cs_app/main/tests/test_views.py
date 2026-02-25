@@ -23,6 +23,7 @@ from main.views import (
     _get_subcatchment_ids,
     _result_cache_key,
     _safe_download_filename,
+    _user_upload_dir,
     _validate_inp_file_stream,
     calculations,
     clear_session_variables,
@@ -521,7 +522,7 @@ def test_simulation_view_rejects_oversized_cached_payload(client, user, monkeypa
 
 
 @pytest.mark.django_db
-def test_calculations():
+def test_calculations(user):
     """
     Test calculations function.
     Uses Django test client to create a request to 'calculations' view.
@@ -537,7 +538,7 @@ def test_calculations():
     message_middleware = MessageMiddleware(lambda req: None)
     message_middleware.process_request(request)
 
-    request.user = AnonymousUser()
+    request.user = user
 
     response = calculations(request)
 
@@ -545,19 +546,19 @@ def test_calculations():
 
 
 @pytest.mark.django_db
-def test_calculations_get():
+def test_calculations_get(user):
     """
     Test calculations get.
     This function tests the calculations view function with a GET request.
     It creates a request factory, sets the request
-    method to GET, and sets the user attribute to AnonymousUser. It then calls
+    method to GET, and sets the user attribute to user. It then calls
     the calculations view function with the
     created request object and asserts that the response status code is 200.
 
     """
     factory = RequestFactory()
     request = factory.get("calculations")
-    request.user = AnonymousUser()
+    request.user = user
 
     response = calculations(request)
 
@@ -565,7 +566,7 @@ def test_calculations_get():
 
 
 @pytest.mark.django_db
-def test_calculations_uses_model_after_simulation(monkeypatch):
+def test_calculations_uses_model_after_simulation(monkeypatch, user):
     """
     Ensure calculations rebuilds swmmio.Model after SWMM run so report columns exist.
     """
@@ -601,19 +602,50 @@ def test_calculations_uses_model_after_simulation(monkeypatch):
 
     session_middleware = SessionMiddleware(lambda req: None)
     session_middleware.process_request(request)
-    request.session["uploaded_file_path"] = "uploaded_files/test.inp"
+
+    user_dir = _user_upload_dir(user.id)
+    request.session["uploaded_file_path"] = os.path.join(user_dir, "test.inp")
     request.session.save()
 
     message_middleware = MessageMiddleware(lambda req: None)
     message_middleware.process_request(request)
 
-    request.user = AnonymousUser()
+    request.user = user
 
     response = calculations(request)
 
     assert response.status_code == 200
     assert b"S1" in response.content
     assert b"12.34" in response.content
+
+
+@pytest.mark.django_db
+def test_calculations_rejects_out_of_bounds_path(client, user):
+    """Ensure path validation blocks directory traversal attempts."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "/etc/passwd"
+    session.save()
+
+    response = client.post(reverse("main:calculations"))
+    assert response.status_code == 200
+    assert b"Invalid file path detected." in response.content
+
+
+@pytest.mark.django_db
+def test_calculations_anonymous_get_returns_200(client):
+    """Anonymous GET to /calculations is publicly accessible (no @login_required)."""
+    calc_url = reverse("main:calculations")
+    response = client.get(calc_url)
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_calculations_anonymous_post_returns_200(client):
+    """Anonymous POST to /calculations returns 200 with 'upload a file' error (no redirect)."""
+    calc_url = reverse("main:calculations")
+    response = client.post(calc_url)
+    assert response.status_code == 200
 
 
 @pytest.mark.django_db
@@ -1827,8 +1859,9 @@ def test_timeseries_view_uses_refactored_assets_and_has_no_chart_json_without_re
 
 
 @pytest.mark.django_db
-def test_calculations_view_uses_upload_zone_component_contract(client):
+def test_calculations_view_uses_upload_zone_component_contract(client, user):
     """Calculations page should include the shared upload-zone contract."""
+    client.force_login(user)
     response = client.get(reverse("main:calculations"))
 
     assert response.status_code == 200
@@ -1851,7 +1884,7 @@ def test_calculations_view_uses_upload_zone_component_contract(client):
         ("main:main_view", False),
         ("main:simulation", True),
         ("main:timeseries", True),
-        ("main:calculations", False),
+        ("main:calculations", True),
     ],
 )
 def test_base_template_exposes_login_url_data_contract(client, user, url_name, requires_login):
@@ -1871,7 +1904,7 @@ def test_base_template_exposes_login_url_data_contract(client, user, url_name, r
     [
         ("main:simulation", True),
         ("main:timeseries", True),
-        ("main:calculations", False),
+        ("main:calculations", True),
     ],
 )
 def test_upload_zone_contract_is_rendered_consistently(client, user, url_name, requires_login):
@@ -1934,7 +1967,7 @@ def test_timeseries_template_shows_csv_and_png_buttons_when_results_exist(client
         ("main:main_view", False),
         ("main:simulation", True),
         ("main:timeseries", True),
-        ("main:calculations", False),
+        ("main:calculations", True),
     ],
 )
 def test_refactored_pages_do_not_reference_legacy_chart_assets(
@@ -1957,7 +1990,7 @@ def test_refactored_pages_do_not_reference_legacy_chart_assets(
         ("main:main_view", False),
         ("main:simulation", True),
         ("main:timeseries", True),
-        ("main:calculations", False),
+        ("main:calculations", True),
     ],
 )
 def test_templates_keep_only_allowlisted_inline_scripts(client, user, url_name, requires_login):

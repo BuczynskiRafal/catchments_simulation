@@ -31,6 +31,7 @@ from django.http import (
     FileResponse,
     HttpRequest,
     HttpResponse,
+    HttpResponseForbidden,
     HttpResponseRedirect,
     JsonResponse,
 )
@@ -348,6 +349,8 @@ def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
     """
     user = get_object_or_404(get_user_model(), id=user_id)
     if request.method == "POST":
+        if request.user != user:
+            return HttpResponseForbidden("You are not allowed to edit this profile.")
         try:
             profile = user.userprofile
             form = UserProfileForm(request.POST, instance=profile)
@@ -356,6 +359,7 @@ def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
             form = UserProfileForm(request.POST, initial={"user": user, "bio": ""})
         if form.is_valid():
             form.save()
+            return HttpResponseRedirect(reverse("userprofile", args=[user_id]))
     else:
         try:
             profile = user.userprofile
@@ -969,8 +973,22 @@ def get_session_variables(request: HttpRequest) -> dict:
     dict
         A dictionary containing the session variables.
     """
+    user = getattr(request, "user", None)
+    user_id = user.id if getattr(user, "is_authenticated", False) else None
+
+    if user_id is None:
+        return {
+            "show_download_button": False,
+            "chart_config": None,
+            "results_columns": [],
+            "results_data": [],
+            "feature_name": "",
+            "output_file_name": None,
+            "download_token": None,
+        }
+
     token = request.session.get(SIM_RESULT_TOKEN_SESSION_KEY)
-    payload = _load_cached_result("sim", request.user.id, token)
+    payload = _load_cached_result("sim", user_id, token)
     if not payload:
         if token:
             request.session.pop(SIM_RESULT_TOKEN_SESSION_KEY, None)
@@ -1552,30 +1570,44 @@ def calculations(request: HttpRequest) -> HttpResponse:
         if not uploaded_file_path:
             messages.error(request, "Please upload a file first.")
         else:
-            try:
-                with Simulation(uploaded_file_path) as sim:
-                    for _ in sim:
-                        pass
-                # Build the model after SWMM run so report-derived columns are available.
-                swmmio_model = swmmio.Model(uploaded_file_path)
-                ann_predictions = predict_runoff(swmmio_model).transpose()
-                df = pd.DataFrame(
-                    data={
-                        "Name": swmmio_model.subcatchments.dataframe.index,
-                        "SWMM_Runoff_m3": swmmio_model.subcatchments.dataframe[
-                            "TotalRunoffMG"
-                        ].values,
-                        "ANN_Runoff_m3": np.round(ann_predictions, 2),
-                    },
-                )
-                _cleanup_swmm_side_files(uploaded_file_path)
+            user_dir = os.path.realpath(_user_upload_dir(request.user.id))
+            abs_uploaded_file = os.path.realpath(uploaded_file_path)
 
-            except Exception:
-                logger.exception("Error while performing calculations.")
-                messages.error(
-                    request,
-                    "An error occurred while performing calculations.",
+            try:
+                common_path = os.path.commonpath([abs_uploaded_file, user_dir])
+            except ValueError:
+                common_path = None
+
+            if common_path != user_dir:
+                logger.warning(
+                    f"File path traversal attempt or cross-user access: {uploaded_file_path}"
                 )
+                messages.error(request, "Invalid file path detected.")
+            else:
+                try:
+                    with Simulation(uploaded_file_path) as sim:
+                        for _ in sim:
+                            pass
+                    # Build the model after SWMM run so report-derived columns are available.
+                    swmmio_model = swmmio.Model(uploaded_file_path)
+                    ann_predictions = predict_runoff(swmmio_model).transpose()
+                    df = pd.DataFrame(
+                        data={
+                            "Name": swmmio_model.subcatchments.dataframe.index,
+                            "SWMM_Runoff_m3": swmmio_model.subcatchments.dataframe[
+                                "TotalRunoffMG"
+                            ].values,
+                            "ANN_Runoff_m3": np.round(ann_predictions, 2),
+                        },
+                    )
+                except Exception:
+                    logger.exception("Error while performing calculations.")
+                    messages.error(
+                        request,
+                        "An error occurred while performing calculations.",
+                    )
+                finally:
+                    _cleanup_swmm_side_files(uploaded_file_path)
 
     df_is_empty = df is None or df.empty
 
