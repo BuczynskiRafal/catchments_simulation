@@ -63,6 +63,46 @@ MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 UPLOAD_SUBDIR = "uploaded_files"
 SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
 US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
+UPLOAD_SESSION_KEYS = (
+    SIM_FORM_STATE_SESSION_KEY,
+    TS_FORM_STATE_SESSION_KEY,
+    "_subcatchment_ids",
+    "_subcatchment_ids_file",
+)
+SIM_SESSION_DEFAULTS = {
+    "show_download_button": False,
+    "chart_config": None,
+    "results_columns": [],
+    "results_data": [],
+    "feature_name": "",
+    "output_file_name": None,
+    "download_token": None,
+}
+TS_SESSION_DEFAULTS = {
+    "ts_chart_config": None,
+    "ts_time_to_peak": None,
+    "ts_runoff_volume": None,
+    "ts_show_results": False,
+    "output_file_name": None,
+    "download_token": None,
+}
+SESSION_VARIABLES_TO_CLEAR = (
+    "show_download_button",
+    "chart_config",
+    "results_columns",
+    "results_data",
+    "feature_name",
+    "output_file_name",
+    "ts_chart_config",
+    "ts_time_to_peak",
+    "ts_runoff_volume",
+    "ts_show_results",
+    "ts_output_file_name",
+    SIM_RESULT_TOKEN_SESSION_KEY,
+    TS_RESULT_TOKEN_SESSION_KEY,
+    SIM_FORM_STATE_SESSION_KEY,
+    TS_FORM_STATE_SESSION_KEY,
+)
 
 
 class ResultPayloadTooLargeError(ValueError):
@@ -228,6 +268,74 @@ def _safe_remove_file(path: str | None) -> None:
         os.remove(path)
 
 
+def _file_too_large_message() -> str:
+    return f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB."
+
+
+def _timestamp_suffix() -> str:
+    return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _default_uploaded_file_path(request: HttpRequest) -> str:
+    return request.session.get(
+        "uploaded_file_path", os.path.abspath("catchment_simulation/example.inp")
+    )
+
+
+def _clear_upload_session_state(request: HttpRequest) -> None:
+    for key in UPLOAD_SESSION_KEYS:
+        request.session.pop(key, None)
+
+
+def _set_uploaded_file_for_session(request: HttpRequest, file_path: str) -> None:
+    old_path = request.session.get("uploaded_file_path")
+    if old_path and old_path != file_path:
+        _safe_remove_file(old_path)
+    request.session["uploaded_file_path"] = file_path
+    _clear_upload_session_state(request)
+
+
+def _store_result_payload_for_user(
+    request: HttpRequest,
+    *,
+    scope: str,
+    session_key: str,
+    payload: dict,
+) -> None:
+    old_token = request.session.get(session_key)
+    token = _store_cached_result(scope, request.user.id, payload)
+    _delete_cached_result(scope, request.user.id, old_token)
+    request.session[session_key] = token
+
+
+def _get_download_payload(
+    request: HttpRequest,
+    *,
+    scope: str,
+    redirect_name: str,
+    missing_message: str,
+) -> tuple[dict | None, HttpResponseRedirect | None]:
+    token = request.POST.get("token")
+    if not _is_valid_result_token(token):
+        messages.error(request, "Invalid download token.")
+        return None, redirect(redirect_name)
+
+    payload = _load_cached_result(scope, request.user.id, token)
+    if not payload:
+        messages.error(request, missing_message)
+        return None, redirect(redirect_name)
+
+    return payload, None
+
+
+def _default_simulation_session_data() -> dict:
+    return dict(SIM_SESSION_DEFAULTS)
+
+
+def _default_timeseries_session_data() -> dict:
+    return dict(TS_SESSION_DEFAULTS)
+
+
 def _coerce_input_validation_error(error: Exception) -> InputValidationError | None:
     """Normalize known user-facing errors to InputValidationError."""
     if isinstance(error, InputValidationError):
@@ -331,6 +439,27 @@ def contact(request: HttpRequest) -> HttpResponse:
     return render(request, "main/contact.html", {"form": form})
 
 
+def _build_user_profile_form(user, *, data: object | None = None) -> UserProfileForm:
+    form_kwargs = {}
+    if data is not None:
+        form_kwargs["data"] = data
+
+    try:
+        return UserProfileForm(instance=user.userprofile, **form_kwargs)
+    except AttributeError:
+        if data is None:
+            logger.debug("User %s has no profile, creating empty form", user.id)
+        else:
+            logger.debug("User %s has no profile, creating new form for POST", user.id)
+        return UserProfileForm(initial={"user": user, "bio": ""}, **form_kwargs)
+
+
+def _set_profile_form_read_only(form: UserProfileForm) -> None:
+    for field in form.fields.values():
+        field.disabled = True
+    form.helper.inputs = []
+
+
 def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
     """
     Render the user profile page and handle form submission.
@@ -351,26 +480,14 @@ def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
     if request.method == "POST":
         if request.user != user:
             return HttpResponseForbidden("You are not allowed to edit this profile.")
-        try:
-            profile = user.userprofile
-            form = UserProfileForm(request.POST, instance=profile)
-        except AttributeError:
-            logger.debug(f"User {user_id} has no profile, creating new form for POST")
-            form = UserProfileForm(request.POST, initial={"user": user, "bio": ""})
+        form = _build_user_profile_form(user, data=request.POST)
         if form.is_valid():
             form.save()
             return HttpResponseRedirect(reverse("userprofile", args=[user_id]))
     else:
-        try:
-            profile = user.userprofile
-            form = UserProfileForm(instance=profile)
-        except AttributeError:
-            logger.debug(f"User {user_id} has no profile, creating empty form")
-            form = UserProfileForm(initial={"user": user, "bio": ""})
+        form = _build_user_profile_form(user)
         if request.user != user:
-            for field in form.fields:
-                form.fields[field].disabled = True
-            form.helper.inputs = []
+            _set_profile_form_read_only(form)
     return render(request, "main/userprofile.html", {"form": form})
 
 
@@ -528,10 +645,7 @@ def upload(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Invalid Content-Length header."}, status=400)
 
     if content_length > MAX_UPLOAD_BODY_SIZE:
-        return JsonResponse(
-            {"error": (f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.")},
-            status=413,
-        )
+        return JsonResponse({"error": _file_too_large_message()}, status=413)
 
     request.upload_handlers = [
         BodySizeLimitUploadHandler(request, MAX_UPLOAD_BODY_SIZE),
@@ -542,10 +656,7 @@ def upload(request: HttpRequest) -> JsonResponse:
     except MultiPartParserError:
         return JsonResponse({"error": "Malformed multipart request."}, status=400)
     if getattr(request, "_upload_body_too_large", False):
-        return JsonResponse(
-            {"error": (f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.")},
-            status=413,
-        )
+        return JsonResponse({"error": _file_too_large_message()}, status=413)
 
     if "file" not in files:
         return JsonResponse({"error": "No file provided."}, status=400)
@@ -562,14 +673,11 @@ def upload(request: HttpRequest) -> JsonResponse:
 
     # Check file size
     if uploaded_file.size > MAX_UPLOAD_SIZE:
-        return JsonResponse(
-            {"error": f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB."},
-            status=413,
-        )
+        return JsonResponse({"error": _file_too_large_message()}, status=413)
 
     # Validate file content
     if not _validate_inp_file_stream(uploaded_file):
-        logger.warning(f"Invalid .inp file content uploaded: {uploaded_file.name}")
+        logger.warning("Invalid .inp file content uploaded: %s", uploaded_file.name)
         return JsonResponse(
             {
                 "error": "Invalid file content. The file does not appear to be a valid SWMM .inp file."
@@ -582,11 +690,6 @@ def upload(request: HttpRequest) -> JsonResponse:
     user_dir = _user_upload_dir(request.user.id)
     file_path = os.path.join(user_dir, safe_filename + file_extension)
 
-    # Remove previous uploaded file from disk
-    old_path = request.session.get("uploaded_file_path")
-    if old_path and old_path != file_path:
-        _safe_remove_file(old_path)
-
     # Ensure upload directory exists
     os.makedirs(user_dir, exist_ok=True)
 
@@ -594,13 +697,8 @@ def upload(request: HttpRequest) -> JsonResponse:
         for chunk in uploaded_file.chunks():
             destination.write(chunk)
 
-    request.session["uploaded_file_path"] = file_path
-    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
-    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
-    # Invalidate cached subcatchment IDs so they are re-read from new file
-    request.session.pop("_subcatchment_ids", None)
-    request.session.pop("_subcatchment_ids_file", None)
-    logger.info(f"File uploaded successfully: {file_path}")
+    _set_uploaded_file_for_session(request, file_path)
+    logger.info("File uploaded successfully: %s", file_path)
 
     return JsonResponse({"message": "File was sent."})
 
@@ -633,15 +731,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
         logger.exception("Failed to copy sample INP file for user %s", request.user.id)
         return JsonResponse({"error": "Failed to load sample file."}, status=500)
 
-    old_path = request.session.get("uploaded_file_path")
-    if old_path and old_path != file_path:
-        _safe_remove_file(old_path)
-
-    request.session["uploaded_file_path"] = file_path
-    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
-    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
-    request.session.pop("_subcatchment_ids", None)
-    request.session.pop("_subcatchment_ids_file", None)
+    _set_uploaded_file_for_session(request, file_path)
     try:
         sample_size = os.path.getsize(file_path)
     except OSError:
@@ -710,12 +800,7 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
 
     file_path = request.session.pop("uploaded_file_path", None)
     _safe_remove_file(file_path)
-
-    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
-    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
-    # Clear cached subcatchment IDs
-    request.session.pop("_subcatchment_ids", None)
-    request.session.pop("_subcatchment_ids_file", None)
+    _clear_upload_session_state(request)
 
     return JsonResponse({"message": "Upload cleared."})
 
@@ -977,30 +1062,14 @@ def get_session_variables(request: HttpRequest) -> dict:
     user_id = user.id if getattr(user, "is_authenticated", False) else None
 
     if user_id is None:
-        return {
-            "show_download_button": False,
-            "chart_config": None,
-            "results_columns": [],
-            "results_data": [],
-            "feature_name": "",
-            "output_file_name": None,
-            "download_token": None,
-        }
+        return _default_simulation_session_data()
 
     token = request.session.get(SIM_RESULT_TOKEN_SESSION_KEY)
     payload = _load_cached_result("sim", user_id, token)
     if not payload:
         if token:
             request.session.pop(SIM_RESULT_TOKEN_SESSION_KEY, None)
-        return {
-            "show_download_button": False,
-            "chart_config": None,
-            "results_columns": [],
-            "results_data": [],
-            "feature_name": "",
-            "output_file_name": None,
-            "download_token": None,
-        }
+        return _default_simulation_session_data()
 
     return {
         "show_download_button": True,
@@ -1028,23 +1097,7 @@ def clear_session_variables(request: HttpRequest) -> None:
         _delete_cached_result("sim", user_id, request.session.get(SIM_RESULT_TOKEN_SESSION_KEY))
         _delete_cached_result("ts", user_id, request.session.get(TS_RESULT_TOKEN_SESSION_KEY))
 
-    for variable in [
-        "show_download_button",
-        "chart_config",
-        "results_columns",
-        "results_data",
-        "feature_name",
-        "output_file_name",
-        "ts_chart_config",
-        "ts_time_to_peak",
-        "ts_runoff_volume",
-        "ts_show_results",
-        "ts_output_file_name",
-        SIM_RESULT_TOKEN_SESSION_KEY,
-        TS_RESULT_TOKEN_SESSION_KEY,
-        SIM_FORM_STATE_SESSION_KEY,
-        TS_FORM_STATE_SESSION_KEY,
-    ]:
+    for variable in SESSION_VARIABLES_TO_CLEAR:
         if variable in request.session:
             del request.session[variable]
 
@@ -1120,6 +1173,164 @@ def _get_form_initial(
     return initial
 
 
+def _run_simulation_dataframe(
+    *,
+    params: SimulationMethodParams,
+    uploaded_file_path: str,
+    is_predefined: bool,
+) -> tuple[pd.DataFrame, str, list[str]]:
+    with FeaturesSimulation(
+        subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
+    ) as model:
+        feature_name = get_feature_name(params.method_name)
+        method = getattr(model, params.method_name)
+        if is_predefined:
+            df = method()
+        else:
+            df = method(start=params.start, stop=params.stop, step=params.step)
+
+    other_columns = [column for column in df.columns if column != feature_name]
+    return df[[feature_name] + other_columns], feature_name, other_columns
+
+
+def _build_simulation_payload(
+    *,
+    dataframe: pd.DataFrame,
+    feature_name: str,
+    y_columns: list[str],
+    flow_units: str | None,
+    username: str,
+) -> dict:
+    x_label, y_labels = _build_simulation_axis_labels(
+        feature_name=feature_name,
+        y_columns=y_columns,
+        flow_units=flow_units,
+    )
+    output_file_name = f"{username}_simulation_result_{_timestamp_suffix()}.xlsx"
+    chart_config = {
+        "data": json.loads(dataframe.to_json(orient="records")),
+        "x": feature_name,
+        "y": y_columns,
+        "title": f"Dependence of runoff on subcatchment {feature_name}.",
+        "xLabel": x_label,
+        "yLabels": y_labels,
+    }
+    return {
+        "chart_config": chart_config,
+        "results_columns": dataframe.columns.tolist(),
+        "results_data": dataframe.values.tolist(),
+        "feature_name": feature_name,
+        "output_file_name": output_file_name,
+    }
+
+
+def _serialize_timeseries_dataframe(ts_df: pd.DataFrame) -> list[dict]:
+    ts_df_reset = ts_df.reset_index()
+    ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
+    return json.loads(ts_df_reset.to_json(orient="records"))
+
+
+def _timeseries_metrics(ts_df: pd.DataFrame) -> tuple[str, str]:
+    try:
+        ttp_value = str(time_to_peak(ts_df, column="runoff"))
+    except ValueError:
+        ttp_value = "N/A"
+
+    try:
+        runoff_value = f"{runoff_volume(ts_df, column='runoff'):.4f}"
+    except ValueError:
+        runoff_value = "N/A"
+
+    return ttp_value, runoff_value
+
+
+def _build_single_timeseries_payload(
+    *,
+    ts_df: pd.DataFrame,
+    catchment_name: str,
+    flow_units: str | None,
+    username: str,
+) -> dict:
+    ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
+    data = _serialize_timeseries_dataframe(ts_df)
+    ttp_str, runoff_volume_str = _timeseries_metrics(ts_df)
+    x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
+
+    output_file_name = f"{username}_timeseries_{_timestamp_suffix()}.xlsx"
+    chart_config = {
+        "mode": "single",
+        "data": data,
+        "columns": ts_columns,
+        "title": f"Timeseries for subcatchment {catchment_name}",
+        "xLabel": x_label,
+        "yLabels": y_labels,
+    }
+    return {
+        "mode": "single",
+        "data": data,
+        "output_file_name": output_file_name,
+        "chart_config": chart_config,
+        "ts_time_to_peak": ttp_str,
+        "ts_runoff_volume": runoff_volume_str,
+        "ts_show_results": True,
+    }
+
+
+def _build_sweep_timeseries_payload(
+    *,
+    sweep_results: dict,
+    feature: str,
+    catchment_name: str,
+    flow_units: str | None,
+    username: str,
+) -> dict:
+    ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
+    sweep_data = {
+        str(parameter_value): _serialize_timeseries_dataframe(ts_df)
+        for parameter_value, ts_df in sweep_results.items()
+    }
+    x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
+
+    output_file_name = f"{username}_ts_sweep_{_timestamp_suffix()}.xlsx"
+    chart_config = {
+        "mode": "sweep",
+        "data": sweep_data,
+        "columns": ts_columns,
+        "title": f"Timeseries sweep: {feature} for {catchment_name}",
+        "feature": feature,
+        "catchment": catchment_name,
+        "xLabel": x_label,
+        "yLabels": y_labels,
+    }
+    return {
+        "mode": "sweep",
+        "data": sweep_data,
+        "output_file_name": output_file_name,
+        "chart_config": chart_config,
+        "ts_show_results": True,
+        "ts_time_to_peak": None,
+        "ts_runoff_volume": None,
+    }
+
+
+def _get_timeseries_session_data(request: HttpRequest) -> dict:
+    token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
+    payload = _load_cached_result("ts", request.user.id, token)
+    if not payload:
+        if token:
+            request.session.pop(TS_RESULT_TOKEN_SESSION_KEY, None)
+        return _default_timeseries_session_data()
+
+    return {
+        "ts_chart_config": payload.get("chart_config"),
+        "ts_time_to_peak": payload.get("ts_time_to_peak"),
+        "ts_runoff_volume": payload.get("ts_runoff_volume"),
+        "ts_show_results": payload.get("ts_show_results", False),
+        "output_file_name": payload.get("output_file_name"),
+        "download_token": token,
+    }
+
+
 @login_required
 def simulation_view(request: HttpRequest) -> HttpResponse:
     """
@@ -1143,11 +1354,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
         if form.is_valid():
             option = form.cleaned_data["option"]
             is_predefined = option in SimulationForm.PREDEFINED_METHODS
-
-            uploaded_file_path = request.session.get(
-                "uploaded_file_path",
-                os.path.abspath("catchment_simulation/example.inp"),
-            )
+            uploaded_file_path = _default_uploaded_file_path(request)
 
             try:
                 params = SimulationMethodParams(
@@ -1157,46 +1364,24 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
                     step=form.cleaned_data.get("step") if not is_predefined else None,
                     catchment_name=form.cleaned_data["catchment_name"],
                 )
-                with FeaturesSimulation(
-                    subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
-                ) as model:
-                    feature_name = get_feature_name(params.method_name)
-
-                    method = getattr(model, params.method_name)
-                    if is_predefined:
-                        df = method()
-                    else:
-                        df = method(start=params.start, stop=params.stop, step=params.step)
-                    other_cols = [c for c in df.columns if c != feature_name]
-                    df = df[[feature_name] + other_cols]
-
-                flow_units = _read_flow_units(uploaded_file_path)
-                x_label, y_labels = _build_simulation_axis_labels(
-                    feature_name=feature_name,
-                    y_columns=other_cols,
-                    flow_units=flow_units,
+                dataframe, feature_name, y_columns = _run_simulation_dataframe(
+                    params=params,
+                    uploaded_file_path=uploaded_file_path,
+                    is_predefined=is_predefined,
                 )
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
-                chart_config = {
-                    "data": json.loads(df.to_json(orient="records")),
-                    "x": feature_name,
-                    "y": other_cols,
-                    "title": f"Dependence of runoff on subcatchment {feature_name}.",
-                    "xLabel": x_label,
-                    "yLabels": y_labels,
-                }
-                payload = {
-                    "chart_config": chart_config,
-                    "results_columns": df.columns.tolist(),
-                    "results_data": df.values.tolist(),
-                    "feature_name": feature_name,
-                    "output_file_name": output_file_name,
-                }
-                old_token = request.session.get(SIM_RESULT_TOKEN_SESSION_KEY)
-                token = _store_cached_result("sim", request.user.id, payload)
-                _delete_cached_result("sim", request.user.id, old_token)
-                request.session[SIM_RESULT_TOKEN_SESSION_KEY] = token
+                payload = _build_simulation_payload(
+                    dataframe=dataframe,
+                    feature_name=feature_name,
+                    y_columns=y_columns,
+                    flow_units=_read_flow_units(uploaded_file_path),
+                    username=request.user.username,
+                )
+                _store_result_payload_for_user(
+                    request,
+                    scope="sim",
+                    session_key=SIM_RESULT_TOKEN_SESSION_KEY,
+                    payload=payload,
+                )
                 _save_form_state(
                     request, SIM_FORM_STATE_SESSION_KEY, form.cleaned_data, SIM_FORM_STATE_FIELDS
                 )
@@ -1242,14 +1427,14 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
 @require_POST
 def download_simulation_results(request: HttpRequest) -> HttpResponse:
     """Download simulation results as an Excel file generated in memory."""
-    token = request.POST.get("token")
-    if not _is_valid_result_token(token):
-        messages.error(request, "Invalid download token.")
-        return redirect("main:simulation")
-    payload = _load_cached_result("sim", request.user.id, token)
-    if not payload:
-        messages.error(request, "No simulation results available to download.")
-        return redirect("main:simulation")
+    payload, redirect_response = _get_download_payload(
+        request,
+        scope="sim",
+        redirect_name="main:simulation",
+        missing_message="No simulation results available to download.",
+    )
+    if redirect_response:
+        return redirect_response
 
     try:
         df = pd.DataFrame(payload["results_data"], columns=payload["results_columns"])
@@ -1264,14 +1449,14 @@ def download_simulation_results(request: HttpRequest) -> HttpResponse:
 @require_POST
 def download_timeseries_results(request: HttpRequest) -> HttpResponse:
     """Download timeseries analysis results as an in-memory Excel file."""
-    token = request.POST.get("token")
-    if not _is_valid_result_token(token):
-        messages.error(request, "Invalid download token.")
-        return redirect("main:timeseries")
-    payload = _load_cached_result("ts", request.user.id, token)
-    if not payload:
-        messages.error(request, "No timeseries results available to download.")
-        return redirect("main:timeseries")
+    payload, redirect_response = _get_download_payload(
+        request,
+        scope="ts",
+        redirect_name="main:timeseries",
+        missing_message="No timeseries results available to download.",
+    )
+    if redirect_response:
+        return redirect_response
 
     mode = payload.get("mode")
     data = payload.get("data")
@@ -1318,15 +1503,14 @@ def _timeseries_payload_to_csv_df(payload: dict) -> pd.DataFrame:
 @require_POST
 def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
     """Download timeseries analysis results as CSV."""
-    token = request.POST.get("token")
-    if not _is_valid_result_token(token):
-        messages.error(request, "Invalid download token.")
-        return redirect("main:timeseries")
-
-    payload = _load_cached_result("ts", request.user.id, token)
-    if not payload:
-        messages.error(request, "No timeseries results available to download.")
-        return redirect("main:timeseries")
+    payload, redirect_response = _get_download_payload(
+        request,
+        scope="ts",
+        redirect_name="main:timeseries",
+        missing_message="No timeseries results available to download.",
+    )
+    if redirect_response:
+        return redirect_response
 
     try:
         df = _timeseries_payload_to_csv_df(payload)
@@ -1375,124 +1559,48 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
         if form.is_valid():
             mode = form.cleaned_data["mode"]
             catchment_name = form.cleaned_data["catchment_name"]
-
-            uploaded_file_path = request.session.get(
-                "uploaded_file_path",
-                os.path.abspath("catchment_simulation/example.inp"),
-            )
+            uploaded_file_path = _default_uploaded_file_path(request)
             flow_units = _read_flow_units(uploaded_file_path)
 
             try:
+                payload = None
                 with FeaturesSimulation(
                     subcatchment_id=catchment_name, raw_file=uploaded_file_path
                 ) as model:
                     if mode == "single":
-                        ts_df = model.calculate_timeseries()
-
-                        # Compute analytical metrics
-                        try:
-                            ttp = time_to_peak(ts_df, column="runoff")
-                            ttp_str = str(ttp)
-                        except ValueError:
-                            ttp_str = "N/A"
-
-                        try:
-                            vol = runoff_volume(ts_df, column="runoff")
-                            vol_str = f"{vol:.4f}"
-                        except ValueError:
-                            vol_str = "N/A"
-
-                        # Serialize timeseries data as JSON for frontend rendering
-                        ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
-                        ts_df_reset = ts_df.reset_index()
-                        ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
-                        x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
-
-                        # Save for download
-                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
-                        chart_config = {
-                            "mode": "single",
-                            "data": json.loads(ts_df_reset.to_json(orient="records")),
-                            "columns": ts_columns,
-                            "title": f"Timeseries for subcatchment {catchment_name}",
-                            "xLabel": x_label,
-                            "yLabels": y_labels,
-                        }
-                        payload = {
-                            "mode": "single",
-                            "data": chart_config["data"],
-                            "output_file_name": output_file_name,
-                            "chart_config": chart_config,
-                            "ts_time_to_peak": ttp_str,
-                            "ts_runoff_volume": vol_str,
-                            "ts_show_results": True,
-                        }
-                        old_token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
-                        token = _store_cached_result("ts", request.user.id, payload)
-                        _delete_cached_result("ts", request.user.id, old_token)
-                        request.session[TS_RESULT_TOKEN_SESSION_KEY] = token
-
-                        _save_form_state(
-                            request,
-                            TS_FORM_STATE_SESSION_KEY,
-                            form.cleaned_data,
-                            TS_FORM_STATE_FIELDS,
+                        payload = _build_single_timeseries_payload(
+                            ts_df=model.calculate_timeseries(),
+                            catchment_name=catchment_name,
+                            flow_units=flow_units,
+                            username=request.user.username,
                         )
-                        return redirect("main:timeseries")
-
                     elif mode == "sweep":
-                        feature = form.cleaned_data["feature"]
-                        start = form.cleaned_data["start"]
-                        stop = form.cleaned_data["stop"]
-                        step = form.cleaned_data["step"]
-
-                        results = model.simulate_subcatchment_timeseries(
-                            feature=feature, start=start, stop=stop, step=step
+                        payload = _build_sweep_timeseries_payload(
+                            sweep_results=model.simulate_subcatchment_timeseries(
+                                feature=form.cleaned_data["feature"],
+                                start=form.cleaned_data["start"],
+                                stop=form.cleaned_data["stop"],
+                                step=form.cleaned_data["step"],
+                            ),
+                            feature=form.cleaned_data["feature"],
+                            catchment_name=catchment_name,
+                            flow_units=flow_units,
+                            username=request.user.username,
                         )
-
-                        ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
-                        sweep_data = {}
-                        for param_val, ts_df in results.items():
-                            ts_df_reset = ts_df.reset_index()
-                            ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
-                            sweep_data[str(param_val)] = ts_df_reset.to_dict(orient="records")
-                        x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
-
-                        # Save multi-sheet Excel
-                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
-                        chart_config = {
-                            "mode": "sweep",
-                            "data": sweep_data,
-                            "columns": ts_columns,
-                            "title": f"Timeseries sweep: {feature} for {catchment_name}",
-                            "feature": feature,
-                            "catchment": catchment_name,
-                            "xLabel": x_label,
-                            "yLabels": y_labels,
-                        }
-                        payload = {
-                            "mode": "sweep",
-                            "data": sweep_data,
-                            "output_file_name": output_file_name,
-                            "chart_config": chart_config,
-                            "ts_show_results": True,
-                            "ts_time_to_peak": None,
-                            "ts_runoff_volume": None,
-                        }
-                        old_token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
-                        token = _store_cached_result("ts", request.user.id, payload)
-                        _delete_cached_result("ts", request.user.id, old_token)
-                        request.session[TS_RESULT_TOKEN_SESSION_KEY] = token
-
-                        _save_form_state(
-                            request,
-                            TS_FORM_STATE_SESSION_KEY,
-                            form.cleaned_data,
-                            TS_FORM_STATE_FIELDS,
-                        )
-                        return redirect("main:timeseries")
+                if payload is not None:
+                    _store_result_payload_for_user(
+                        request,
+                        scope="ts",
+                        session_key=TS_RESULT_TOKEN_SESSION_KEY,
+                        payload=payload,
+                    )
+                    _save_form_state(
+                        request,
+                        TS_FORM_STATE_SESSION_KEY,
+                        form.cleaned_data,
+                        TS_FORM_STATE_FIELDS,
+                    )
+                    return redirect("main:timeseries")
 
             except ResultPayloadTooLargeError:
                 messages.error(
@@ -1521,18 +1629,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
             TS_FORM_STATE_FIELDS,
         )
         form = TimeseriesForm(catchment_choices=catchment_choices, initial=initial)
-        token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
-        payload = _load_cached_result("ts", request.user.id, token)
-        if token and not payload:
-            request.session.pop(TS_RESULT_TOKEN_SESSION_KEY, None)
-        session_data = {
-            "ts_chart_config": payload.get("chart_config") if payload else None,
-            "ts_time_to_peak": payload.get("ts_time_to_peak") if payload else None,
-            "ts_runoff_volume": payload.get("ts_runoff_volume") if payload else None,
-            "ts_show_results": payload.get("ts_show_results", False) if payload else False,
-            "output_file_name": payload.get("output_file_name") if payload else None,
-            "download_token": token if payload else None,
-        }
+        session_data = _get_timeseries_session_data(request)
 
     return render(request, "main/timeseries.html", {"form": form, **session_data})
 
@@ -1580,7 +1677,7 @@ def calculations(request: HttpRequest) -> HttpResponse:
 
             if common_path != user_dir:
                 logger.warning(
-                    f"File path traversal attempt or cross-user access: {uploaded_file_path}"
+                    "File path traversal attempt or cross-user access: %s", uploaded_file_path
                 )
                 messages.error(request, "Invalid file path detected.")
             else:
