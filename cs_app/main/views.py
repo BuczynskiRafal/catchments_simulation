@@ -1,7 +1,4 @@
-"""
-This module contains views and helper functions for rendering and managing
-the main view, about page, contact form, and user profiles.
-"""
+"""Views and helper functions for the main Django application."""
 
 import datetime
 import json
@@ -114,12 +111,7 @@ class InputValidationError(ValueError):
 
 
 def ajax_login_required(view_func):
-    """
-    Decorator that checks authentication for AJAX requests.
-
-    For AJAX requests, returns a 401 JSON response with a login URL.
-    For regular requests, redirects to the login page.
-    """
+    """Like ``@login_required`` but returns 401 JSON for AJAX requests."""
 
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
@@ -138,7 +130,7 @@ def ajax_login_required(view_func):
 
 
 def _load_chart_json(filename: str, x_key: str, y_key: str) -> list[dict]:
-    """Load and validate chart data JSON structure."""
+    """Load JSON from ``data/`` dir and validate it has numeric x/y keys."""
     data_dir = os.path.join(settings.BASE_DIR, "data")
     path = os.path.join(data_dir, filename)
     with open(path, encoding="utf-8") as file:
@@ -380,54 +372,16 @@ def _format_input_error_message(error: InputValidationError) -> str:
 
 
 def main_view(request: HttpRequest) -> HttpResponse:
-    """
-    Render the main view with interactive plots.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered main view template.
-    """
+    """Landing page with static slope/area/width charts."""
     context = {"chart_data": _load_static_chart_data()}
     return render(request, "main/main_view.html", context)
 
 
 def about(request: HttpRequest) -> HttpResponse:
-    """
-    Render the about page.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered about page template.
-    """
     return render(request, "main/about.html")
 
 
 def contact(request: HttpRequest) -> HttpResponse:
-    """
-    Render the contact form and handle form submission.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered contact form template.
-    """
     if request.method == "POST":
         form = ContactForm(data=request.POST)
         if form.is_valid():
@@ -461,21 +415,7 @@ def _set_profile_form_read_only(form: UserProfileForm) -> None:
 
 
 def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
-    """
-    Render the user profile page and handle form submission.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-    user_id : int
-        The user ID for the profile.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered user profile template.
-    """
+    """Display user profile; owners can edit, others get read-only view."""
     user = get_object_or_404(get_user_model(), id=user_id)
     if request.method == "POST":
         if request.user != user:
@@ -512,12 +452,7 @@ def _sanitize_filename(filename: str) -> str:
 
 
 def _validate_inp_file_content(file_content: bytes) -> bool:
-    """
-    Validate that the file content appears to be a valid SWMM .inp file.
-
-    SWMM .inp files typically start with section headers like [TITLE], [OPTIONS], etc.
-    Handles BOM markers and various line endings (CRLF/LF).
-    """
+    """Check in-memory bytes for SWMM section headers. Handles BOM and mixed line endings."""
     try:
         if file_content.startswith(b"\xef\xbb\xbf"):
             file_content = file_content[3:]
@@ -618,22 +553,7 @@ class BodySizeLimitUploadHandler(FileUploadHandler):
 @require_POST
 @ajax_login_required
 def upload(request: HttpRequest) -> JsonResponse:
-    """
-    Upload a .inp file to the server.
-
-    Requires user authentication. For AJAX requests (like Dropzone.js),
-    returns a 401 JSON response if not authenticated.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    JsonResponse
-        JSON response containing a success message if the file was uploaded successfully, or an error message if not.
-    """
+    """Accept a user-uploaded .inp file (via Dropzone.js) after size and content validation."""
     raw_content_length = request.META.get("CONTENT_LENGTH")
     if raw_content_length in ("",):
         return JsonResponse({"error": "Invalid Content-Length header."}, status=400)
@@ -749,20 +669,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
 @require_GET
 @ajax_login_required
 def upload_status(request: HttpRequest) -> JsonResponse:
-    """
-    Return the current uploaded file status from the session.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    JsonResponse
-        JSON with ``has_file``, ``filename``, and ``size`` when a file is
-        present, or ``has_file: false`` otherwise.
-    """
+    """Return ``{has_file, filename, size}`` for the current session upload."""
     file_path = request.session.get("uploaded_file_path")
     if file_path:
         try:
@@ -782,19 +689,7 @@ def upload_status(request: HttpRequest) -> JsonResponse:
 
 @ajax_login_required
 def upload_clear(request: HttpRequest) -> JsonResponse:
-    """
-    Clear the uploaded file from the session and disk.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    JsonResponse
-        JSON response confirming the upload was cleared.
-    """
+    """Remove uploaded file from disk and clear related session state."""
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed."}, status=405)
 
@@ -806,13 +701,7 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
 
 
 def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
-    """
-    Return subcatchment IDs from the uploaded INP file, using session cache.
-
-    The result is cached in the session under ``_subcatchment_ids`` and
-    ``_subcatchment_ids_file``.  The cache is invalidated when the uploaded
-    file path changes.
-    """
+    """Return subcatchment IDs from the uploaded INP, cached per session/file path."""
     file_path = request.session.get("uploaded_file_path")
     cached_file = request.session.get("_subcatchment_ids_file")
     if file_path and file_path == cached_file:
@@ -838,12 +727,7 @@ def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
 
 
 def _get_catchment_choices(request: HttpRequest) -> list[tuple[str, str]]:
-    """
-    Extract subcatchment IDs from the uploaded INP file stored in the session.
-
-    Returns a list of (id, id) tuples suitable for a Select widget, or a
-    placeholder when no file is available.
-    """
+    """Build ``(value, label)`` choices for the catchment ``<select>`` widget."""
     ids = _get_subcatchment_ids(request)
     if ids:
         return [("", "--- Select catchment ---")] + [(sid, sid) for sid in ids]
@@ -853,36 +737,12 @@ def _get_catchment_choices(request: HttpRequest) -> list[tuple[str, str]]:
 @require_GET
 @ajax_login_required
 def subcatchments(request: HttpRequest) -> JsonResponse:
-    """
-    Return the list of subcatchment IDs from the uploaded INP file.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    JsonResponse
-        JSON with ``subcatchments`` list.
-    """
+    """AJAX endpoint returning subcatchment IDs from the uploaded INP."""
     return JsonResponse({"subcatchments": _get_subcatchment_ids(request)})
 
 
 def get_feature_name(method_name: str) -> str:
-    """
-    Get the feature name based on the method name.
-
-    Parameters
-    ----------
-    method_name : str
-        The name of the method.
-
-    Returns
-    -------
-    str
-        The feature name associated with the method name.
-    """
+    """Map simulation method name (e.g. ``simulate_area``) to INP column name."""
 
     feature_map = {
         "simulate_percent_slope": "PercSlope",
@@ -1045,19 +905,7 @@ def _excel_attachment_response(
 
 
 def get_session_variables(request: HttpRequest) -> dict:
-    """
-    Get the session variables.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    dict
-        A dictionary containing the session variables.
-    """
+    """Load simulation result context from cache for template rendering."""
     user = getattr(request, "user", None)
     user_id = user.id if getattr(user, "is_authenticated", False) else None
 
@@ -1083,14 +931,7 @@ def get_session_variables(request: HttpRequest) -> dict:
 
 
 def clear_session_variables(request: HttpRequest) -> None:
-    """
-    Clear the session variables.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-    """
+    """Purge all cached results and form state from the session."""
     user = getattr(request, "user", None)
     user_id = user.id if getattr(user, "is_authenticated", False) else None
     if user_id is not None:
@@ -1108,11 +949,7 @@ def _save_form_state(
     cleaned_data: dict,
     fields: tuple[str, ...],
 ) -> None:
-    """
-    Persist selected form values in session for subsequent GET requests.
-
-    Values that are ``None`` are skipped so the form can fall back to field defaults.
-    """
+    """Persist non-None form values in session so the form is pre-filled on next GET."""
     state = {}
     for field_name in fields:
         value = cleaned_data.get(field_name)
@@ -1128,13 +965,7 @@ def _get_form_initial(
     form_class: type[forms.Form],
     fields: tuple[str, ...],
 ) -> dict:
-    """
-    Return sanitized initial values restored from session.
-
-    Dynamic ``catchment_name`` is validated against current catchment choices.
-    Other fields are validated/coerced using Django field ``to_python`` and
-    static choice sets where applicable.
-    """
+    """Restore form values from session, validating against current choices and field types."""
     state = request.session.get(session_key)
     if not isinstance(state, dict):
         return {}
@@ -1333,19 +1164,7 @@ def _get_timeseries_session_data(request: HttpRequest) -> dict:
 
 @login_required
 def simulation_view(request: HttpRequest) -> HttpResponse:
-    """
-    Render the simulation view.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered simulation template.
-    """
+    """Run a subcatchment feature simulation and display results with charts."""
     session_data = {}
 
     if request.method == "POST":
@@ -1532,25 +1351,7 @@ def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def timeseries_view(request: HttpRequest) -> HttpResponse:
-    """
-    Render the timeseries analysis view.
-
-    Supports two modes:
-    - single: Run a single simulation and display per-timestep data with
-      analytical metrics (time to peak, runoff volume).
-    - sweep: Vary a subcatchment parameter over a range and overlay the
-      resulting hydrographs.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered timeseries template.
-    """
+    """Timeseries analysis: single run with metrics or parameter sweep with overlaid hydrographs."""
     session_data = {}
 
     if request.method == "POST":
@@ -1647,19 +1448,7 @@ def _cleanup_swmm_side_files(inp_path: str) -> None:
 
 
 def calculations(request: HttpRequest) -> HttpResponse:
-    """
-    Perform calculations on the uploaded file.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered calculations template.
-    """
+    """Run SWMM + ANN prediction and compare runoff volumes per subcatchment."""
     df = None
     if request.method == "POST":
         uploaded_file_path = request.session.get("uploaded_file_path", None)
