@@ -24,6 +24,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import redirect_to_login
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadhandler import FileUploadHandler, StopUpload
@@ -65,6 +66,11 @@ MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 UPLOAD_SUBDIR = "uploaded_files"
 SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
 US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
+SIMULATION_TEMPLATE = "main/simulation.html"
+SIMULATION_RESULTS_TEMPLATE = "main/partials/_simulation_results.html"
+AUTH_REQUIRED_MESSAGE = "Authentication required."
+FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
+NO_MODEL_MESSAGE = "Please upload a file first."
 
 
 class ResultPayloadTooLargeError(ValueError):
@@ -79,11 +85,54 @@ def _is_ajax(request: HttpRequest) -> bool:
     return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
+def _json_error(message: str, status: int, field_errors: dict | None = None) -> JsonResponse:
+    """Build the async error payload shared by the run endpoints."""
+    return JsonResponse({"message": message, "field_errors": field_errors or {}}, status=status)
+
+
+def _form_invalid_json(form: forms.Form) -> JsonResponse:
+    field_errors = {
+        field: [error["message"] for error in errors]
+        for field, errors in form.errors.get_json_data().items()
+    }
+    return _json_error(FORM_INVALID_MESSAGE, 400, field_errors)
+
+
+def _run_failed(
+    request: HttpRequest, message: str, status: int, template: str, context: dict
+) -> HttpResponse:
+    """
+    Report a failed run: JSON for async requests, flash message + page otherwise.
+
+    The async path must not touch ``messages`` - they would surface on the
+    next full page load.
+    """
+    if _is_ajax(request):
+        return _json_error(message, status)
+    messages.error(request, message)
+    return render(request, template, context)
+
+
+def _classify_run_error(
+    error: Exception, tool: str, too_large_message: str, failed_message: str
+) -> tuple[str, int]:
+    """Log a failed run and return the user-facing message and HTTP status for it."""
+    if isinstance(error, ResultPayloadTooLargeError):
+        return too_large_message, 413
+    input_error = _coerce_input_validation_error(error)
+    if input_error:
+        logger.warning("%s input validation failed", tool, exc_info=True)
+        return _format_input_error_message(input_error), 400
+    logger.exception("%s failed", tool)
+    return failed_message, 500
+
+
 def ajax_login_required(view_func):
     """
     Decorator that checks authentication for AJAX requests.
 
-    For AJAX requests, returns a 401 JSON response with a login URL.
+    For AJAX requests, returns a 401 JSON response with a login URL
+    (``error`` for the upload zone, ``message``/``field_errors`` for async forms).
     For regular requests, redirects to the login page.
     """
 
@@ -91,13 +140,17 @@ def ajax_login_required(view_func):
     def wrapper(request, *args, **kwargs):
         if not request.user.is_authenticated:
             login_url = settings.LOGIN_URL
-            is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
-            if is_ajax:
+            if _is_ajax(request):
                 return JsonResponse(
-                    {"error": "Authentication required.", "login_url": login_url},
+                    {
+                        "error": AUTH_REQUIRED_MESSAGE,
+                        "message": AUTH_REQUIRED_MESSAGE,
+                        "field_errors": {},
+                        "login_url": login_url,
+                    },
                     status=401,
                 )
-            return redirect(f"{login_url}?next={request.path}")
+            return redirect_to_login(request.get_full_path(), login_url)
         return view_func(request, *args, **kwargs)
 
     return wrapper
@@ -164,6 +217,16 @@ def _store_cached_result(scope: str, user_id: int, payload: dict) -> str:
         _result_cache_key(scope, user_id, token), serialized, timeout=RESULT_CACHE_TTL_SECONDS
     )
     return token
+
+
+def _replace_session_result(
+    request: HttpRequest, scope: str, session_key: str, payload: dict
+) -> None:
+    """Cache a run's result as the session's current one and drop the previous result."""
+    old_token = request.session.get(session_key)
+    token = _store_cached_result(scope, request.user.id, payload)
+    _delete_cached_result(scope, request.user.id, old_token)
+    request.session[session_key] = token
 
 
 def _load_cached_result(scope: str, user_id: int, token: str | None) -> dict | None:
@@ -264,6 +327,12 @@ def _coerce_input_validation_error(error: Exception) -> InputValidationError | N
 def _format_input_error_message(error: InputValidationError) -> str:
     """Return safe, user-facing message without leaking internal details."""
     code = str(error)
+    if code == "no_model":
+        return NO_MODEL_MESSAGE
+    if code == "invalid_path":
+        return "Invalid file path detected."
+    if code == "no_subcatchments":
+        return "The model has no subcatchments to compare."
     if code == "missing_file":
         return "Input file is missing. Please upload the model again."
     if code == "encoding":
@@ -275,6 +344,14 @@ def _format_input_error_message(error: InputValidationError) -> str:
     if code == "non_numeric":
         return "Input file contains non-numeric values where numbers are required."
     return "Input file error. Please validate your model and selected parameters."
+
+
+def _uploaded_model_path(request: HttpRequest) -> str:
+    """Return the path of the model loaded in this session; there is no default model."""
+    path = request.session.get("uploaded_file_path")
+    if not path:
+        raise InputValidationError("no_model")
+    return path
 
 
 def main_view(request: HttpRequest) -> HttpResponse:
@@ -1153,10 +1230,68 @@ def _get_form_initial(
     return initial
 
 
-@login_required
+def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
+    """Run the parameter sweep and store its results for the current session."""
+    option = form.cleaned_data["option"]
+    is_predefined = option in SimulationForm.PREDEFINED_METHODS
+
+    uploaded_file_path = _uploaded_model_path(request)
+
+    params = SimulationMethodParams(
+        method_name=option,
+        start=form.cleaned_data.get("start") if not is_predefined else None,
+        stop=form.cleaned_data.get("stop") if not is_predefined else None,
+        step=form.cleaned_data.get("step") if not is_predefined else None,
+        catchment_name=form.cleaned_data["catchment_name"],
+    )
+    with FeaturesSimulation(
+        subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
+    ) as model:
+        feature_name = get_feature_name(params.method_name)
+
+        method = getattr(model, params.method_name)
+        if is_predefined:
+            df = method()
+        else:
+            df = method(start=params.start, stop=params.stop, step=params.step)
+        other_cols = [c for c in df.columns if c != feature_name]
+        df = df[[feature_name] + other_cols]
+
+    flow_units = _read_flow_units(uploaded_file_path)
+    x_label, y_labels = _build_simulation_axis_labels(
+        feature_name=feature_name,
+        y_columns=other_cols,
+        flow_units=flow_units,
+    )
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
+    chart_config = {
+        "data": json.loads(df.to_json(orient="records")),
+        "x": feature_name,
+        "y": other_cols,
+        "title": f"Dependence of runoff on subcatchment {feature_name}.",
+        "xLabel": x_label,
+        "yLabels": y_labels,
+    }
+    payload = {
+        "chart_config": chart_config,
+        "results_columns": df.columns.tolist(),
+        "results_data": df.values.tolist(),
+        "feature_name": feature_name,
+        "output_file_name": output_file_name,
+    }
+    _replace_session_result(request, "sim", SIM_RESULT_TOKEN_SESSION_KEY, payload)
+    _save_form_state(request, SIM_FORM_STATE_SESSION_KEY, form.cleaned_data, SIM_FORM_STATE_FIELDS)
+
+
+@ajax_login_required
 def simulation_view(request: HttpRequest) -> HttpResponse:
     """
     Render the simulation view.
+
+    A regular POST redirects back to the page (PRG). A POST sent with
+    ``X-Requested-With: XMLHttpRequest`` returns the results fragment on success
+    and a JSON error (``{"message", "field_errors"}``) otherwise.
 
     Parameters
     ----------
@@ -1168,92 +1303,8 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     HttpResponse
         The HTTP response with the rendered simulation template.
     """
-    session_data = {}
-
-    if request.method == "POST":
-        catchment_choices = _get_catchment_choices(request)
-        form = SimulationForm(request.POST, catchment_choices=catchment_choices)
-        if form.is_valid():
-            option = form.cleaned_data["option"]
-            is_predefined = option in SimulationForm.PREDEFINED_METHODS
-
-            uploaded_file_path = request.session.get(
-                "uploaded_file_path",
-                os.path.abspath("catchment_simulation/example.inp"),
-            )
-
-            try:
-                params = SimulationMethodParams(
-                    method_name=option,
-                    start=form.cleaned_data.get("start") if not is_predefined else None,
-                    stop=form.cleaned_data.get("stop") if not is_predefined else None,
-                    step=form.cleaned_data.get("step") if not is_predefined else None,
-                    catchment_name=form.cleaned_data["catchment_name"],
-                )
-                with FeaturesSimulation(
-                    subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
-                ) as model:
-                    feature_name = get_feature_name(params.method_name)
-
-                    method = getattr(model, params.method_name)
-                    if is_predefined:
-                        df = method()
-                    else:
-                        df = method(start=params.start, stop=params.stop, step=params.step)
-                    other_cols = [c for c in df.columns if c != feature_name]
-                    df = df[[feature_name] + other_cols]
-
-                flow_units = _read_flow_units(uploaded_file_path)
-                x_label, y_labels = _build_simulation_axis_labels(
-                    feature_name=feature_name,
-                    y_columns=other_cols,
-                    flow_units=flow_units,
-                )
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
-                chart_config = {
-                    "data": json.loads(df.to_json(orient="records")),
-                    "x": feature_name,
-                    "y": other_cols,
-                    "title": f"Dependence of runoff on subcatchment {feature_name}.",
-                    "xLabel": x_label,
-                    "yLabels": y_labels,
-                }
-                payload = {
-                    "chart_config": chart_config,
-                    "results_columns": df.columns.tolist(),
-                    "results_data": df.values.tolist(),
-                    "feature_name": feature_name,
-                    "output_file_name": output_file_name,
-                }
-                old_token = request.session.get(SIM_RESULT_TOKEN_SESSION_KEY)
-                token = _store_cached_result("sim", request.user.id, payload)
-                _delete_cached_result("sim", request.user.id, old_token)
-                request.session[SIM_RESULT_TOKEN_SESSION_KEY] = token
-                _save_form_state(
-                    request, SIM_FORM_STATE_SESSION_KEY, form.cleaned_data, SIM_FORM_STATE_FIELDS
-                )
-                return redirect("main:simulation")
-
-            except ResultPayloadTooLargeError:
-                messages.error(
-                    request,
-                    "Result set is too large to keep for download. Narrow the simulation range.",
-                )
-            except Exception as error:
-                input_error = _coerce_input_validation_error(error)
-                if input_error:
-                    logger.warning("Simulation input validation failed", exc_info=True)
-                    messages.error(request, _format_input_error_message(input_error))
-                    return render(
-                        request,
-                        "main/simulation.html",
-                        {"form": form, **get_session_variables(request)},
-                    )
-                logger.exception("Simulation failed")
-                messages.error(request, "An error occurred while running the simulation.")
-    else:
-        catchment_choices = _get_catchment_choices(request)
+    catchment_choices = _get_catchment_choices(request)
+    if request.method != "POST":
         initial = _get_form_initial(
             request,
             SIM_FORM_STATE_SESSION_KEY,
@@ -1262,13 +1313,39 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             SIM_FORM_STATE_FIELDS,
         )
         form = SimulationForm(catchment_choices=catchment_choices, initial=initial)
-        session_data = get_session_variables(request)
+        return render(
+            request, SIMULATION_TEMPLATE, {"form": form, **get_session_variables(request)}
+        )
 
-    return render(
-        request,
-        "main/simulation.html",
-        {"form": form, **session_data},
-    )
+    form = SimulationForm(request.POST, catchment_choices=catchment_choices)
+    if not form.is_valid():
+        if _is_ajax(request):
+            return _form_invalid_json(form)
+        return render(
+            request, SIMULATION_TEMPLATE, {"form": form, **get_session_variables(request)}
+        )
+
+    try:
+        _run_simulation(request, form)
+    except Exception as error:
+        message, status = _classify_run_error(
+            error,
+            "Simulation",
+            "Result set is too large to keep for download. Narrow the simulation range.",
+            "An error occurred while running the simulation.",
+        )
+        # A failed run leaves the previous result in place, so the page keeps showing it.
+        return _run_failed(
+            request,
+            message,
+            status,
+            SIMULATION_TEMPLATE,
+            {"form": form, **get_session_variables(request)},
+        )
+
+    if _is_ajax(request):
+        return render(request, SIMULATION_RESULTS_TEMPLATE, get_session_variables(request))
+    return redirect("main:simulation")
 
 
 @login_required

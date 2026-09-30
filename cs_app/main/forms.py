@@ -15,6 +15,9 @@ from django import forms
 
 from .models import UserProfile
 
+# Same wording as the live range hint on the simulation and timeseries pages.
+STOP_BEFORE_START_MESSAGE = "Stop must be greater than or equal to start."
+
 
 class ContactForm(forms.Form):
     """
@@ -110,8 +113,13 @@ class SimulationForm(forms.Form):
 
     MAX_SWEEP_STEPS = 100
 
-    option = forms.ChoiceField(choices=OPTIONS, widget=forms.Select(attrs={"class": "form-select"}))
+    option = forms.ChoiceField(
+        label="Parameter to vary",
+        choices=OPTIONS,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
     start = forms.IntegerField(
+        label="Start",
         min_value=0,
         max_value=10000,
         initial=1,
@@ -119,6 +127,7 @@ class SimulationForm(forms.Form):
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
     stop = forms.IntegerField(
+        label="Stop",
         min_value=0,
         max_value=10000,
         initial=10,
@@ -126,6 +135,7 @@ class SimulationForm(forms.Form):
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
     step = forms.IntegerField(
+        label="Step",
         min_value=1,
         max_value=10000,
         initial=1,
@@ -133,40 +143,44 @@ class SimulationForm(forms.Form):
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
     catchment_name = forms.CharField(
+        label="Subcatchment",
         widget=forms.Select(
             choices=[("", "--- Upload a file first ---")],
             attrs={"class": "form-select"},
         ),
     )
 
+    RANGE_FIELDS = ("start", "stop", "step")
+
     def __init__(self, *args, catchment_choices=None, **kwargs):
         super().__init__(*args, **kwargs)
         if catchment_choices is not None:
             self.fields["catchment_name"].widget.choices = catchment_choices
-        self.helper = FormHelper()
-        self.helper.form_method = "post"
-        self.helper.form_action = "simulation_view"
-        self.helper.add_input(Submit("submit", "Run Simulation"))
 
     def clean(self):
         cleaned_data = super().clean()
-        option = cleaned_data.get("option")
-        if option not in self.PREDEFINED_METHODS:
-            for field in ("start", "stop", "step"):
-                if cleaned_data.get(field) is None:
-                    self.add_error(field, "This field is required for the selected method.")
-            start = cleaned_data.get("start")
-            stop = cleaned_data.get("stop")
-            step = cleaned_data.get("step")
-            if start is not None and stop is not None and start > stop:
-                self.add_error("stop", "Stop must be >= start.")
-            if start is not None and stop is not None and step and step > 0:
-                if (stop - start) / step >= self.MAX_SWEEP_STEPS:
-                    self.add_error(
-                        "step",
-                        f"Too many steps (max {self.MAX_SWEEP_STEPS}). "
-                        "Increase step size or reduce range.",
-                    )
+        if cleaned_data.get("option") in self.PREDEFINED_METHODS:
+            # Literature-value methods take no range, so values the user left in the
+            # range fields (even invalid ones) must not block the run.
+            for field in self.RANGE_FIELDS:
+                self.errors.pop(field, None)
+            return cleaned_data
+
+        for field in self.RANGE_FIELDS:
+            if cleaned_data.get(field) is None and field not in self.errors:
+                self.add_error(field, "This field is required for the selected method.")
+        start = cleaned_data.get("start")
+        stop = cleaned_data.get("stop")
+        step = cleaned_data.get("step")
+        if start is not None and stop is not None and start > stop:
+            self.add_error("stop", STOP_BEFORE_START_MESSAGE)
+        if start is not None and stop is not None and step and step > 0:
+            if (stop - start) / step >= self.MAX_SWEEP_STEPS:
+                self.add_error(
+                    "step",
+                    f"Too many steps (max {self.MAX_SWEEP_STEPS}). "
+                    "Increase step size or reduce range.",
+                )
         return cleaned_data
 
 

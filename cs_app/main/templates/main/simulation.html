@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
-{% load static %}
+{% load static crispy_forms_tags %}
 
-{% block title %}Catchment Simulations{% endblock %}
+{% block title %}Parameter sweep · Catchment Simulation{% endblock %}
 
 {% block head_scripts %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
@@ -12,96 +12,80 @@
 
 {% block style %}
 <link rel="stylesheet" href="{% static 'main/css/upload_zone.css' %}">
+<link rel="stylesheet" href="{% static 'main/css/simulation.css' %}">
 {% endblock %}
 
 {% block content %}
+<header class="cs-page-header">
+    <p class="cs-eyebrow">Simulation</p>
+    <h1 class="cs-page-header__title">Parameter sweep</h1>
+    <p class="cs-page-header__lead">See how runoff responds when you vary one subcatchment parameter — SWMM runs once for every value you choose.</p>
+</header>
 
-{% include 'main/_upload_zone.html' %}
+<div class="cs-workbench">
+    <div class="cs-panel">
+        <section class="cs-step" aria-labelledby="simulation-step-model">
+            <div class="cs-step__header">
+                <span class="cs-step__num" aria-hidden="true">1</span>
+                <h2 class="cs-step__title" id="simulation-step-model"><span class="visually-hidden">Step 1: </span>Model</h2>
+            </div>
+            {% include 'main/_upload_zone.html' with compact=True %}
+            <p class="cs-hint cs-hint--note mt-3 mb-0" id="simulation-model-hint"{% if form.catchment_name.field.widget.choices|length > 1 %} hidden{% endif %}>
+                No model loaded yet. Add one to list its subcatchments in step 2.
+            </p>
+        </section>
 
-{% load crispy_forms_tags %}
+        <section class="cs-step" aria-labelledby="simulation-step-parameters">
+            <div class="cs-step__header">
+                <span class="cs-step__num" aria-hidden="true">2</span>
+                <h2 class="cs-step__title" id="simulation-step-parameters"><span class="visually-hidden">Step 2: </span>Parameters</h2>
+            </div>
+            {# The header sits outside the form so async error summaries (prepended to the form) appear below it. #}
+            <form id="simulation-form" method="post" action="{% url 'main:simulation' %}"
+                  data-max-steps="{{ form.MAX_SWEEP_STEPS }}"
+                  data-predefined-methods="{{ form.PREDEFINED_METHODS|join:' ' }}">
+                {% csrf_token %}
+                {% if form.non_field_errors %}
+                <div class="alert alert-danger" role="alert">{{ form.non_field_errors|join:" " }}</div>
+                {% endif %}
+                {{ form.catchment_name|as_crispy_field }}
+                {{ form.option|as_crispy_field }}
 
-<form method="post">
+                <fieldset class="sim-range" id="simulation-range">
+                    <legend class="visually-hidden">Sweep range</legend>
+                    <div class="sim-range__fields">
+                        {{ form.start|as_crispy_field }}
+                        {{ form.stop|as_crispy_field }}
+                        {{ form.step|as_crispy_field }}
+                    </div>
+                    {# Filled by simulation.js: run count and the server's step limit. #}
+                    <p class="cs-hint cs-hint--count mt-2 mb-0" id="simulation-range-hint" aria-live="polite" aria-atomic="true" hidden></p>
+                </fieldset>
+                <p class="cs-hint" id="simulation-literature-note" hidden>
+                    Uses literature values — no range needed. SWMM runs once for each tabulated value.
+                </p>
+
+                <button type="submit" class="btn btn-primary w-100" id="run-simulation-button"
+                        data-authenticated="{{ request.user.is_authenticated }}">Run Simulation</button>
+
+                <div class="cs-progress" id="simulation-loading-state" hidden>
+                    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                    <span class="cs-progress__elapsed" data-cs-elapsed aria-hidden="true"></span>
+                    <span role="status">Running SWMM for each value… this can take a while for long ranges.</span>
+                </div>
+            </form>
+        </section>
+    </div>
+
+    <section class="cs-canvas" id="simulation-canvas" aria-label="Simulation results">
+        {% include 'main/partials/_simulation_results.html' %}
+    </section>
+</div>
+
+{# Target of the results' download button: outside the run form, so downloads never start a run. #}
+<form id="simulation-download-form" method="post" action="{% url 'main:download_simulation_results' %}">
     {% csrf_token %}
-        <div class="container">
-            <div class="row d-flex justify-content-center">
-                <div class="col-md-2">
-                    {{ form.option|as_crispy_field }}
-                </div>
-                <div class="col-md-2">
-                    {{ form.start|as_crispy_field }}
-                </div>
-                <div class="col-md-2">
-                    {{ form.stop|as_crispy_field }}
-                </div>
-                <div class="col-md-2">
-                    {{ form.step|as_crispy_field }}
-                </div>
-                <div class="col-md-2">
-                    {{ form.catchment_name|as_crispy_field }}
-                </div>
-            </div>
-        </div>
-        <div class="row mt-3">
-            <div class="col-md-12 d-flex justify-content-center">
-                <button type="submit" class="btn btn-primary" id="run-simulation-button" data-authenticated="{{ request.user.is_authenticated }}">Run Simulation</button>
-            </div>
-        </div>
-        <div id="simulation-loading-state" class="row mt-2 d-none" aria-live="polite">
-            <div class="col-md-12 d-flex justify-content-center align-items-center gap-2 text-muted">
-                <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
-                <span>Analyzing catchment with neural network...</span>
-            </div>
-        </div>
-
-
-        {% if show_download_button %}
-        <div id="simulation-chart"><p class="text-muted text-center">Loading chart...</p></div>
-        {{ chart_config|json_script:"chart-config" }}
-
-        {% if output_file_name %}
-        <div class="row mt-3">
-            <div class="col-md-12 d-flex justify-content-center">
-                <input type="hidden" name="token" value="{{ download_token }}">
-                <button
-                    type="submit"
-                    class="btn btn-success"
-                    formaction="{% url 'main:download_simulation_results' %}"
-                    formmethod="post"
-                    formnovalidate
-                >
-                    Download Results
-                </button>
-            </div>
-        </div>
-        {% endif %}
-
-        <div class="row mt-3">
-            <div class="col-md-12">
-                <table class="table table-bordered">
-                    <thead>
-                        <tr>
-                            <th class="text-center">Index</th>
-                            {% for col in results_columns %}
-                            <th class="text-center">{{ col }}</th>
-                            {% endfor %}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in results_data %}
-                            <tr>
-                                <td class="text-center">{{ forloop.counter }}</td>
-                                {% for val in row %}
-                                <td class="text-center">{{ val|floatformat:2 }}</td>
-                                {% endfor %}
-                            </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    {% endif %}
 </form>
-
 {% endblock %}
 
 {% block additional_scripts %}

@@ -1857,12 +1857,17 @@ def test_safe_download_filename_handles_empty_extension():
 
 @pytest.mark.django_db
 def test_simulation_template_contains_loading_state(client, user):
-    """Simulation page should include loading state container for submit feedback."""
+    """Simulation page includes a hidden loading state with an elapsed-time counter."""
     client.force_login(user)
     response = client.get(reverse("main:simulation"))
 
     assert response.status_code == 200
-    assert b'id="simulation-loading-state"' in response.content
+    content = response.content.decode()
+    loading = re.search(r'<div[^>]*id="simulation-loading-state"[^>]*>(.*?)</div>', content, re.S)
+    assert loading is not None
+    assert " hidden" in loading.group(0).split(">", 1)[0]
+    assert "data-cs-elapsed" in loading.group(1)
+    assert "neural network" not in content.lower()
 
 
 @pytest.mark.django_db
@@ -2160,6 +2165,24 @@ def test_simulation_form_predefined_method_valid():
         },
         catchment_choices=[("S1", "S1")],
     )
+    assert form.is_valid(), f"Form errors: {form.errors}"
+
+
+def test_simulation_form_predefined_method_ignores_invalid_range_values():
+    """Values left in the (unused) range fields must not block a literature-value run."""
+    from main.forms import SimulationForm
+
+    form = SimulationForm(
+        data={
+            "option": "simulate_n_imperv",
+            "start": "-5",
+            "stop": "1.5",
+            "step": "0",
+            "catchment_name": "S1",
+        },
+        catchment_choices=[("S1", "S1")],
+    )
+
     assert form.is_valid(), f"Form errors: {form.errors}"
 
 

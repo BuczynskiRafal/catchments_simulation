@@ -1,0 +1,89 @@
+{% comment %}
+Results fragment of the simulation page. Rendered inside #simulation-canvas on a full
+page load and returned alone to async runs (the canvas receives it as innerHTML), so
+nothing may precede #simulation-results-heading: the client focuses the first heading.
+{% endcomment %}
+{% load l10n %}
+<div id="simulation-results">
+    {% if show_download_button %}
+    <div class="sim-results cs-reveal" data-cs-results>
+        <div class="sim-results__header">
+            <h2 id="simulation-results-heading" class="sim-results__title" tabindex="-1">Simulation results</h2>
+            <p class="sim-results__meta">
+                {{ results_data|length }} run{{ results_data|length|pluralize }} · {{ chart_config.xLabel }}
+            </p>
+        </div>
+
+        {# Key figures, filled by simulation.js from #chart-config. #}
+        <dl class="cs-metrics sim-metrics" id="simulation-metrics" hidden></dl>
+
+        <section class="cs-chart-card" aria-labelledby="simulation-chart-title">
+            <div class="cs-chart-card__toolbar">
+                <h3 class="cs-chart-card__title" id="simulation-chart-title">Response to {{ chart_config.xLabel }}</h3>
+                {# Script-only actions stay hidden until simulation.js can perform them. #}
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-sim-action="download-png" hidden
+                        data-filename="{{ output_file_name|default:'simulation'|cut:'.xlsx' }}">Download PNG</button>
+            </div>
+            <div class="cs-chart-card__body">
+                <div id="simulation-chart" class="sim-chart">
+                    <p class="sim-chart__fallback">The chart needs JavaScript. The table below lists the same values.</p>
+                </div>
+            </div>
+        </section>
+        {{ chart_config|json_script:"chart-config" }}
+
+        {# Not a <section>: the scrollable wrapper below is the labelled region. #}
+        <div class="sim-table">
+            <h3 class="sim-table__title" id="simulation-table-title">Results table</h3>
+            <div class="cs-table-wrap" tabindex="0" role="region" aria-labelledby="simulation-table-title">
+                <table class="table cs-table" id="simulation-table">
+                    <thead>
+                        <tr>
+                            <th scope="col" class="cs-num">{{ chart_config.xLabel }}</th>
+                            {% for label in chart_config.yLabels.values %}
+                            <th scope="col" class="cs-num">{{ label }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in results_data %}
+                        <tr>
+                            {% for value in row %}
+                            {% if forloop.first %}
+                            <th scope="row" class="cs-num" data-sort-value="{{ value|unlocalize }}">{{ value|floatformat:"-3" }}</th>
+                            {% else %}
+                            <td class="cs-num" data-sort-value="{{ value|unlocalize }}">{{ value|floatformat:4 }}</td>
+                            {% endif %}
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="cs-actions">
+            {% if output_file_name %}
+            {# Submits #simulation-download-form (on the page), never the async run form. #}
+            <input type="hidden" name="token" value="{{ download_token }}" form="simulation-download-form">
+            <button type="submit" class="btn btn-primary" id="download-simulation-results-button"
+                    form="simulation-download-form">Download Results (.xlsx)</button>
+            {% endif %}
+            <button type="button" class="btn btn-outline-primary" data-sim-action="copy-table" hidden>Copy table</button>
+        </div>
+    </div>
+    {% else %}
+    <div class="cs-empty-state sim-empty">
+        <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m6 16 4-5 3 3 6-8"/><circle cx="19" cy="6" r="1.2" fill="currentColor"/></svg>
+        <h2 class="cs-empty-state__title">No results yet</h2>
+        <p class="cs-empty-state__text">
+            Load a model, pick a subcatchment and a parameter, then select <strong>Run Simulation</strong>.
+        </p>
+        <ul class="sim-empty__list">
+            <li>Key figures: runoff at both ends of the range and how much it changes</li>
+            <li>A chart for every output, from total runoff to evaporation</li>
+            <li>A sortable table you can copy or download as Excel</li>
+        </ul>
+    </div>
+    {% endif %}
+</div>
