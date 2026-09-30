@@ -7,6 +7,7 @@ Tests that run actual SWMM simulations are marked ``@pytest.mark.slow``.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, Route, expect
@@ -17,6 +18,7 @@ from .pages.simulation_page import SimulationPage
 pytestmark = pytest.mark.e2e
 
 SIMULATION_ROUTE = re.compile(r".*/simulation$")
+SAMPLE_INP = Path(__file__).resolve().parent.parent / "data" / "example.inp"
 
 
 def _open(page: Page, live_server) -> SimulationPage:
@@ -161,7 +163,7 @@ class TestSimulationModelChange:
 
     @pytest.mark.slow
     def test_new_model_marks_results_stale_and_drops_them(
-        self, auth_page: Page, live_server
+        self, auth_page: Page, live_server, tmp_path
     ) -> None:
         sp = _open(auth_page, live_server)
         sp.load_sample_and_select_catchment()
@@ -176,7 +178,11 @@ class TestSimulationModelChange:
         expect(sp.results_heading).to_be_visible()
         expect(stale).to_have_count(0)
 
-        auth_page.get_by_role("button", name="Try sample data").click()
+        # A different model (the sample with one more line); the same content again would
+        # keep the results (see test_result_persistence.py).
+        other_model = tmp_path / "other_model.inp"
+        other_model.write_bytes(SAMPLE_INP.read_bytes() + b"\n;; edited copy\n")
+        sp.upload.upload_file(str(other_model))
         expect(stale).to_contain_text("previously loaded model")
 
         sp.navigate_to()

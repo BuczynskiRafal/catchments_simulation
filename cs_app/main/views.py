@@ -4,6 +4,7 @@ the main view, about page, contact form, and user profiles.
 """
 
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -68,9 +69,12 @@ RESULT_SESSION_KEYS = (
     ("ts", TS_RESULT_TOKEN_SESSION_KEY),
     ("calc", CALC_RESULT_TOKEN_SESSION_KEY),
 )
-RESULT_CACHE_TTL_SECONDS = 30 * 60
+# Long enough to leave a tool and come back to its results later the same day.
+RESULT_CACHE_TTL_SECONDS = 12 * 60 * 60
 MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 UPLOAD_SUBDIR = "uploaded_files"
+# SHA-256 of the session model's content: loading the same model again keeps its results.
+MODEL_DIGEST_SESSION_KEY = "uploaded_file_sha256"
 SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
 US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
 SIMULATION_TEMPLATE = "main/simulation.html"
@@ -671,12 +675,40 @@ def _forget_model_state(request: HttpRequest) -> None:
     for key in (
         SIM_FORM_STATE_SESSION_KEY,
         TS_FORM_STATE_SESSION_KEY,
+        MODEL_DIGEST_SESSION_KEY,
         "_subcatchment_ids",
         "_subcatchment_ids_file",
     ):
         request.session.pop(key, None)
     for scope, session_key in RESULT_SESSION_KEYS:
         _delete_cached_result(scope, request.user.id, request.session.pop(session_key, None))
+
+
+def _file_sha256(path: str) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as model_file:
+            for chunk in iter(lambda: model_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _adopt_model(request: HttpRequest, file_path: str) -> bool:
+    """
+    Make ``file_path`` the session's model. Its results and form values are kept only
+    when the content is identical to the model it replaces (e.g. the sample data loaded
+    again from another tool's page); returns whether that was the case.
+    """
+    digest = _file_sha256(file_path)
+    unchanged = digest is not None and request.session.get(MODEL_DIGEST_SESSION_KEY) == digest
+    request.session["uploaded_file_path"] = file_path
+    if not unchanged:
+        _forget_model_state(request)
+        if digest is not None:
+            request.session[MODEL_DIGEST_SESSION_KEY] = digest
+    return unchanged
 
 
 def _upload_response(request: HttpRequest, payload: dict, status: int = 200) -> HttpResponse:
@@ -800,11 +832,10 @@ def _store_upload(request: HttpRequest) -> HttpResponse:
         for chunk in uploaded_file.chunks():
             destination.write(chunk)
 
-    request.session["uploaded_file_path"] = file_path
-    _forget_model_state(request)
+    unchanged = _adopt_model(request, file_path)
     logger.info(f"File uploaded successfully: {file_path}")
 
-    return _upload_response(request, {"message": "File was sent."})
+    return _upload_response(request, {"message": "File was sent.", "unchanged": unchanged})
 
 
 @require_POST
@@ -839,8 +870,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
     if old_path and old_path != file_path:
         _safe_remove_file(old_path)
 
-    request.session["uploaded_file_path"] = file_path
-    _forget_model_state(request)
+    unchanged = _adopt_model(request, file_path)
     try:
         sample_size = os.path.getsize(file_path)
     except OSError:
@@ -851,6 +881,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
             "message": "Sample data loaded.",
             "filename": os.path.basename(file_path),
             "size": sample_size,
+            "unchanged": unchanged,
         }
     )
 

@@ -94,6 +94,18 @@ DATABASES = {
     "default": dj_database_url.parse(db_url, conn_max_age=600),
 }
 
+# Analysis results are kept in the cache between page visits. The file backend survives
+# a server restart (runserver's autoreload, a deploy) and is shared by every worker
+# process on the host; the default in-memory cache is neither. A deployment running
+# several hosts needs a shared backend instead (Redis, database).
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": os.environ.get("DJANGO_CACHE_DIR", os.path.join(BASE_DIR, ".cache", "django")),
+        "OPTIONS": {"MAX_ENTRIES": 1000},
+    }
+}
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",

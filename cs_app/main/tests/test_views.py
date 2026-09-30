@@ -20,6 +20,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from main.views import (
+    MODEL_DIGEST_SESSION_KEY,
     RESULT_SESSION_KEYS,
     SIM_RESULT_TOKEN_SESSION_KEY,
     TS_RESULT_TOKEN_SESSION_KEY,
@@ -2607,6 +2608,92 @@ def test_changing_the_model_drops_every_tools_results(client, user, url_name):
         path = client.session.get("uploaded_file_path")
         if path and os.path.exists(path):
             os.remove(path)
+
+
+def _seed_results(client, user) -> dict:
+    session = client.session
+    tokens = {}
+    for scope, session_key in RESULT_SESSION_KEYS:
+        tokens[scope] = uuid.uuid4().hex
+        session[session_key] = tokens[scope]
+        cache.set(_result_cache_key(scope, user.id, tokens[scope]), json.dumps({"value": 1}))
+    session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S1"}
+    session.save()
+    return tokens
+
+
+def _remove_session_model(client) -> None:
+    path = client.session.get("uploaded_file_path")
+    if path and os.path.exists(path):
+        os.remove(path)
+
+
+@pytest.mark.django_db
+def test_loading_the_same_sample_again_keeps_every_tools_results(client, user):
+    """The sample loaded again from another tool's page is the same model: keep its results."""
+    client.force_login(user)
+    try:
+        first = client.post(reverse("main:upload_sample"), HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+        assert first.json()["unchanged"] is False
+        tokens = _seed_results(client, user)
+
+        again = client.post(reverse("main:upload_sample"), HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+
+        assert again.status_code == 200
+        assert again.json()["unchanged"] is True
+        for scope, session_key in RESULT_SESSION_KEYS:
+            assert client.session[session_key] == tokens[scope]
+            assert cache.get(_result_cache_key(scope, user.id, tokens[scope])) is not None
+        assert client.session["sim_form_state"]["catchment_name"] == "S1"
+    finally:
+        _remove_session_model(client)
+
+
+@pytest.mark.django_db
+def test_uploading_identical_content_keeps_results_and_different_content_drops_them(client, user):
+    client.force_login(user)
+    content = b"[TITLE]\nSame model\n\n[OPTIONS]\nFLOW_UNITS CMS\n"
+
+    def upload(name: str, body: bytes):
+        return client.post(
+            reverse("main:upload"),
+            {"file": SimpleUploadedFile(name, body, content_type="text/plain")},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+    try:
+        assert upload("model.inp", content).json()["unchanged"] is False
+        tokens = _seed_results(client, user)
+
+        # Same content under another name: the results were computed from this model.
+        response = upload("model_copy.inp", content)
+        assert response.json()["unchanged"] is True
+        assert client.session[RESULT_SESSION_KEYS[0][1]] == tokens["sim"]
+
+        response = upload("model_copy.inp", content + b"\n[JUNCTIONS]\n")
+        assert response.json()["unchanged"] is False
+        for scope, session_key in RESULT_SESSION_KEYS:
+            assert session_key not in client.session
+            assert cache.get(_result_cache_key(scope, user.id, tokens[scope])) is None
+    finally:
+        _remove_session_model(client)
+
+
+@pytest.mark.django_db
+def test_clearing_the_model_forgets_its_digest(client, user):
+    """After removing the model, loading it again is a new model (its results are gone)."""
+    client.force_login(user)
+    try:
+        client.post(reverse("main:upload_sample"), HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+        client.post(reverse("main:upload_clear"), HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+        assert MODEL_DIGEST_SESSION_KEY not in client.session
+
+        response = client.post(
+            reverse("main:upload_sample"), HTTP_X_REQUESTED_WITH="XMLHttpRequest"
+        )
+        assert response.json()["unchanged"] is False
+    finally:
+        _remove_session_model(client)
 
 
 # ── upload_clear tests (#4) ──────────────────────────────────────────────

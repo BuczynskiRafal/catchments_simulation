@@ -80,6 +80,13 @@ DATABASES = {
     }
 }
 
+# Per-process and empty at start, so tests never see each other's (or a dev server's) results.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }
+}
+
 
 AUTH_PASSWORD_VALIDATORS = [
     {

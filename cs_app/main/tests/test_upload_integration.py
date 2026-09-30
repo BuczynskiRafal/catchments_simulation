@@ -51,7 +51,7 @@ def test_upload_with_csrf_header_stores_the_file(csrf_client, upload_path):
     response = _post_upload(csrf_client, HTTP_X_CSRFTOKEN=token)
 
     assert response.status_code == 200
-    assert response.json() == {"message": "File was sent."}
+    assert response.json() == {"message": "File was sent.", "unchanged": False}
     with open(upload_path, "rb") as saved:
         assert saved.read() == INP_CONTENT
     assert csrf_client.session["uploaded_file_path"] == upload_path

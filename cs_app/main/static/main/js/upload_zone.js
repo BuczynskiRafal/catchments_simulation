@@ -7,7 +7,9 @@
  *   "cs:model-changed"  detail: {filename, size, subcatchments: [name, ...], restored}
  *                       fired once the subcatchment list of a newly loaded model
  *                       (upload, sample data or restored session) is known;
- *                       `restored` is true for the session's model shown on page load.
+ *                       `restored` is true when the session's model is unchanged: shown
+ *                       on page load, or the same content loaded again (the server
+ *                       answers `unchanged`), so results computed from it stay valid.
  *   "cs:model-cleared"  fired after the user removes the loaded model.
  */
 document.addEventListener("DOMContentLoaded", function () {
@@ -256,8 +258,8 @@ document.addEventListener("DOMContentLoaded", function () {
             "X-CSRFToken": csrfToken,
         },
         init: function () {
-            this.on("success", function (file) {
-                setModel(file.name, file.size, Boolean(file.restored));
+            this.on("success", function (file, response) {
+                setModel(file.name, file.size, Boolean(file.restored || (response && response.unchanged)));
             });
             this.on("removedfile", function () {
                 // Dismissing a preview removes the focused button; keep focus in the upload zone.
@@ -371,7 +373,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 })
                 .then(function (data) {
                     if (data) {
-                        showMockFile(data.filename || "example.inp", data.size, false);
+                        showMockFile(data.filename || "example.inp", data.size, data.unchanged === true);
                     }
                 })
                 .catch(function (error) {
