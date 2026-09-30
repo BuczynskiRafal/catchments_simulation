@@ -149,8 +149,13 @@ STATIC_URL = "/static/"
 
 # Production Security Settings (Fail-Closed)
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
-SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "True").lower() == "true"
-CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "True").lower() == "true"
+# Secure cookies unless DEBUG: the dev server speaks plain HTTP, and browsers
+# that drop Secure cookies there (Safari) would reject every POST with a CSRF 403.
+_SECURE_COOKIES_DEFAULT = "False" if DEBUG else "True"
+SESSION_COOKIE_SECURE = (
+    os.environ.get("SESSION_COOKIE_SECURE", _SECURE_COOKIES_DEFAULT).lower() == "true"
+)
+CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", _SECURE_COOKIES_DEFAULT).lower() == "true"
 
 SECURE_REFERRER_POLICY = "same-origin"
 
