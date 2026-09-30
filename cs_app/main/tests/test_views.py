@@ -3105,6 +3105,14 @@ def test_prism_is_loaded_only_on_home(client, user, url_name, requires_login):
 
 
 @pytest.mark.django_db
+def test_home_loads_prism_python(client):
+    html = client.get(reverse("main:main_view")).content.decode()
+
+    assert "prismjs@1.30.0/prism.min.js" in html
+    assert "prismjs@1.30.0/components/prism-python.min.js" in html
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("url_name", ["main:main_view", "main:about", "main:contact", "login"])
 def test_dropzone_is_not_loaded_on_pages_without_upload(client, url_name):
     html = client.get(reverse(url_name)).content.decode()

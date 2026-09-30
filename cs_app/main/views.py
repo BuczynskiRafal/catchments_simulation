@@ -167,48 +167,109 @@ def ajax_login_required(view_func):
     return wrapper
 
 
+# Home page example data: precomputed from data/example.inp by data/build_home_data.py.
+HOME_DATA_DIR = os.path.join(settings.BASE_DIR, "data")
+HOME_EXAMPLE_MODEL = os.path.join(HOME_DATA_DIR, "example.inp")
+HOME_HYDROGRAPH_FILE = "example_hydrograph.json"
+HOME_HYDROGRAPH_FIELDS = ("rainfall", "runoff")
+# Chart key -> (data file, x field, SWMM feature name used for the axis label).
+HOME_SWEEPS = {
+    "slope": ("df_slope.json", "slope", "PercSlope"),
+    "area": ("df_area.json", "area", "Area"),
+    "width": ("df_width.json", "width", "Width"),
+}
+
+
 def _is_finite_number(value: object) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool) and np.isfinite(value)
 
 
-def _load_chart_json(filename: str, x_key: str, y_key: str) -> list[dict]:
-    """Load and validate chart data JSON structure."""
-    data_dir = os.path.join(settings.BASE_DIR, "data")
-    path = os.path.join(data_dir, filename)
-    with open(path, encoding="utf-8") as file:
+def _read_data_records(filename: str) -> list[dict]:
+    """Read a non-empty JSON list of objects from the data directory."""
+    with open(os.path.join(HOME_DATA_DIR, filename), encoding="utf-8") as file:
         payload = json.load(file)
-
-    if not isinstance(payload, list):
-        raise ValueError(f"{filename} must contain a JSON list")
-
-    for idx, row in enumerate(payload):
-        if not isinstance(row, dict):
-            raise ValueError(f"{filename} row {idx} is not an object")
-        if x_key not in row or y_key not in row:
-            raise ValueError(f"{filename} row {idx} missing required keys")
-        if not isinstance(row[x_key], int | float) or not isinstance(row[y_key], int | float):
-            raise ValueError(f"{filename} row {idx} contains non-numeric values")
-
+    if not isinstance(payload, list) or not payload:
+        raise ValueError(f"{filename} must contain a non-empty JSON list")
+    if not all(isinstance(row, dict) for row in payload):
+        raise ValueError(f"{filename} must contain only JSON objects")
     return payload
 
 
-@lru_cache(maxsize=1)
-def _load_static_chart_data_cached() -> dict:
-    """Load static chart data once per process."""
-    try:
-        return {
-            "slope": _load_chart_json("df_slope.json", "slope", "runoff"),
-            "area": _load_chart_json("df_area.json", "area", "runoff"),
-            "width": _load_chart_json("df_width.json", "width", "runoff"),
+def _load_chart_json(filename: str, x_key: str, y_key: str) -> list[dict]:
+    """Load chart records, keeping only the two plotted keys, which must be finite numbers."""
+    records = []
+    for idx, row in enumerate(_read_data_records(filename)):
+        if not (_is_finite_number(row.get(x_key)) and _is_finite_number(row.get(y_key))):
+            raise ValueError(f"{filename} row {idx} needs numeric '{x_key}' and '{y_key}'")
+        records.append({x_key: row[x_key], y_key: row[y_key]})
+    return records
+
+
+def _load_hydrograph_json() -> list[dict]:
+    """Load the example timeseries, keeping the datetime and the plotted fields."""
+    records = []
+    for idx, row in enumerate(_read_data_records(HOME_HYDROGRAPH_FILE)):
+        values = [row.get(field) for field in HOME_HYDROGRAPH_FIELDS]
+        if not isinstance(row.get("datetime"), str) or not all(map(_is_finite_number, values)):
+            raise ValueError(f"{HOME_HYDROGRAPH_FILE} row {idx} is malformed")
+        plotted = dict(zip(HOME_HYDROGRAPH_FIELDS, values, strict=True))
+        records.append({"datetime": row["datetime"], **plotted})
+    return records
+
+
+def _hydrograph_summary(records: list[dict], volume_factor: float) -> dict:
+    """Headline numbers of the example event, computed like a timeseries run's metrics."""
+    frame = pd.DataFrame(records)
+    frame.index = pd.to_datetime(frame.pop("datetime"))
+    return {
+        "peak_rainfall": float(frame["rainfall"].max()),
+        **_hydrograph_metrics(frame, volume_factor),
+    }
+
+
+def _build_home_data() -> dict:
+    """Chart data (for main_view.js) and headline numbers (for the template)."""
+    flow_units = _read_flow_units(HOME_EXAMPLE_MODEL)
+    volume_factor, volume_unit = _runoff_volume_unit(flow_units)
+    hydrograph = _load_hydrograph_json()
+    time_label, flow_labels = _build_timeseries_axis_labels(
+        list(HOME_HYDROGRAPH_FIELDS), flow_units
+    )
+    sweeps = {}
+    for key, (filename, x_field, feature) in HOME_SWEEPS.items():
+        records = _load_chart_json(filename, x_field, "runoff")
+        x_label, y_labels = _build_simulation_axis_labels(feature, ["runoff"], flow_units)
+        sweeps[key] = {
+            "records": records,
+            "xField": x_field,
+            "xLabel": x_label,
+            "yLabel": y_labels["runoff"],
+            "xRange": [records[0][x_field], records[-1][x_field]],
+            "runoffRange": [records[0]["runoff"], records[-1]["runoff"]],
         }
+    return {
+        "chart_data": {
+            "hydrograph": {"records": hydrograph, "xLabel": time_label, "yLabels": flow_labels},
+            "sweeps": sweeps,
+        },
+        "hydrograph_summary": _hydrograph_summary(hydrograph, volume_factor),
+        "units": {**_unit_labels(flow_units), "volume": volume_unit},
+    }
+
+
+@lru_cache(maxsize=1)
+def _load_home_data_cached() -> dict | None:
+    """Load the home page example data once per process; None when it is unavailable."""
+    try:
+        return _build_home_data()
     except Exception:
-        logger.exception("Failed to load static chart data from JSON files")
-        return {"slope": [], "area": [], "width": []}
+        logger.exception("Failed to load the home page example data")
+        return None
 
 
-def _load_static_chart_data() -> dict:
+def _load_home_data() -> dict | None:
     """Return a defensive copy so cache data cannot be mutated by callers."""
-    return deepcopy(_load_static_chart_data_cached())
+    return deepcopy(_load_home_data_cached())
 
 
 def _result_cache_key(scope: str, user_id: int, token: str) -> str:
@@ -371,7 +432,10 @@ def _uploaded_model_path(request: HttpRequest) -> str:
 
 def main_view(request: HttpRequest) -> HttpResponse:
     """
-    Render the main view with interactive plots.
+    Render the home page: example hydrograph, tool overview and package docs.
+
+    ``home`` is None when the precomputed example data cannot be loaded; the
+    page then renders without the example charts.
 
     Parameters
     ----------
@@ -383,8 +447,7 @@ def main_view(request: HttpRequest) -> HttpResponse:
     HttpResponse
         The HTTP response with the rendered main view template.
     """
-    context = {"chart_data": _load_static_chart_data()}
-    return render(request, "main/main_view.html", context)
+    return render(request, "main/main_view.html", {"home": _load_home_data()})
 
 
 def about(request: HttpRequest) -> HttpResponse:
