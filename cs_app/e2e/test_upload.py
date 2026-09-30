@@ -11,6 +11,7 @@ import os
 import pytest
 from playwright.sync_api import Browser, Page, expect
 
+from .conftest import new_context_without_js, wait_for_styles
 from .pages.calculations_page import CalculationsPage
 from .pages.simulation_page import SimulationPage
 from .pages.timeseries_page import TimeseriesPage
@@ -39,10 +40,11 @@ class TestUploadZoneVisibility:
         assert cp.upload.is_visible()
 
     def test_sample_button_needs_javascript(self, browser: Browser, live_server) -> None:
-        context = browser.new_context(java_script_enabled=False)
+        context = new_context_without_js(browser)
         try:
             cp = CalculationsPage(context.new_page(), live_server.url)
             cp.navigate_to()
+            wait_for_styles(cp.page)
             expect(cp.upload.sample_button).to_be_hidden()
             expect(cp.page.locator("#upload-fallback-file")).to_be_visible()
         finally:

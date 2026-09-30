@@ -11,6 +11,7 @@ import re
 import pytest
 from playwright.sync_api import Browser, Page, expect
 
+from .conftest import new_context_without_js, wait_for_styles
 from .pages.timeseries_page import TimeseriesPage
 
 pytestmark = pytest.mark.e2e
@@ -321,11 +322,12 @@ class TestTimeseriesWithoutJavaScript:
     ) -> None:
         # Loading the model needs JS (the upload zone); the session then carries it over.
         _open(auth_page, live_server).load_sample_and_pick_catchment()
-        context = browser.new_context(java_script_enabled=False)
+        context = new_context_without_js(browser)
         context.add_cookies(auth_page.context.cookies())
         try:
             tp = TimeseriesPage(context.new_page(), live_server.url)
             tp.navigate_to()
+            wait_for_styles(tp.page)
             tp.set_catchment_name(tp.get_catchment_options()[-1])
 
             tp.run_analysis()
