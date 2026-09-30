@@ -107,6 +107,43 @@ class TestResponsiveHome:
         assert overflow <= 5, f"Horizontal overflow with menu open: {overflow}px"
 
 
+class TestNavLayout:
+    """On lg+ the links sit on the page's centre line and nothing in the bar wraps."""
+
+    # Two lines of the auth buttons (or of anything else) would make the bar taller.
+    MAX_HEADER_HEIGHT = 66
+
+    @pytest.mark.parametrize("width", [992, 1024, 1199, 1200, 1440, 1920])
+    @pytest.mark.parametrize("signed_in", [False, True], ids=["anonymous", "signed-in"])
+    def test_links_are_centred(
+        self, page: Page, live_server, request, width: int, signed_in: bool
+    ) -> None:
+        if signed_in:
+            page = request.getfixturevalue("auth_page")
+        page.set_viewport_size({"width": width, "height": 800})
+        page.goto(f"{live_server.url}/about")
+        page.evaluate("document.fonts.ready.then(() => true)")
+
+        box = page.evaluate(
+            """() => {
+                const rect = selector => document.querySelector(selector).getBoundingClientRect();
+                const links = rect(".cs-nav-links"), bar = rect(".cs-header .navbar > .container");
+                const tools = rect(".cs-nav-tools"), brand = rect(".cs-header .navbar-brand");
+                return {
+                    offset: (links.left + links.right) / 2 - (bar.left + bar.right) / 2,
+                    header: rect(".cs-header").height,
+                    gaps: [links.left - brand.right, tools.left - links.right],
+                };
+            }"""
+        )
+        # From xl the side columns have room to spare, so centring is exact; below it the
+        # tools column can be at its content width, which depends on font metrics.
+        tolerance = 2 if width >= 1200 else 8
+        assert abs(box["offset"]) <= tolerance, f"links are {box['offset']:.1f}px off centre"
+        assert box["header"] <= self.MAX_HEADER_HEIGHT
+        assert min(box["gaps"]) >= 8, f"nav items crowd each other: {box['gaps']}"
+
+
 class TestResponsiveSimulation:
     """Simulation page form layout at different viewports (requires auth)."""
 

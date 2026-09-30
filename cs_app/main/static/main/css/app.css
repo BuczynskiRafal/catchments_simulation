@@ -229,6 +229,42 @@ code, kbd, samp, pre {
     gap: 0.5rem;
 }
 
+.cs-nav-tools .btn {
+    white-space: nowrap;
+}
+
+/*
+ * Wide screens: brand | links | tools on a three-column grid whose side columns share
+ * the free space equally, so the links sit on the page's centre line whatever the width
+ * of the brand and of the tools (two auth buttons, or the account menu). The collapse
+ * wrapper steps out of the layout (display: contents) to make its two lists grid items.
+ */
+@media (min-width: 992px) {
+    .cs-header .navbar > .container {
+        display: grid;
+        grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+        align-items: center;
+        column-gap: 1rem;
+    }
+
+    .cs-header .navbar-expand-lg .navbar-collapse {
+        display: contents !important;
+    }
+
+    .cs-header .navbar-brand {
+        justify-self: start;
+        margin-right: 0;
+    }
+
+    .cs-nav-links {
+        justify-self: center;
+    }
+
+    .cs-nav-tools {
+        justify-self: end;
+    }
+}
+
 /* Between lg and xl the row is only just wide enough: the wordmark stacks on two lines. */
 @media (min-width: 992px) and (max-width: 1199.98px) {
     .cs-brand__wordmark {
