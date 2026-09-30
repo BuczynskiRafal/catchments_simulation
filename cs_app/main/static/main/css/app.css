@@ -1,0 +1,943 @@
+/*
+ * App shell and shared components. Tokens live in tokens.css.
+ *
+ * Shell
+ *   .cs-skip-link            "Skip to content" link (with .visually-hidden-focusable)
+ *   .cs-header / .cs-brand   sticky navbar; nav links mark the current page with aria-current="page"
+ *   .cs-theme-toggle         theme dropdown; items are [data-cs-theme-value] buttons with aria-pressed
+ *   .content-wrapper         <main id="main-content">; grows so the footer sits at the bottom
+ *   .cs-footer               site footer
+ *   .cs-toast                toast created by CS.toast(); level via .cs-toast--success|info|warning|danger
+ *
+ * Page scaffolding
+ *   .cs-page-header          page intro block: .cs-eyebrow (small caps label), .cs-page-header__title
+ *                            (h1/h2), .cs-page-header__lead (one-line purpose)
+ *   .cs-card                 surface card; .cs-card__title for its heading
+ *   .cs-workbench            two-column grid ≥ lg: .cs-panel (360px controls; sticky via .is-sticky from
+ *                            core/workbench.js while it fits the viewport) + .cs-canvas (results);
+ *                            stacks below lg
+ *   .cs-step                 numbered panel section: .cs-step__header > .cs-step__num + .cs-step__title,
+ *                            then content; consecutive steps are divided by a rule
+ *   .cs-hint                 muted note in a panel; --note adds a side rule, --count sets a live run count
+ *                            in mono; .is-warning turns it into an ochre warning
+ *   .cs-segmented            segmented control: .btn-check radios + .cs-segmented__option labels
+ *   .cs-progress             run progress row: spinner, .cs-progress__elapsed, [role=status] text
+ *
+ * Results
+ *   .cs-metrics              responsive grid of .cs-metric tiles
+ *   .cs-metric               tile: .cs-metric__label, .cs-metric__value (mono, tabular), .cs-metric__unit
+ *   [data-cs-results]        root of rendered results; dimmed while its async target is aria-busy
+ *   .cs-stale-notice         note above results kept after a failed re-run (added by CS.asyncForm)
+ *   .cs-empty-state          placeholder before the first run: .cs-empty-state__icon, __title, __text
+ *   .cs-chart-card           card for a chart: .cs-chart-card__toolbar (title + actions), .cs-chart-card__body
+ *   .cs-table-wrap           scroll container that keeps the .cs-table header sticky; shadows mark
+ *                            edges with more table to scroll to
+ *   .cs-table                data table (use with .table): sticky thead with wrapping body-font labels,
+ *                            .cs-num cells right-aligned (mono in the body); sortable headers hold a .cs-sort button, th[aria-sort] drives the indicator
+ *   .cs-actions              row of export/secondary actions under results
+ *   .cs-reveal               entrance animation for a freshly rendered results region; its .cs-metric
+ *                            tiles are staggered by 40ms
+ *
+ * Code
+ *   .cs-code                 wrapper for a code block with an optional .cs-code__copy button slot
+ *   .code-snippet            <pre> code block; Prism token colours for both themes live here
+ *                            (only prism.js is loaded, no Prism theme stylesheet)
+ *
+ * Utilities
+ *   .cs-mono                 IBM Plex Mono with tabular numerals (file names, parameter values)
+ */
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
+
+html {
+    scroll-padding-top: calc(var(--cs-header-h) + 1rem);
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    background-color: var(--cs-paper);
+    color: var(--cs-ink);
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3,
+.h1, .h2, .h3 {
+    font-family: var(--cs-font-display);
+    font-stretch: var(--cs-display-stretch);
+    font-weight: 650;
+    line-height: var(--cs-lh-display);
+    letter-spacing: -0.01em;
+}
+
+h1, .h1 { font-size: var(--cs-fs-h1); }
+h2, .h2 { font-size: var(--cs-fs-h2); }
+h3, .h3 { font-size: var(--cs-fs-h3); }
+
+h4, .h4 {
+    font-size: var(--cs-fs-h4);
+    font-weight: 600;
+}
+
+h5, .h5,
+h6, .h6 {
+    font-weight: 600;
+}
+
+small, .small {
+    font-size: var(--cs-fs-small);
+}
+
+a,
+.btn,
+.nav-link,
+.dropdown-item {
+    transition: color var(--cs-transition), background-color var(--cs-transition),
+        border-color var(--cs-transition);
+}
+
+code, kbd, samp, pre {
+    font-family: var(--cs-font-mono);
+}
+
+.cs-mono {
+    font-family: var(--cs-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* One focus ring everywhere (spec §2.3). Bootstrap replaces the outline with
+   component box-shadows in its own :focus rules, so those are listed explicitly. */
+:focus-visible,
+.btn:focus-visible,
+.btn-close:focus-visible,
+.nav-link:focus-visible,
+.navbar-toggler:focus-visible,
+.dropdown-item:focus-visible,
+.accordion-button:focus-visible,
+.page-link:focus-visible,
+.form-control:focus-visible,
+.form-select:focus-visible,
+.form-check-input:focus-visible,
+.form-range:focus-visible {
+    outline: 3px solid var(--cs-focus-ring);
+    outline-offset: 2px;
+    box-shadow: none;
+}
+
+.btn-close:focus,
+.navbar-toggler:focus,
+.accordion-button:focus {
+    box-shadow: none;
+}
+
+.cs-skip-link:focus {
+    position: fixed !important;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 1090;
+    padding: 0.5rem 1rem;
+    border-radius: var(--cs-radius-sm);
+    background-color: var(--cs-water);
+    color: var(--cs-on-accent);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Header                                                              */
+/* ------------------------------------------------------------------ */
+
+.cs-header {
+    background-color: var(--cs-surface);
+    border-bottom: 1px solid var(--cs-line);
+}
+
+.cs-header .navbar {
+    --bs-navbar-color: var(--cs-ink-muted);
+    --bs-navbar-hover-color: var(--cs-ink);
+    --bs-navbar-active-color: var(--cs-ink);
+    --bs-navbar-brand-color: var(--cs-ink);
+    --bs-navbar-brand-hover-color: var(--cs-ink);
+    --bs-navbar-toggler-border-color: var(--cs-line);
+    min-height: var(--cs-header-h);
+}
+
+.cs-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+}
+
+.cs-brand img {
+    width: auto;
+    height: 2.25rem;
+}
+
+.cs-brand__wordmark {
+    font-family: var(--cs-font-display);
+    font-stretch: 125%;
+    font-weight: 700;
+    font-size: 1.0625rem;
+    letter-spacing: -0.01em;
+}
+
+.cs-header .nav-link {
+    position: relative;
+    font-weight: 500;
+}
+
+.cs-header .nav-link[aria-current="page"] {
+    color: var(--cs-ink);
+}
+
+/* Accent underline on the current page; a left bar in the collapsed menu. */
+.cs-header .nav-link[aria-current="page"]::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    width: 2px;
+    border-radius: 2px;
+    background-color: var(--cs-water);
+}
+
+.cs-header .navbar-nav .nav-link[aria-current="page"] {
+    padding-left: 0.75rem;
+}
+
+@media (min-width: 992px) {
+    .cs-header .navbar-nav .nav-link,
+    .cs-header .navbar-nav .nav-link[aria-current="page"] {
+        padding-inline: 0.75rem;
+    }
+
+    .cs-header .nav-link[aria-current="page"]::after {
+        top: auto;
+        right: 0.75rem;
+        bottom: -0.2rem;
+        left: 0.75rem;
+        width: auto;
+        height: 2px;
+    }
+}
+
+.cs-nav-tools {
+    gap: 0.5rem;
+}
+
+/* Between lg and xl the row is only just wide enough: the wordmark stacks on two lines. */
+@media (min-width: 992px) and (max-width: 1199.98px) {
+    .cs-brand__wordmark {
+        width: min-content;
+        white-space: normal; /* .navbar-brand sets nowrap */
+        font-size: 0.9375rem;
+        line-height: 1.1;
+    }
+
+    .cs-header .navbar > .container {
+        column-gap: 0.75rem;
+    }
+
+    .cs-header .navbar-nav .nav-link,
+    .cs-header .navbar-nav .nav-link[aria-current="page"] {
+        padding-inline: 0.5rem;
+    }
+
+    .cs-header .nav-link[aria-current="page"]::after {
+        right: 0.5rem;
+        left: 0.5rem;
+    }
+}
+
+@media (max-width: 991.98px) {
+    /* The header is sticky, so an open menu taller than the viewport must scroll itself. */
+    .cs-header .navbar-collapse {
+        max-height: calc(100vh - var(--cs-header-h));
+        overflow-y: auto;
+        margin-inline: -0.375rem;
+    }
+
+    /* Room for the 5px focus ring, which the scroll container would clip. */
+    .cs-header .navbar-collapse > .navbar-nav {
+        padding-inline: 0.375rem;
+    }
+
+    .cs-header .navbar-collapse > .navbar-nav:first-child {
+        padding-top: 0.375rem;
+    }
+
+    .cs-nav-tools {
+        align-items: flex-start;
+        padding: 0.75rem 0 1rem;
+        border-top: 1px solid var(--cs-line);
+    }
+}
+
+.cs-theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.cs-theme-toggle svg,
+.cs-theme-menu svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: none;
+}
+
+/* The icon alone carries the control on wide screens; the label stays for AT. */
+@media (min-width: 992px) {
+    .cs-theme-toggle__text {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+}
+
+.cs-theme-menu .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.cs-theme-menu .cs-check {
+    margin-left: auto;
+    visibility: hidden;
+}
+
+.cs-theme-menu [aria-pressed="true"] {
+    font-weight: 600;
+}
+
+.cs-theme-menu [aria-pressed="true"] .cs-check {
+    visibility: visible;
+}
+
+/* ------------------------------------------------------------------ */
+/* Main, messages, footer, toasts                                      */
+/* ------------------------------------------------------------------ */
+
+.content-wrapper {
+    flex: 1 0 auto;
+    padding-top: 2rem;
+    padding-bottom: 4rem;
+}
+
+/* <main> is only focusable as the skip-link target; it is not a control, so no ring. */
+#main-content:focus {
+    outline: none;
+}
+
+.cs-messages .alert {
+    border-radius: var(--cs-radius);
+}
+
+.alert {
+    --bs-alert-border-radius: var(--cs-radius);
+}
+
+.cs-footer {
+    padding-block: 1.5rem;
+    border-top: 1px solid var(--cs-line);
+    background-color: var(--cs-surface);
+    font-size: var(--cs-fs-small);
+}
+
+.cs-footer .nav-link {
+    --bs-nav-link-color: var(--cs-ink-muted);
+    --bs-nav-link-hover-color: var(--cs-water);
+    padding-inline: 0.5rem;
+}
+
+.cs-footer__logo img {
+    width: auto;
+    height: 1.75rem;
+}
+
+.cs-toast {
+    border-left: 4px solid var(--cs-toast-accent, var(--cs-water));
+}
+
+.cs-toast--success { --cs-toast-accent: var(--cs-success); }
+.cs-toast--warning { --cs-toast-accent: var(--cs-ochre); }
+.cs-toast--danger { --cs-toast-accent: var(--cs-danger); }
+
+.cs-toast .toast-body {
+    color: var(--cs-ink);
+}
+
+/* ------------------------------------------------------------------ */
+/* Page scaffolding                                                    */
+/* ------------------------------------------------------------------ */
+
+.cs-eyebrow {
+    margin-bottom: 0.5rem;
+    color: var(--cs-ink-muted);
+    font-family: var(--cs-font-body);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.cs-page-header {
+    margin-bottom: 2rem;
+}
+
+.cs-page-header__title {
+    margin-bottom: 0.5rem;
+}
+
+.cs-page-header__lead {
+    max-width: 64ch;
+    margin-bottom: 0;
+    color: var(--cs-ink-muted);
+    font-size: 1.0625rem;
+}
+
+.cs-card {
+    padding: 1.5rem;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background-color: var(--cs-surface);
+    box-shadow: var(--cs-shadow);
+}
+
+.cs-card__title {
+    margin-bottom: 1rem;
+    font-size: var(--cs-fs-h4);
+}
+
+.cs-workbench {
+    display: grid;
+    gap: 2rem;
+    align-items: start;
+}
+
+.cs-panel,
+.cs-canvas {
+    min-width: 0;
+}
+
+.cs-panel {
+    padding: 1.5rem;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background-color: var(--cs-surface);
+    box-shadow: var(--cs-shadow);
+}
+
+@media (min-width: 992px) {
+    .cs-workbench {
+        grid-template-columns: 360px minmax(0, 1fr);
+    }
+
+    /* Set by core/workbench.js only while the whole panel fits the viewport, so the
+       run button is never out of reach inside a scrolled panel. */
+    .cs-panel.is-sticky {
+        position: sticky;
+        top: calc(var(--cs-header-h) + 1rem);
+    }
+}
+
+.cs-canvas {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.cs-step + .cs-step {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--cs-line);
+}
+
+.cs-step__header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.cs-step__num {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 1.75rem;
+    height: 1.75rem;
+    border: 1.5px solid var(--cs-water);
+    border-radius: 50%;
+    color: var(--cs-water);
+    font-family: var(--cs-font-mono);
+    font-size: var(--cs-fs-caption);
+    font-weight: 500;
+}
+
+.cs-step__title {
+    margin: 0;
+    font-size: 1.0625rem;
+}
+
+.cs-hint {
+    margin: 0 0 1rem;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+.cs-hint--note {
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid var(--cs-water);
+    border-radius: 0 var(--cs-radius-sm) var(--cs-radius-sm) 0;
+    background-color: var(--cs-surface-sunken);
+}
+
+.cs-hint--count {
+    font-family: var(--cs-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* A live run count gives way to the server's field errors, which say the same thing. */
+fieldset:has(.is-invalid) > .cs-hint--count {
+    display: none;
+}
+
+/* A warning, not an error: the server makes the final call. */
+.cs-hint.is-warning {
+    color: var(--cs-ochre-text);
+    font-family: var(--cs-font-body);
+    font-weight: 500;
+}
+
+/* Number fields keep their spinner: in narrow range fields the invalid icon would crowd
+   it, and the red border and message already mark the error. */
+.form-control[type="number"].is-invalid {
+    padding-right: 0.75rem;
+    background-image: none;
+}
+
+/* Segmented control: .btn-check radios, each followed by its .cs-segmented__option label. */
+.cs-segmented {
+    display: grid;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    padding: 0.25rem;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background-color: var(--cs-surface-sunken);
+}
+
+.cs-segmented__option {
+    --bs-btn-padding-y: 0.4rem;
+    --bs-btn-font-size: 0.9375rem;
+    --bs-btn-border-width: 0;
+    --bs-btn-color: var(--cs-ink-muted);
+    --bs-btn-hover-color: var(--cs-ink);
+    --bs-btn-active-color: var(--cs-ink);
+    --bs-btn-active-bg: var(--cs-surface);
+    border-radius: var(--cs-radius-sm);
+    font-weight: 500;
+}
+
+.btn-check:checked + .cs-segmented__option {
+    background-color: var(--cs-surface);
+    color: var(--cs-ink);
+    box-shadow: var(--cs-shadow);
+}
+
+.btn-check:focus-visible + .cs-segmented__option {
+    outline: 3px solid var(--cs-focus-ring);
+    outline-offset: 2px;
+    box-shadow: none;
+}
+
+/* Run progress under the run button (toggled with [hidden] by CS.asyncForm). */
+.cs-progress {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    margin-top: 0.875rem;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+.cs-progress .spinner-border {
+    flex: none;
+    margin-top: 0.125rem;
+    color: var(--cs-water);
+}
+
+/* Before the status text, so a wrapped sentence is never split by the counter. */
+.cs-progress__elapsed {
+    flex: none;
+    color: var(--cs-ink);
+    font-family: var(--cs-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ */
+/* Results                                                             */
+/* ------------------------------------------------------------------ */
+
+.cs-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: 1rem;
+}
+
+.cs-metric {
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background-color: var(--cs-surface);
+}
+
+.cs-metric__label {
+    margin-bottom: 0.25rem;
+    color: var(--cs-ink-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.cs-metric__value {
+    margin: 0;
+    color: var(--cs-ink);
+    font-family: var(--cs-font-mono);
+    font-size: 1.5rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+}
+
+/* Phones fit two tiles per row; a smaller value keeps "8 h 55 min" on one line there. */
+@media (max-width: 575.98px) {
+    .cs-metric__value {
+        font-size: 1.25rem;
+    }
+}
+
+.cs-metric__unit {
+    margin-left: 0.25rem;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+    font-weight: 400;
+}
+
+/* Previous results ([data-cs-results]) stay readable but visibly stale during a re-run. */
+[aria-busy="true"] [data-cs-results] {
+    opacity: 0.55;
+    transition: opacity var(--cs-transition);
+}
+
+/* Added by CS.asyncForm above results kept from an earlier run after a failed re-run. */
+.cs-stale-notice {
+    margin: 0 0 1rem;
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid var(--cs-ochre);
+    border-radius: 0 var(--cs-radius-sm) var(--cs-radius-sm) 0;
+    background-color: var(--cs-surface-sunken);
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-small);
+}
+
+.cs-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 18rem;
+    padding: 2.5rem 1.5rem;
+    border: 1.5px dashed var(--cs-line);
+    border-radius: var(--cs-radius-lg);
+    color: var(--cs-ink-muted);
+    text-align: center;
+}
+
+.cs-empty-state__icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: var(--cs-water);
+}
+
+.cs-empty-state__title {
+    margin: 0;
+    color: var(--cs-ink);
+    font-size: var(--cs-fs-h4);
+}
+
+.cs-empty-state__text {
+    max-width: 44ch;
+    margin: 0;
+}
+
+.cs-chart-card {
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background-color: var(--cs-surface);
+    box-shadow: var(--cs-shadow);
+}
+
+.cs-chart-card__toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.875rem 1.25rem;
+    border-bottom: 1px solid var(--cs-line);
+}
+
+.cs-chart-card__title {
+    margin: 0;
+    font-size: 1.0625rem;
+}
+
+.cs-chart-card__body {
+    padding: 0.75rem;
+}
+
+/*
+ * Scroll cue: a shadow darkens each edge that has more table behind it. The
+ * surface-coloured covers scroll with the content (local) and hide the fixed
+ * (scroll) shadows once an end is reached; the cells are transparent (tokens.css).
+ */
+.cs-table-wrap {
+    max-height: 32rem;
+    overflow: auto;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background:
+        linear-gradient(to right, var(--cs-surface) 30%, transparent) left center / 2.5rem 100% no-repeat local,
+        linear-gradient(to left, var(--cs-surface) 30%, transparent) right center / 2.5rem 100% no-repeat local,
+        radial-gradient(farthest-side at 0 50%, var(--cs-scroll-shadow), transparent) left center / 1rem 100% no-repeat scroll,
+        radial-gradient(farthest-side at 100% 50%, var(--cs-scroll-shadow), transparent) right center / 1rem 100% no-repeat scroll,
+        var(--cs-surface);
+}
+
+.cs-table {
+    margin-bottom: 0;
+    font-size: var(--cs-fs-small);
+}
+
+.cs-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--cs-surface-sunken);
+    color: var(--cs-ink-muted);
+    font-weight: 600;
+    vertical-align: bottom;
+    box-shadow: inset 0 -1px 0 var(--cs-line);
+}
+
+/* Row headers (a name, a timestamp, a swept value) identify the row; they need no extra weight. */
+.cs-table tbody th {
+    font-weight: 500;
+}
+
+.cs-table .cs-num {
+    text-align: right;
+}
+
+/* Only values are set in mono; header labels ("Runoff volume [m³]") wrap in the body font. */
+.cs-table tbody .cs-num {
+    font-family: var(--cs-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.cs-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    cursor: pointer;
+}
+
+.cs-num .cs-sort {
+    justify-content: flex-end;
+}
+
+.cs-sort:hover {
+    color: var(--cs-ink);
+}
+
+/* Sort indicator: both arrows faded when unsorted, the active one solid.
+   A mask (not text) so it never enters the button's accessible name. */
+.cs-sort::after {
+    content: "";
+    flex: none;
+    width: 0.5rem;
+    height: 0.75rem;
+    background-color: currentColor;
+    -webkit-mask: var(--cs-sort-icon) center / contain no-repeat;
+    mask: var(--cs-sort-icon) center / contain no-repeat;
+    opacity: 0.35;
+    --cs-sort-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 12'%3e%3cpath d='M4 0 8 5H0zM4 12 0 7h8z'/%3e%3c/svg%3e");
+}
+
+th[aria-sort="ascending"] .cs-sort::after {
+    --cs-sort-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 12'%3e%3cpath d='M4 0 8 5H0z'/%3e%3c/svg%3e");
+    opacity: 1;
+}
+
+th[aria-sort="descending"] .cs-sort::after {
+    --cs-sort-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 12'%3e%3cpath d='M4 12 0 7h8z'/%3e%3c/svg%3e");
+    opacity: 1;
+}
+
+th[aria-sort] .cs-sort {
+    color: var(--cs-ink);
+}
+
+.cs-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--cs-line);
+}
+
+@keyframes cs-rise {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.cs-reveal,
+.cs-reveal .cs-metric {
+    animation: cs-rise 220ms ease-out both;
+}
+
+.cs-reveal .cs-metric:nth-child(2) { animation-delay: 40ms; }
+.cs-reveal .cs-metric:nth-child(3) { animation-delay: 80ms; }
+.cs-reveal .cs-metric:nth-child(4) { animation-delay: 120ms; }
+.cs-reveal .cs-metric:nth-child(5) { animation-delay: 160ms; }
+.cs-reveal .cs-metric:nth-child(n + 6) { animation-delay: 200ms; }
+
+/* ------------------------------------------------------------------ */
+/* Code                                                                */
+/* ------------------------------------------------------------------ */
+
+.cs-code {
+    position: relative;
+}
+
+.cs-code__copy {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+}
+
+pre.code-snippet {
+    margin: 0 0 1rem;
+    padding: 1rem 1.25rem;
+    overflow: auto;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background: var(--cs-surface-sunken);
+    color: var(--cs-ink);
+    font-family: var(--cs-font-mono);
+    font-size: 0.875rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.cs-code pre.code-snippet {
+    padding-right: 4.5rem;
+}
+
+pre.code-snippet code {
+    background: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    white-space: inherit;
+}
+
+.code-snippet .token.comment,
+.code-snippet .token.prolog {
+    color: var(--cs-ink-muted);
+    font-style: italic;
+}
+
+.code-snippet .token.keyword,
+.code-snippet .token.builtin,
+.code-snippet .token.boolean {
+    color: var(--cs-water-strong);
+    font-weight: 500;
+}
+
+.code-snippet .token.string,
+.code-snippet .token.triple-quoted-string {
+    color: var(--bs-success-text-emphasis);
+}
+
+.code-snippet .token.number {
+    color: var(--cs-ochre-text);
+}
+
+.code-snippet .token.function,
+.code-snippet .token.class-name,
+.code-snippet .token.decorator {
+    color: var(--cs-water);
+}
+
+.code-snippet .token.operator,
+.code-snippet .token.punctuation {
+    color: var(--cs-ink-muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion preferences                                                  */
+/* ------------------------------------------------------------------ */
+
+/* Set by core/theme.js for one frame while the colour mode changes. */
+.cs-theme-switching *,
+.cs-theme-switching *::before,
+.cs-theme-switching *::after {
+    transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-delay: 0ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    .cs-reveal,
+    .cs-reveal .cs-metric {
+        animation: none;
+        transform: none;
+    }
+}

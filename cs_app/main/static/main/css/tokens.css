@@ -1,0 +1,436 @@
+/*
+ * Design tokens — "survey sheet" palette (docs/ui-modernization/DESIGN_SPEC.md §2).
+ *
+ * --cs-* tokens are the source of truth; the --bs-* block under each theme maps
+ * them onto Bootstrap 5.3 so stock components inherit the palette. Must load
+ * after bootstrap.min.css (same selectors, later wins). Theme is selected by
+ * <html data-bs-theme="light|dark">, set before paint by core/theme-init.js.
+ */
+
+:root,
+[data-bs-theme="light"] {
+    /* Palette */
+    --cs-ink: #0F2233;
+    --cs-ink-rgb: 15, 34, 51;
+    --cs-ink-muted: #4A5E6D;
+    --cs-ink-muted-rgb: 74, 94, 109;
+    --cs-paper: #F4F7F9;
+    --cs-paper-rgb: 244, 247, 249;
+    --cs-surface: #FFFFFF;
+    --cs-surface-sunken: #EBF1F5;
+    --cs-line: #D6E1E8;
+    --cs-water: #0B6E8A;
+    --cs-water-rgb: 11, 110, 138;
+    --cs-water-strong: #08566C;
+    --cs-water-strong-rgb: 8, 86, 108;
+    --cs-on-accent: #FFFFFF; /* text on water/danger/success fills */
+    --cs-field-border: #808E99; /* 70% ink-muted over surface: 3:1 field edge */
+    --cs-rain: #5A6FD6;
+    --cs-ochre: #B7791F;
+    --cs-ochre-text: #8A5A12;
+    --cs-danger: #B42318;
+    --cs-danger-rgb: 180, 35, 24;
+    --cs-success: #1F7A4D;
+    --cs-success-rgb: 31, 122, 77;
+    /* Chart-only categorical series (§2.1) */
+    --cs-soil: #346400;
+    --cs-evap: #8A5A9E;
+
+    /* Bootstrap mapping */
+    --bs-body-color: var(--cs-ink);
+    --bs-body-color-rgb: var(--cs-ink-rgb);
+    --bs-body-bg: var(--cs-paper);
+    --bs-body-bg-rgb: var(--cs-paper-rgb);
+    --bs-emphasis-color: var(--cs-ink);
+    --bs-emphasis-color-rgb: var(--cs-ink-rgb);
+    --bs-heading-color: var(--cs-ink);
+    --bs-secondary-color: var(--cs-ink-muted);
+    --bs-secondary-color-rgb: var(--cs-ink-muted-rgb);
+    --bs-secondary-bg: var(--cs-surface-sunken);
+    --bs-tertiary-color: var(--cs-ink-muted);
+    --bs-tertiary-bg: var(--cs-surface-sunken);
+    --bs-tertiary-bg-rgb: 235, 241, 245;
+    --bs-border-color: var(--cs-line);
+    --bs-border-color-translucent: var(--cs-line);
+
+    --bs-primary: var(--cs-water);
+    --bs-primary-rgb: var(--cs-water-rgb);
+    --bs-primary-text-emphasis: var(--cs-water-strong);
+    --bs-primary-bg-subtle: #E4F1F5;
+    --bs-primary-border-subtle: #B3D6E1;
+    --bs-link-color: var(--cs-water);
+    --bs-link-color-rgb: var(--cs-water-rgb);
+    --bs-link-hover-color: var(--cs-water-strong);
+    --bs-link-hover-color-rgb: var(--cs-water-strong-rgb);
+    --bs-code-color: var(--cs-ochre-text);
+
+    --bs-danger: var(--cs-danger);
+    --bs-danger-rgb: var(--cs-danger-rgb);
+    --bs-danger-text-emphasis: #8F1C13;
+    --bs-danger-bg-subtle: #FDECEA;
+    --bs-danger-border-subtle: #F5C2BD;
+    --bs-success: var(--cs-success);
+    --bs-success-rgb: var(--cs-success-rgb);
+    --bs-success-text-emphasis: #175C3A;
+    --bs-success-bg-subtle: #E6F4EC;
+    --bs-success-border-subtle: #B5DCC6;
+    --bs-warning-text-emphasis: #6E480E;
+    --bs-warning-bg-subtle: #FBF1E1;
+    --bs-warning-border-subtle: #EBCB95;
+    --bs-info-text-emphasis: var(--cs-water-strong);
+    --bs-info-bg-subtle: #E4F1F5;
+    --bs-info-border-subtle: #B3D6E1;
+
+    --bs-form-valid-color: var(--cs-success);
+    --bs-form-valid-border-color: var(--cs-success);
+    --bs-form-invalid-color: var(--cs-danger);
+    --bs-form-invalid-border-color: var(--cs-danger);
+
+    --cs-shadow: 0 1px 2px rgb(15 34 51 / .06), 0 4px 12px rgb(15 34 51 / .05);
+    --cs-scroll-shadow: rgb(15 34 51 / .3);
+    --bs-box-shadow: var(--cs-shadow);
+    --bs-box-shadow-sm: 0 1px 2px rgb(15 34 51 / .06);
+}
+
+[data-bs-theme="dark"] {
+    --cs-ink: #E3ECF2;
+    --cs-ink-rgb: 227, 236, 242;
+    --cs-ink-muted: #9DB1BF;
+    --cs-ink-muted-rgb: 157, 177, 191;
+    --cs-paper: #0B1620;
+    --cs-paper-rgb: 11, 22, 32;
+    --cs-surface: #122330;
+    --cs-surface-sunken: #0E1C27;
+    --cs-line: #23394A;
+    --cs-water: #3FB8D6;
+    --cs-water-rgb: 63, 184, 214;
+    --cs-water-strong: #6FCDE3;
+    --cs-water-strong-rgb: 111, 205, 227;
+    --cs-on-accent: #0B1620;
+    --cs-field-border: #738694;
+    --cs-rain: #8C9CF0;
+    --cs-ochre: #E0A546;
+    --cs-ochre-text: #E9B96A;
+    --cs-danger: #F97066;
+    --cs-danger-rgb: 249, 112, 102;
+    --cs-success: #4CC38A;
+    --cs-success-rgb: 76, 195, 138;
+    --cs-soil: #C1EB95;
+    --cs-evap: #C29AD6;
+
+    --bs-body-color: var(--cs-ink);
+    --bs-body-color-rgb: var(--cs-ink-rgb);
+    --bs-body-bg: var(--cs-paper);
+    --bs-body-bg-rgb: var(--cs-paper-rgb);
+    --bs-emphasis-color: var(--cs-ink);
+    --bs-emphasis-color-rgb: var(--cs-ink-rgb);
+    --bs-heading-color: var(--cs-ink);
+    --bs-secondary-color: var(--cs-ink-muted);
+    --bs-secondary-color-rgb: var(--cs-ink-muted-rgb);
+    --bs-secondary-bg: var(--cs-surface-sunken);
+    --bs-tertiary-color: var(--cs-ink-muted);
+    --bs-tertiary-bg: var(--cs-surface-sunken);
+    --bs-tertiary-bg-rgb: 14, 28, 39;
+    --bs-border-color: var(--cs-line);
+    --bs-border-color-translucent: var(--cs-line);
+
+    --bs-primary: var(--cs-water);
+    --bs-primary-rgb: var(--cs-water-rgb);
+    --bs-primary-text-emphasis: var(--cs-water-strong);
+    --bs-primary-bg-subtle: #0E2733;
+    --bs-primary-border-subtle: #1E4E61;
+    --bs-link-color: var(--cs-water);
+    --bs-link-color-rgb: var(--cs-water-rgb);
+    --bs-link-hover-color: var(--cs-water-strong);
+    --bs-link-hover-color-rgb: var(--cs-water-strong-rgb);
+    --bs-code-color: var(--cs-ochre-text);
+
+    --bs-danger: var(--cs-danger);
+    --bs-danger-rgb: var(--cs-danger-rgb);
+    --bs-danger-text-emphasis: #FCA69F;
+    --bs-danger-bg-subtle: #2A1517;
+    --bs-danger-border-subtle: #6B2A26;
+    --bs-success: var(--cs-success);
+    --bs-success-rgb: var(--cs-success-rgb);
+    --bs-success-text-emphasis: #7FD9AE;
+    --bs-success-bg-subtle: #0F2A1F;
+    --bs-success-border-subtle: #1F5A3D;
+    --bs-warning-text-emphasis: var(--cs-ochre-text);
+    --bs-warning-bg-subtle: #2A2012;
+    --bs-warning-border-subtle: #6B4F1E;
+    --bs-info-text-emphasis: var(--cs-water-strong);
+    --bs-info-bg-subtle: #0E2733;
+    --bs-info-border-subtle: #1E4E61;
+
+    --bs-form-valid-color: var(--cs-success);
+    --bs-form-valid-border-color: var(--cs-success);
+    --bs-form-invalid-color: var(--cs-danger);
+    --bs-form-invalid-border-color: var(--cs-danger);
+
+    /* Dark mode relies on borders, not shadows (§2.3). */
+    --cs-shadow: none;
+    /* A scroll cue, not elevation, so it stays in dark mode. */
+    --cs-scroll-shadow: rgb(0 0 0 / .75);
+    --bs-box-shadow: none;
+    --bs-box-shadow-sm: none;
+}
+
+/*
+ * Theme-independent tokens. Also matched on [data-bs-theme] so nested theme
+ * scopes keep the fonts (Bootstrap resets them there) and re-resolve the ring.
+ */
+:root,
+[data-bs-theme] {
+    --cs-font-display: "Archivo", "Public Sans", system-ui, sans-serif;
+    --cs-font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --cs-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --cs-display-stretch: 118%;
+
+    --cs-fs-caption: 0.8125rem;
+    --cs-fs-small: 0.9375rem;
+    --cs-fs-body: 1rem;
+    --cs-fs-h4: 1.25rem;
+    --cs-fs-h3: 1.5rem;
+    --cs-fs-h2: clamp(1.625rem, 1.3rem + 1.2vw, 2rem);
+    --cs-fs-h1: clamp(2rem, 1.4rem + 2.4vw, 2.75rem);
+    --cs-lh-body: 1.55;
+    --cs-lh-display: 1.15;
+
+    --cs-radius-sm: 6px;
+    --cs-radius: 10px;
+    --cs-radius-lg: 16px;
+
+    --cs-header-h: 4rem;
+    --cs-transition: 120ms ease;
+
+    --bs-body-font-family: var(--cs-font-body);
+    --bs-body-font-size: var(--cs-fs-body);
+    --bs-body-line-height: var(--cs-lh-body);
+    --bs-font-sans-serif: var(--cs-font-body);
+    --bs-font-monospace: var(--cs-font-mono);
+    --bs-border-radius-sm: var(--cs-radius-sm);
+    --bs-border-radius: var(--cs-radius-sm);
+    --bs-border-radius-lg: var(--cs-radius);
+    --bs-border-radius-xl: var(--cs-radius-lg);
+    --bs-focus-ring-width: 3px;
+    --cs-focus-ring: color-mix(in srgb, var(--cs-water) 45%, transparent);
+    --bs-focus-ring-color: var(--cs-focus-ring);
+}
+
+/*
+ * Bootstrap component mappings. These components compile the default blue
+ * into literals or component variables, so --bs-primary alone does not reach
+ * them. Values reference --cs-* tokens and therefore follow the theme.
+ */
+.btn-primary {
+    --bs-btn-color: var(--cs-on-accent);
+    --bs-btn-bg: var(--cs-water);
+    --bs-btn-border-color: var(--cs-water);
+    --bs-btn-hover-color: var(--cs-on-accent);
+    --bs-btn-hover-bg: var(--cs-water-strong);
+    --bs-btn-hover-border-color: var(--cs-water-strong);
+    --bs-btn-active-color: var(--cs-on-accent);
+    --bs-btn-active-bg: var(--cs-water-strong);
+    --bs-btn-active-border-color: var(--cs-water-strong);
+    --bs-btn-disabled-color: var(--cs-on-accent);
+    --bs-btn-disabled-bg: var(--cs-water);
+    --bs-btn-disabled-border-color: var(--cs-water);
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--cs-water);
+    --bs-btn-border-color: var(--cs-water);
+    --bs-btn-hover-color: var(--cs-on-accent);
+    --bs-btn-hover-bg: var(--cs-water);
+    --bs-btn-hover-border-color: var(--cs-water);
+    --bs-btn-active-color: var(--cs-on-accent);
+    --bs-btn-active-bg: var(--cs-water-strong);
+    --bs-btn-active-border-color: var(--cs-water-strong);
+    --bs-btn-disabled-color: var(--cs-water);
+    --bs-btn-disabled-border-color: var(--cs-water);
+}
+
+.btn-outline-secondary {
+    --bs-btn-color: var(--cs-ink-muted);
+    --bs-btn-border-color: var(--cs-field-border);
+    --bs-btn-hover-color: var(--cs-ink);
+    --bs-btn-hover-bg: var(--cs-surface-sunken);
+    --bs-btn-hover-border-color: var(--cs-ink-muted);
+    --bs-btn-active-color: var(--cs-ink);
+    --bs-btn-active-bg: var(--cs-line);
+    --bs-btn-active-border-color: var(--cs-ink-muted);
+    --bs-btn-disabled-color: var(--cs-ink-muted);
+    --bs-btn-disabled-border-color: var(--cs-line);
+}
+
+.btn-danger {
+    --bs-btn-color: var(--cs-on-accent);
+    --bs-btn-bg: var(--cs-danger);
+    --bs-btn-border-color: var(--cs-danger);
+    --bs-btn-hover-color: var(--cs-on-accent);
+    --bs-btn-hover-bg: var(--bs-danger-text-emphasis);
+    --bs-btn-hover-border-color: var(--bs-danger-text-emphasis);
+    --bs-btn-active-color: var(--cs-on-accent);
+    --bs-btn-active-bg: var(--bs-danger-text-emphasis);
+    --bs-btn-disabled-color: var(--cs-on-accent);
+    --bs-btn-disabled-bg: var(--cs-danger);
+    --bs-btn-disabled-border-color: var(--cs-danger);
+}
+
+.btn-success {
+    --bs-btn-color: var(--cs-on-accent);
+    --bs-btn-bg: var(--cs-success);
+    --bs-btn-border-color: var(--cs-success);
+    --bs-btn-hover-color: var(--cs-on-accent);
+    --bs-btn-hover-bg: var(--bs-success-text-emphasis);
+    --bs-btn-hover-border-color: var(--bs-success-text-emphasis);
+    --bs-btn-active-color: var(--cs-on-accent);
+    --bs-btn-active-bg: var(--bs-success-text-emphasis);
+    --bs-btn-disabled-color: var(--cs-on-accent);
+    --bs-btn-disabled-bg: var(--cs-success);
+    --bs-btn-disabled-border-color: var(--cs-success);
+}
+
+.text-bg-primary {
+    color: var(--cs-on-accent) !important;
+    background-color: var(--cs-water) !important;
+}
+
+.form-control,
+.form-select {
+    background-color: var(--cs-surface-sunken);
+    border-color: var(--cs-field-border);
+}
+
+.form-control:focus,
+.form-select:focus {
+    background-color: var(--cs-surface-sunken);
+    border-color: var(--cs-water);
+    box-shadow: none;
+}
+
+.form-control:disabled,
+.form-select:disabled {
+    background-color: var(--cs-line);
+}
+
+.form-check-input {
+    background-color: var(--cs-surface-sunken);
+    border-color: var(--cs-field-border);
+}
+
+.form-check-input:focus {
+    border-color: var(--cs-water);
+    box-shadow: none;
+}
+
+.form-check-input:checked {
+    background-color: var(--cs-water);
+    border-color: var(--cs-water);
+}
+
+/* Bootstrap draws white marks; on the light dark-theme water they need ink. */
+[data-bs-theme="dark"] .form-check-input:checked[type="checkbox"] {
+    --bs-form-check-bg-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3e%3cpath fill='none' stroke='%230B1620' stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='m6 10 3 3 6-6'/%3e%3c/svg%3e");
+}
+
+[data-bs-theme="dark"] .form-check-input:checked[type="radio"] {
+    --bs-form-check-bg-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='2' fill='%230B1620'/%3e%3c/svg%3e");
+}
+
+.form-range::-webkit-slider-thumb {
+    background-color: var(--cs-water);
+}
+
+.form-range::-moz-range-thumb {
+    background-color: var(--cs-water);
+}
+
+.form-range::-webkit-slider-thumb:active {
+    background-color: var(--cs-water-strong);
+}
+
+.form-range::-moz-range-thumb:active {
+    background-color: var(--cs-water-strong);
+}
+
+/* Kept as separate rules: one unknown vendor pseudo-element would void a shared selector list.
+   The ring is drawn on the range itself (app.css). */
+.form-range:focus::-webkit-slider-thumb {
+    box-shadow: none;
+}
+
+.form-range:focus::-moz-range-thumb {
+    box-shadow: none;
+}
+
+[data-bs-theme="dark"] .form-switch .form-check-input:checked {
+    --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%230B1620'/%3e%3c/svg%3e");
+}
+
+.accordion {
+    --bs-accordion-bg: var(--cs-surface);
+    --bs-accordion-btn-focus-box-shadow: none;
+}
+
+/* Chevrons are SVG data URIs, so the colours are the literal token values per theme. */
+.accordion-button::after {
+    --bs-accordion-btn-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%230F2233' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+    --bs-accordion-btn-active-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2308566C' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+}
+
+[data-bs-theme="dark"] .accordion-button::after {
+    --bs-accordion-btn-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23E3ECF2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+    --bs-accordion-btn-active-icon: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%236FCDE3' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+}
+
+.dropdown-menu {
+    --bs-dropdown-bg: var(--cs-surface);
+    --bs-dropdown-border-color: var(--cs-line);
+    --bs-dropdown-link-color: var(--cs-ink);
+    --bs-dropdown-link-hover-color: var(--cs-ink);
+    --bs-dropdown-link-hover-bg: var(--cs-surface-sunken);
+    --bs-dropdown-link-active-color: var(--cs-on-accent);
+    --bs-dropdown-link-active-bg: var(--cs-water);
+    --bs-dropdown-box-shadow: var(--cs-shadow);
+}
+
+.nav-pills {
+    --bs-nav-pills-link-active-color: var(--cs-on-accent);
+    --bs-nav-pills-link-active-bg: var(--cs-water);
+}
+
+.pagination {
+    --bs-pagination-active-color: var(--cs-on-accent);
+    --bs-pagination-active-bg: var(--cs-water);
+    --bs-pagination-active-border-color: var(--cs-water);
+}
+
+.progress,
+.progress-stacked {
+    --bs-progress-bar-color: var(--cs-on-accent);
+    --bs-progress-bar-bg: var(--cs-water);
+}
+
+.list-group {
+    --bs-list-group-active-color: var(--cs-on-accent);
+    --bs-list-group-active-bg: var(--cs-water);
+    --bs-list-group-active-border-color: var(--cs-water);
+}
+
+.card {
+    --bs-card-bg: var(--cs-surface);
+    --bs-card-border-color: var(--cs-line);
+    --bs-card-cap-bg: var(--cs-surface-sunken);
+}
+
+.table {
+    --bs-table-bg: transparent;
+}
+
+.toast {
+    --bs-toast-bg: var(--cs-surface);
+    --bs-toast-border-color: var(--cs-line);
+    --bs-toast-header-bg: var(--cs-surface-sunken);
+    --bs-toast-header-color: var(--cs-ink);
+}

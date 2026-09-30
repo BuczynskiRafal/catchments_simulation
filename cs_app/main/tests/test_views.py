@@ -15,6 +15,7 @@ from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory
 from django.urls import reverse
+from django.utils import timezone
 
 from main.views import (
     SIM_RESULT_TOKEN_SESSION_KEY,
@@ -1988,6 +1989,10 @@ def test_refactored_pages_do_not_reference_legacy_chart_assets(
     ("url_name", "requires_login"),
     [
         ("main:main_view", False),
+        ("main:about", False),
+        ("main:contact", False),
+        ("login", False),
+        ("register:register", False),
         ("main:simulation", True),
         ("main:timeseries", True),
         ("main:calculations", True),
@@ -2716,3 +2721,163 @@ def test_subcatchment_ids_cached_in_session(user):
     # Second call should use cache (same result)
     ids2 = _get_subcatchment_ids(request)
     assert ids1 == ids2
+
+
+# ----------------------------------------------------------------------
+# App shell (base.html)
+# ----------------------------------------------------------------------
+
+SHELL_PAGES = [
+    ("main:main_view", False),
+    ("main:about", False),
+    ("main:contact", False),
+    ("main:simulation", True),
+    ("main:timeseries", True),
+    ("main:calculations", True),
+]
+
+
+def _get_page(client, user, url_name, requires_login):
+    if requires_login:
+        client.force_login(user)
+    response = client.get(reverse(url_name))
+    assert response.status_code == 200
+    return response.content.decode()
+
+
+def _head(html):
+    return html.split("</head>", 1)[0]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "requires_login"),
+    [(name, login) for name, login in SHELL_PAGES if name != "main:contact"],
+)
+def test_nav_marks_only_the_current_page(client, user, url_name, requires_login):
+    """Exactly one nav link carries aria-current="page" and it points at the page itself."""
+    html = _get_page(client, user, url_name, requires_login)
+
+    current = re.findall(r'<a [^>]*href="([^"]+)"[^>]*aria-current="page"', html)
+    assert current == [reverse(url_name)]
+
+
+@pytest.mark.django_db
+def test_nav_has_no_current_page_outside_primary_sections(client):
+    """Pages that are not in the primary nav (e.g. contact) highlight nothing."""
+    html = client.get(reverse("main:contact")).content.decode()
+
+    assert 'aria-current="page"' not in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(("url_name", "requires_login"), SHELL_PAGES)
+def test_theme_init_runs_synchronously_in_head_before_styles(
+    client, user, url_name, requires_login
+):
+    """Colour mode is applied before paint: blocking script in <head> ahead of stylesheets."""
+    head = _head(_get_page(client, user, url_name, requires_login))
+
+    match = re.search(r'<script src="[^"]*/main/js/core/theme-init\.js"(?P<attrs>[^>]*)>', head)
+    assert match
+    assert "defer" not in match["attrs"] and "async" not in match["attrs"]
+    assert head.index("theme-init.js") < head.index('rel="stylesheet"')
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(("url_name", "requires_login"), SHELL_PAGES)
+def test_external_assets_are_pinned_with_sri(client, user, url_name, requires_login):
+    """Every CDN script/stylesheet carries integrity + crossorigin (Google Fonts CSS excepted)."""
+    html = _get_page(client, user, url_name, requires_login)
+
+    tags = re.findall(r"<(?:script|link)\b[^>]*>", html)
+    external = [
+        tag
+        for tag in tags
+        if re.search(r'(?:src|href)="https://', tag)
+        and ("<script" in tag or 'rel="stylesheet"' in tag)
+        and "fonts.googleapis.com" not in tag
+    ]
+    assert external
+    for tag in external:
+        assert 'integrity="sha384-' in tag, tag
+        assert 'crossorigin="anonymous"' in tag, tag
+
+
+@pytest.mark.django_db
+def test_base_loads_bootstrap_53_and_core_scripts(client):
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert "bootstrap@5.3." in html
+    assert "bootstrap@5.1" not in html
+    for module in ("theme", "toast", "format", "clipboard", "auth-guard", "async-form", "table"):
+        assert f"/static/main/js/core/{module}.js" in html
+    assert "/static/main/css/tokens.css" in html
+    assert "/static/main/css/app.css" in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "requires_login"),
+    [(name, login) for name, login in SHELL_PAGES if name != "main:main_view"],
+)
+def test_prism_is_loaded_only_on_home(client, user, url_name, requires_login):
+    html = _get_page(client, user, url_name, requires_login)
+
+    assert "prismjs" not in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("url_name", ["main:main_view", "main:about", "main:contact", "login"])
+def test_dropzone_is_not_loaded_on_pages_without_upload(client, url_name):
+    html = client.get(reverse(url_name)).content.decode()
+
+    assert "dropzone" not in html.lower()
+    assert "upload_zone.js" not in html
+
+
+@pytest.mark.django_db
+def test_shell_has_skip_link_main_landmark_and_toast_region(client):
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert '<a class="visually-hidden-focusable cs-skip-link" href="#main-content">' in html
+    assert '<main id="main-content" class="container content-wrapper" tabindex="-1">' in html
+    assert re.search(r'<div class="toast-container[^"]*" aria-live="polite">', html)
+    assert 'aria-controls="main-nav"' in html and 'id="main-nav"' in html
+
+
+@pytest.mark.django_db
+def test_shell_account_links_for_anonymous_user(client):
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert f'href="{reverse("login")}">Log in</a>' in html
+    assert f'href="{reverse("register:register")}">Create account</a>' in html
+    assert ">Logout</button>" not in html
+
+
+@pytest.mark.django_db
+def test_shell_account_menu_for_authenticated_user(client, user):
+    client.force_login(user)
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert f'href="{reverse("main:userprofile", args=[user.id])}">Profile</a>' in html
+    assert re.search(
+        rf'<form method="post" action="{reverse("logout")}">\s*'
+        r'<input type="hidden" name="csrfmiddlewaretoken"[^>]*>\s*'
+        r'<button type="submit" class="dropdown-item">Logout</button>',
+        html,
+    )
+    assert ">Log in</a>" not in html
+
+
+@pytest.mark.django_db
+def test_footer_shows_current_year_and_project_links(client):
+    html = client.get(reverse("main:about")).content.decode()
+    footer = html.split("<footer", 1)[1]
+
+    assert f"Rafał Buczyński {timezone.now().year}" in footer
+    assert f'href="{reverse("main:contact")}"' in footer
+    assert "https://github.com/BuczynskiRafal/catchments_simulation" in footer
+    assert "https://pypi.org/project/catchment-simulation/" in footer
+    assert "me-md-autolink-dark" not in html
+    assert "/static//img/" not in html
