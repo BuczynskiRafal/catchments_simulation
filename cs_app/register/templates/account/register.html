@@ -1,12 +1,24 @@
 {% extends "base.html" %}
-{% load crispy_forms_tags %}
+{% load crispy_forms_tags static %}
 
-{% block title %} Register {% endblock %}
+{% block title %}Create account — Catchment Simulation{% endblock %}
+
+{% block style %}
+<link rel="stylesheet" href="{% static 'main/css/content.css' %}">
+{% endblock %}
 
 {% block content %}
-    <form method="POST" class="form-group">
+<section class="cs-card auth-card" aria-labelledby="auth-title">
+    <p class="cs-eyebrow">Get started</p>
+    <h1 class="auth-card__title" id="auth-title">Create account</h1>
+    <p class="auth-card__lead">An account keeps your uploaded model and results between visits.</p>
+
+    <form method="post" class="auth-card__form" data-cs-form>
         {% csrf_token %}
         {{ form|crispy }}
-        <button type="submit" class="btn btn-success">Register</button>
+        <button type="submit" class="btn btn-primary w-100">Create account</button>
     </form>
+
+    <p class="auth-card__switch">Already have an account? <a href="{% url 'login' %}">Log in</a></p>
+</section>
 {% endblock %}

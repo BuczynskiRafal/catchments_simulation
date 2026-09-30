@@ -38,7 +38,7 @@ class TestRegistration:
             password1=STRONG_ALT_PASSWORD,
             password2=STRONG_ALT_PASSWORD,
         )
-        expect(page).to_have_url(re.compile(r".*/$"))
+        expect(page).to_have_url(f"{live_server.url}/")
 
     def test_register_mismatched_passwords_shows_error(self, page: Page, live_server, db) -> None:
         rp = RegisterPage(page, live_server.url)
@@ -51,14 +51,8 @@ class TestRegistration:
             password1=STRONG_ALT_PASSWORD,
             password2=OTHER_USER_PASSWORD,
         )
-        page.wait_for_load_state("domcontentloaded")
-        # After invalid submit, we should still be on the register page
-        expect(page).to_have_url(re.compile(r".*/register/"))
-        # Page body should contain error feedback about passwords
-        body_text = page.locator("body").inner_text()
-        assert (
-            "password" in body_text.lower() or "match" in body_text.lower()
-        ), "Expected password mismatch error feedback on page"
+        expect(page.locator("#error_1_id_password2")).to_contain_text("didn’t match")
+        expect(page).to_have_url(re.compile(r".*/register/$"))
 
     def test_register_duplicate_username_shows_error(
         self, page: Page, live_server, test_user
@@ -74,10 +68,8 @@ class TestRegistration:
             password1=STRONG_ALT_PASSWORD,
             password2=STRONG_ALT_PASSWORD,
         )
-        page.wait_for_load_state("domcontentloaded")
-        expect(page).to_have_url(re.compile(r".*/register/"))
-        body_text = page.locator("body").inner_text()
-        assert "username" in body_text.lower() or "already" in body_text.lower()
+        expect(page.locator("#error_1_id_username")).to_contain_text("already exists")
+        expect(page).to_have_url(re.compile(r".*/register/$"))
 
     def test_register_weak_password_shows_error(self, page: Page, live_server, db) -> None:
         """Too simple password should be rejected by Django validators."""
@@ -91,15 +83,51 @@ class TestRegistration:
             password1="123",
             password2="123",
         )
-        page.wait_for_load_state("domcontentloaded")
-        expect(page).to_have_url(re.compile(r".*/register/"))
-        body_text = page.locator("body").inner_text()
-        assert "password" in body_text.lower()
+        expect(page.locator("#error_1_id_password2")).to_contain_text("too short")
+        expect(page).to_have_url(re.compile(r".*/register/$"))
 
     def test_register_page_title(self, page: Page, live_server) -> None:
         rp = RegisterPage(page, live_server.url)
         rp.navigate_to()
-        assert "Register" in rp.get_title()
+        assert "Create account" in rp.get_title()
+        assert rp.get_heading(level=1) == "Create account"
+
+    def test_register_success_logs_the_user_in(self, page: Page, live_server, db) -> None:
+        rp = RegisterPage(page, live_server.url)
+        rp.navigate_to()
+        rp.register(
+            "fresh", "fresh@example.com", "Fresh", "User", STRONG_ALT_PASSWORD, STRONG_ALT_PASSWORD
+        )
+
+        expect(page.locator(".alert-success")).to_contain_text("Welcome, Fresh.")
+        assert NavComponent(page).is_logged_in()
+
+    def test_invalid_fields_are_marked_inline_and_focused(
+        self, page: Page, live_server, db
+    ) -> None:
+        rp = RegisterPage(page, live_server.url)
+        rp.navigate_to()
+        rp.register(
+            "mismatch2", "m2@example.com", "Mis", "Match", STRONG_ALT_PASSWORD, OTHER_USER_PASSWORD
+        )
+
+        feedback = page.locator("#error_1_id_password2")
+        expect(feedback).to_be_visible()
+        expect(feedback).to_contain_text("didn’t match")
+        expect(rp.password2_input).to_have_attribute("aria-invalid", "true")
+        expect(rp.password2_input).to_have_attribute(
+            "aria-describedby", re.compile(r"\berror_1_id_password2\b")
+        )
+        expect(rp.password2_input).to_be_focused()
+        # Valid fields keep their value and are not flagged.
+        expect(rp.email_input).to_have_value("m2@example.com")
+        expect(rp.email_input).not_to_have_attribute("aria-invalid", "true")
+
+    def test_links_to_login(self, page: Page, live_server) -> None:
+        rp = RegisterPage(page, live_server.url)
+        rp.navigate_to()
+        page.locator("main").get_by_role("link", name="Log in", exact=True).click()
+        expect(page).to_have_url(re.compile(r".*/accounts/login/$"))
 
 
 class TestLogin:
@@ -115,27 +143,105 @@ class TestLogin:
         lp.navigate_to()
         lp.login(TEST_USERNAME, TEST_PASSWORD)
         # Should redirect to home after successful login
-        expect(page).to_have_url(re.compile(r".*/$"))
+        expect(page).to_have_url(f"{live_server.url}/")
 
     def test_login_invalid_credentials_shows_error(self, page: Page, live_server, db) -> None:
         lp = LoginPage(page, live_server.url)
         lp.navigate_to()
         lp.login("nonexistent", "wrongpass")
-        page.wait_for_load_state("domcontentloaded")
-        # Should stay on login page
-        expect(page).to_have_url(re.compile(r".*/accounts/login/"))
-        # The login page should contain error feedback
-        content = page.locator(".content-wrapper").inner_text()
-        assert (
-            "username" in content.lower()
-            or "password" in content.lower()
-            or "correct" in content.lower()
+        expect(page.locator("form .alert-danger")).to_contain_text(
+            "Please enter a correct username or email and password"
         )
+        expect(page).to_have_url(re.compile(r".*/accounts/login/$"))
 
     def test_login_page_title(self, page: Page, live_server) -> None:
         lp = LoginPage(page, live_server.url)
         lp.navigate_to()
-        assert "Logowanie" in lp.get_title()
+        assert "Log in" in lp.get_title()
+        assert lp.get_heading(level=1) == "Log in"
+
+    def test_wrong_credentials_error_is_tied_to_the_form(self, page: Page, live_server, db) -> None:
+        lp = LoginPage(page, live_server.url)
+        lp.navigate_to()
+        lp.login("nobody", "wrong-password")
+
+        assert any("correct username or email and password" in m for m in lp.get_error_messages())
+        error_id = page.locator("form .alert-danger").get_attribute("id")
+        expect(lp.username_input).to_have_attribute(
+            "aria-describedby", re.compile(rf"\b{error_id}\b")
+        )
+        expect(lp.username_input).to_be_focused()
+
+    def test_login_returns_to_next_page(self, page: Page, live_server, test_user) -> None:
+        page.goto(f"{live_server.url}/accounts/login/?next=/about")
+        LoginPage(page, live_server.url).login(TEST_USERNAME, TEST_PASSWORD)
+        expect(page).to_have_url(re.compile(r".*/about$"))
+
+    def test_links_to_register(self, page: Page, live_server) -> None:
+        lp = LoginPage(page, live_server.url)
+        lp.navigate_to()
+        page.get_by_role("link", name="Create an account", exact=True).click()
+        expect(page).to_have_url(re.compile(r".*/register/$"))
+
+
+class TestPasswordToggle:
+    def test_toggle_reveals_and_hides_password(self, page: Page, live_server) -> None:
+        lp = LoginPage(page, live_server.url)
+        lp.navigate_to()
+        lp.password_input.fill(STRONG_ALT_PASSWORD)
+        toggle = lp.password_toggle
+        expect(toggle).to_have_attribute("aria-pressed", "false")
+        expect(toggle).to_have_attribute("aria-controls", "id_password")
+
+        toggle.click()
+        expect(lp.password_input).to_have_attribute("type", "text")
+        expect(toggle).to_have_attribute("aria-pressed", "true")
+
+        toggle.press("Enter")
+        expect(lp.password_input).to_have_attribute("type", "password")
+        expect(toggle).to_have_attribute("aria-pressed", "false")
+        expect(lp.password_input).to_have_value(STRONG_ALT_PASSWORD)
+
+    def test_each_register_password_gets_its_own_toggle(self, page: Page, live_server) -> None:
+        rp = RegisterPage(page, live_server.url)
+        rp.navigate_to()
+        rp.password_toggle("password confirmation").click()
+
+        expect(rp.password2_input).to_have_attribute("type", "text")
+        expect(rp.password1_input).to_have_attribute("type", "password")
+
+    def test_revealed_password_is_hidden_again_on_submit(self, page: Page, live_server) -> None:
+        lp = LoginPage(page, live_server.url)
+        lp.navigate_to()
+        lp.fill_credentials("someone", STRONG_ALT_PASSWORD)
+        lp.password_toggle.click()
+        # Registered after the page's handler, so it observes the state it leaves behind.
+        page.evaluate(
+            """() => document.querySelector("form[data-cs-form]").addEventListener("submit", (e) => {
+                e.preventDefault();
+                window.__typeOnSubmit = document.getElementById("id_password").type;
+            })"""
+        )
+
+        lp.submit()
+
+        assert page.evaluate("window.__typeOnSubmit") == "password"
+        expect(lp.password_toggle).to_have_attribute("aria-pressed", "false")
+
+
+class TestAuthA11y:
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    @pytest.mark.parametrize("path", ["/accounts/login/", "/register/"])
+    def test_no_serious_axe_violations(
+        self, page: Page, live_server, db, scheme: str, path: str
+    ) -> None:
+        page.emulate_media(color_scheme=scheme)
+        lp = LoginPage(page, live_server.url)
+        lp.navigate(path)
+        report = lp.run_axe_audit()
+        assert not report.critical + report.serious, [
+            v.id for v in report.critical + report.serious
+        ]
 
 
 class TestLogout:

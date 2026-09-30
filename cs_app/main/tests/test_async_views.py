@@ -1,4 +1,4 @@
-"""Tests for the async (fetch) contract of the run views.
+"""Tests for the async (fetch) contract of the run views and the contact/profile fixes.
 
 Run views (simulation, timeseries, calculations) answer requests sent with
 ``X-Requested-With: XMLHttpRequest`` with the results fragment on success and a
@@ -14,9 +14,11 @@ import numpy as np
 import pandas as pd
 import pytest
 from django.conf import settings
+from django.core import mail
 from django.core.cache import cache
 from django.urls import reverse
 
+from main.models import UserProfile
 from main.views import (
     CALC_RESULT_TOKEN_SESSION_KEY,
     FORM_INVALID_MESSAGE,
@@ -748,6 +750,84 @@ def test_calculations_anonymous_post_redirects_to_login(client):
 
     assert response.status_code == 302
     assert response.url == f"{settings.LOGIN_URL}?next={calc_url}"
+
+
+# ---------------------------------------------------------------------------
+# Contact and profile
+# ---------------------------------------------------------------------------
+
+CONTACT_POST = {
+    "email": "sender@example.com",
+    "title": "Question",
+    "content": "Hello there.",
+}
+
+
+@pytest.mark.django_db
+def test_contact_success_sends_mail_and_redirects_with_message(client):
+    response = client.post(reverse("main:contact"), data=CONTACT_POST, follow=True)
+
+    assert response.redirect_chain == [(reverse("main:contact"), 302)]
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].subject == "Question"
+    assert b"alert-success" in response.content
+    assert b"Message sent." in response.content
+
+
+@pytest.mark.django_db
+def test_contact_send_failure_rerenders_form_with_error(client, monkeypatch):
+    monkeypatch.setattr("main.views.send_message", lambda _message: False)
+
+    response = client.post(reverse("main:contact"), data=CONTACT_POST)
+
+    assert response.status_code == 200
+    assert b"alert-danger" in response.content
+    assert b"Your message could not be sent. Please try again later." in response.content
+    assert b'value="sender@example.com"' in response.content
+    assert b"Hello there." in response.content
+
+
+@pytest.mark.django_db
+def test_contact_form_posts_to_contact_url(client):
+    response = client.get(reverse("main:contact"))
+
+    assert f'action="{reverse("main:contact")}"'.encode() in response.content
+
+
+@pytest.mark.django_db
+def test_profile_owner_post_redirects_to_own_profile(client, user):
+    client.force_login(user)
+    profile_url = reverse("main:userprofile", args=[user.id])
+
+    response = client.post(profile_url, data={"user": user.id, "bio": "Hydrologist."})
+
+    assert response.status_code == 302
+    assert response.url == profile_url
+    assert UserProfile.objects.get(user=user).bio == "Hydrologist."
+
+
+@pytest.mark.django_db
+def test_profile_save_confirms_with_a_success_message(client, user):
+    client.force_login(user)
+    profile_url = reverse("main:userprofile", args=[user.id])
+
+    response = client.post(profile_url, data={"user": user.id, "bio": "Hydrologist."}, follow=True)
+
+    assert response.redirect_chain == [(profile_url, 302)]
+    assert b"alert-success" in response.content
+    assert b"Profile updated." in response.content
+
+
+@pytest.mark.django_db
+def test_profile_form_posts_back_to_profile_url(client, user):
+    """Without an action attribute the browser posts to the profile URL itself."""
+    client.force_login(user)
+
+    content = client.get(reverse("main:userprofile", args=[user.id])).content.decode()
+
+    form_tag = re.findall(r"<form\b[^>]*>", content[: content.index('id="id_bio"')])[-1]
+    assert 'method="post"' in form_tag
+    assert "action=" not in form_tag
 
 
 # ---------------------------------------------------------------------------

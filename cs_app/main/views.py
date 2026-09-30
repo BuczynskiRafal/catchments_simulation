@@ -485,8 +485,10 @@ def contact(request: HttpRequest) -> HttpResponse:
         form = ContactForm(data=request.POST)
         if form.is_valid():
             message = ContactMessage.model_validate(form.cleaned_data)
-            send_message(message)
-            return HttpResponseRedirect(reverse("contact"))
+            if send_message(message):
+                messages.success(request, "Message sent.")
+                return HttpResponseRedirect(reverse("main:contact"))
+            messages.error(request, "Your message could not be sent. Please try again later.")
     else:
         form = ContactForm()
     return render(request, "main/contact.html", {"form": form})
@@ -520,7 +522,8 @@ def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
             form = UserProfileForm(request.POST, initial={"user": user, "bio": ""})
         if form.is_valid():
             form.save()
-            return HttpResponseRedirect(reverse("userprofile", args=[user_id]))
+            messages.success(request, "Profile updated.")
+            return HttpResponseRedirect(reverse("main:userprofile", args=[user_id]))
     else:
         try:
             profile = user.userprofile

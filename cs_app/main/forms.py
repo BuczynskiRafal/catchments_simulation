@@ -10,7 +10,7 @@ Crispy Forms package.
 """
 
 from crispy_forms.helper import FormHelper
-from crispy_forms.layout import Submit
+from crispy_forms.layout import Layout, Submit
 from django import forms
 
 from .models import UserProfile
@@ -30,17 +30,23 @@ class ContactForm(forms.Form):
         send_to_me: A boolean field to indicate whether to send the message to the sender.
     """
 
-    email = forms.EmailField(label="Adres email")
-    title = forms.CharField(label="Tytuł")
-    content = forms.CharField(widget=forms.Textarea, label="Treść")
-    send_to_me = forms.BooleanField(required=False, label="Prześlij")
+    # Length limits mirror main.schemas.ContactMessage.
+    email = forms.EmailField(
+        label="Email", widget=forms.EmailInput(attrs={"autocomplete": "email"})
+    )
+    title = forms.CharField(label="Subject", max_length=200)
+    content = forms.CharField(
+        label="Message", max_length=5000, widget=forms.Textarea(attrs={"rows": 6})
+    )
+    send_to_me = forms.BooleanField(required=False, label="Send me a copy")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.helper = FormHelper()
         self.helper.form_method = "post"
-        self.helper.form_action = "contact"
-        self.helper.add_input(Submit("submit", "Wyślij"))
+        self.helper.form_action = "main:contact"
+        self.helper.attrs = {"data-cs-form": ""}  # progressive enhancement hook (pages/forms.js)
+        self.helper.add_input(Submit("submit", "Send message"))
 
 
 class UserProfileForm(forms.ModelForm):
@@ -55,13 +61,29 @@ class UserProfileForm(forms.ModelForm):
     class Meta:
         model = UserProfile
         fields = ["user", "bio"]
+        labels = {"bio": "Bio"}
+        help_texts = {
+            "bio": "A few words about you and your work. Anyone with the link can read it."
+        }
+        widgets = {"bio": forms.Textarea(attrs={"rows": 5})}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # The profile's account comes from the URL (via instance or initial), never
+        # from the request: the field is locked to that one account and not rendered.
+        initial_user = self.initial.get("user")
+        owner_pk = self.instance.user_id or getattr(initial_user, "pk", initial_user)
+        user_field = self.fields["user"]
+        user_field.disabled = True
+        user_field.queryset = user_field.queryset.filter(pk=owner_pk)
+        self.owner = user_field.queryset.first()
+
         self.helper = FormHelper()
+        # No form_action: the form posts back to the profile URL it was rendered on.
         self.helper.form_method = "post"
-        self.helper.form_action = "userprofile"
-        self.helper.add_input(Submit("submit", "Wyślij"))
+        self.helper.attrs = {"data-cs-form": ""}  # progressive enhancement hook (pages/forms.js)
+        self.helper.layout = Layout("bio")
+        self.helper.add_input(Submit("submit", "Save profile"))
 
 
 class SimulationForm(forms.Form):

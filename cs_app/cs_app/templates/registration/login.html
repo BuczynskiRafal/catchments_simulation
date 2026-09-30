@@ -1,13 +1,25 @@
 {% extends "base.html" %}
-{% load crispy_forms_tags %}
+{% load crispy_forms_tags static %}
 
-{% block title %} Logowanie {% endblock %}
+{% block title %}Log in — Catchment Simulation{% endblock %}
+
+{% block style %}
+<link rel="stylesheet" href="{% static 'main/css/content.css' %}">
+{% endblock %}
 
 {% block content %}
-    <form method="POST" class="form-group">
+<section class="cs-card auth-card" aria-labelledby="auth-title">
+    <p class="cs-eyebrow">Welcome back</p>
+    <h1 class="auth-card__title" id="auth-title">Log in</h1>
+    <p class="auth-card__lead">Log in to run simulations on your own SWMM models.</p>
+
+    <form method="post" class="auth-card__form" data-cs-form>
         {% csrf_token %}
         {{ form|crispy }}
-        <br>
-        <button type="submit" class="btn btn-success">Login</button>
+        <input type="hidden" name="next" value="{{ next }}">
+        <button type="submit" class="btn btn-primary w-100">Log in</button>
     </form>
+
+    <p class="auth-card__switch">New here? <a href="{% url 'register:register' %}">Create an account</a></p>
+</section>
 {% endblock %}

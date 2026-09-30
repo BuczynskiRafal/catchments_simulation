@@ -46,7 +46,10 @@ class RegisterPage(BasePage):
 
     @property
     def submit_button(self) -> Locator:
-        return self.page.get_by_role("button", name="Register")
+        return self.page.get_by_role("button", name="Create account", exact=True)
+
+    def password_toggle(self, label: str = "password") -> Locator:
+        return self.page.get_by_role("button", name=f"Show {label}", exact=True)
 
     def fill_form(
         self,
@@ -88,4 +91,5 @@ class RegisterPage(BasePage):
         return self.username_input.is_visible() and self.password1_input.is_visible()
 
     def get_error_messages(self) -> list[str]:
-        return self.page.locator(".errorlist li").all_inner_texts()
+        """Inline field errors rendered under the inputs."""
+        return self.page.locator(".invalid-feedback").all_inner_texts()
