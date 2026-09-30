@@ -109,6 +109,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+# Replaces ModelBackend (not alongside it): login() without backend= needs exactly one.
+AUTHENTICATION_BACKENDS = ["register.backends.UsernameOrEmailBackend"]
+
 LOGIN_URL = "/accounts/login/"
 
 LANGUAGE_CODE = "en-us"

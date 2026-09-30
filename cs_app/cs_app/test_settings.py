@@ -96,6 +96,8 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+AUTHENTICATION_BACKENDS = ["register.backends.UsernameOrEmailBackend"]
+
 LOGIN_URL = "/accounts/login/"
 
 LANGUAGE_CODE = "en-us"
