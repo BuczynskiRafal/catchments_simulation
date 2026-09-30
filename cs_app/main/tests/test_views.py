@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import uuid
 from io import BytesIO, StringIO
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from main.views import (
+    RESULT_SESSION_KEYS,
     SIM_RESULT_TOKEN_SESSION_KEY,
     TS_RESULT_TOKEN_SESSION_KEY,
     _get_catchment_choices,
@@ -30,7 +32,6 @@ from main.views import (
     _user_upload_dir,
     _validate_inp_file_stream,
     calculations,
-    clear_session_variables,
     simulation_view,
     subcatchments,
     timeseries_view,
@@ -2579,40 +2580,33 @@ def test_upload_status_stale_reference(user):
 
 
 @pytest.mark.django_db
-def test_clear_session_preserves_uploaded_file(user):
-    """Test that clear_session_variables does not remove uploaded_file_path."""
-    factory = RequestFactory()
-    request = factory.get("/")
+@pytest.mark.parametrize("url_name", ["main:upload", "main:upload_sample", "main:upload_clear"])
+def test_changing_the_model_drops_every_tools_results(client, user, url_name):
+    """Results of the previous model must not stay current next to a new (or no) model."""
+    client.force_login(user)
+    session = client.session
+    tokens = {}
+    for scope, session_key in RESULT_SESSION_KEYS:
+        tokens[scope] = uuid.uuid4().hex
+        session[session_key] = tokens[scope]
+        cache.set(_result_cache_key(scope, user.id, tokens[scope]), json.dumps({"value": 1}))
+    session.save()
+    data = {}
+    if url_name == "main:upload":
+        inp_content = b"[TITLE]\nNew model\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+        data["file"] = SimpleUploadedFile("new_model.inp", inp_content, content_type="text/plain")
 
-    session_middleware = SessionMiddleware(lambda req: None)
-    session_middleware.process_request(request)
-    request.session["uploaded_file_path"] = "uploaded_files/test.inp"
-    request.session["show_download_button"] = True
-    request.session["chart_config"] = {"data": []}
-    request.session[SIM_RESULT_TOKEN_SESSION_KEY] = "cccccccccccccccccccccccccccccccc"
-    request.session[TS_RESULT_TOKEN_SESSION_KEY] = "dddddddddddddddddddddddddddddddd"
-    request.session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S1"}
-    request.session["ts_form_state"] = {"mode": "sweep", "catchment_name": "S1"}
-    request.session.save()
-    request.user = user
-    cache.set(
-        _result_cache_key("sim", user.id, "cccccccccccccccccccccccccccccccc"),
-        json.dumps({"value": 1}),
-    )
-    cache.set(
-        _result_cache_key("ts", user.id, "dddddddddddddddddddddddddddddddd"),
-        json.dumps({"value": 1}),
-    )
+    try:
+        response = client.post(reverse(url_name), data, HTTP_X_REQUESTED_WITH="XMLHttpRequest")
 
-    clear_session_variables(request)
-
-    assert request.session.get("uploaded_file_path") == "uploaded_files/test.inp"
-    assert "show_download_button" not in request.session
-    assert "chart_config" not in request.session
-    assert "sim_form_state" not in request.session
-    assert "ts_form_state" not in request.session
-    assert cache.get(_result_cache_key("sim", user.id, "cccccccccccccccccccccccccccccccc")) is None
-    assert cache.get(_result_cache_key("ts", user.id, "dddddddddddddddddddddddddddddddd")) is None
+        assert response.status_code == 200
+        for scope, session_key in RESULT_SESSION_KEYS:
+            assert session_key not in client.session
+            assert cache.get(_result_cache_key(scope, user.id, tokens[scope])) is None
+    finally:
+        path = client.session.get("uploaded_file_path")
+        if path and os.path.exists(path):
+            os.remove(path)
 
 
 # ── upload_clear tests (#4) ──────────────────────────────────────────────

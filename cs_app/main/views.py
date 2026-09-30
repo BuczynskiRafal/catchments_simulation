@@ -62,6 +62,12 @@ EXCEL_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetm
 SIM_RESULT_TOKEN_SESSION_KEY = "sim_result_token"
 TS_RESULT_TOKEN_SESSION_KEY = "ts_result_token"
 CALC_RESULT_TOKEN_SESSION_KEY = "calc_result_token"
+# Cache scope and session key of each tool's latest result.
+RESULT_SESSION_KEYS = (
+    ("sim", SIM_RESULT_TOKEN_SESSION_KEY),
+    ("ts", TS_RESULT_TOKEN_SESSION_KEY),
+    ("calc", CALC_RESULT_TOKEN_SESSION_KEY),
+)
 RESULT_CACHE_TTL_SECONDS = 30 * 60
 MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 UPLOAD_SUBDIR = "uploaded_files"
@@ -590,6 +596,23 @@ class BodySizeLimitUploadHandler(FileUploadHandler):
         return None
 
 
+def _forget_model_state(request: HttpRequest) -> None:
+    """
+    Drop what belongs to the session's model once it is replaced or removed: the saved
+    form values, the cached subcatchment IDs and every tool's results, which would
+    otherwise be shown next to a model they were not computed from.
+    """
+    for key in (
+        SIM_FORM_STATE_SESSION_KEY,
+        TS_FORM_STATE_SESSION_KEY,
+        "_subcatchment_ids",
+        "_subcatchment_ids_file",
+    ):
+        request.session.pop(key, None)
+    for scope, session_key in RESULT_SESSION_KEYS:
+        _delete_cached_result(scope, request.user.id, request.session.pop(session_key, None))
+
+
 def _upload_response(request: HttpRequest, payload: dict, status: int = 200) -> HttpResponse:
     """
     Answer an upload: JSON for the upload zone's XHR; for the no-JS fallback form, a
@@ -712,11 +735,7 @@ def _store_upload(request: HttpRequest) -> HttpResponse:
             destination.write(chunk)
 
     request.session["uploaded_file_path"] = file_path
-    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
-    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
-    # Invalidate cached subcatchment IDs so they are re-read from new file
-    request.session.pop("_subcatchment_ids", None)
-    request.session.pop("_subcatchment_ids_file", None)
+    _forget_model_state(request)
     logger.info(f"File uploaded successfully: {file_path}")
 
     return _upload_response(request, {"message": "File was sent."})
@@ -755,10 +774,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
         _safe_remove_file(old_path)
 
     request.session["uploaded_file_path"] = file_path
-    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
-    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
-    request.session.pop("_subcatchment_ids", None)
-    request.session.pop("_subcatchment_ids_file", None)
+    _forget_model_state(request)
     try:
         sample_size = os.path.getsize(file_path)
     except OSError:
@@ -827,12 +843,7 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
 
     file_path = request.session.pop("uploaded_file_path", None)
     _safe_remove_file(file_path)
-
-    request.session.pop(SIM_FORM_STATE_SESSION_KEY, None)
-    request.session.pop(TS_FORM_STATE_SESSION_KEY, None)
-    # Clear cached subcatchment IDs
-    request.session.pop("_subcatchment_ids", None)
-    request.session.pop("_subcatchment_ids_file", None)
+    _forget_model_state(request)
 
     return JsonResponse({"message": "Upload cleared."})
 
@@ -1136,42 +1147,6 @@ def get_session_variables(request: HttpRequest) -> dict:
         "output_file_name": payload.get("output_file_name"),
         "download_token": token,
     }
-
-
-def clear_session_variables(request: HttpRequest) -> None:
-    """
-    Clear the session variables.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-    """
-    user = getattr(request, "user", None)
-    user_id = user.id if getattr(user, "is_authenticated", False) else None
-    if user_id is not None:
-        _delete_cached_result("sim", user_id, request.session.get(SIM_RESULT_TOKEN_SESSION_KEY))
-        _delete_cached_result("ts", user_id, request.session.get(TS_RESULT_TOKEN_SESSION_KEY))
-
-    for variable in [
-        "show_download_button",
-        "chart_config",
-        "results_columns",
-        "results_data",
-        "feature_name",
-        "output_file_name",
-        "ts_chart_config",
-        "ts_time_to_peak",
-        "ts_runoff_volume",
-        "ts_show_results",
-        "ts_output_file_name",
-        SIM_RESULT_TOKEN_SESSION_KEY,
-        TS_RESULT_TOKEN_SESSION_KEY,
-        SIM_FORM_STATE_SESSION_KEY,
-        TS_FORM_STATE_SESSION_KEY,
-    ]:
-        if variable in request.session:
-            del request.session[variable]
 
 
 def _save_form_state(
