@@ -38,6 +38,8 @@ from django.http import (
 from django.http.multipartparser import MultiPartParserError
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from pydantic import ValidationError as PydanticValidationError
 from pyswmm import Simulation
@@ -71,6 +73,10 @@ class ResultPayloadTooLargeError(ValueError):
 
 class InputValidationError(ValueError):
     """Raised for user-correctable input issues."""
+
+
+def _is_ajax(request: HttpRequest) -> bool:
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
 def ajax_login_required(view_func):
@@ -498,14 +504,49 @@ class BodySizeLimitUploadHandler(FileUploadHandler):
         return None
 
 
+def _upload_response(request: HttpRequest, payload: dict, status: int = 200) -> HttpResponse:
+    """
+    Answer an upload: JSON for the upload zone's XHR; for the no-JS fallback form, a
+    flash message and a redirect back to the page it was sent from (POST -> redirect -> GET).
+    """
+    if _is_ajax(request):
+        return JsonResponse(payload, status=status)
+    if status < 400:
+        messages.success(request, payload["message"])
+    else:
+        messages.error(request, payload["error"])
+    referer = request.headers.get("Referer")
+    if url_has_allowed_host_and_scheme(
+        referer, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return redirect(referer)
+    return redirect("main:simulation")
+
+
+def _upload_error(request: HttpRequest, message: str, status: int) -> HttpResponse:
+    return _upload_response(request, {"error": message}, status)
+
+
+def _upload_too_large(request: HttpRequest) -> HttpResponse:
+    return _upload_error(
+        request, f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.", 413
+    )
+
+
+@csrf_exempt
 @require_POST
 @ajax_login_required
-def upload(request: HttpRequest) -> JsonResponse:
+def upload(request: HttpRequest) -> HttpResponse:
     """
     Upload a .inp file to the server.
 
     Requires user authentication. For AJAX requests (like Dropzone.js),
     returns a 401 JSON response if not authenticated.
+
+    The size-limiting upload handler must be installed before anything reads
+    the body, and CsrfViewMiddleware reads it to look for the token. So, as
+    Django documents for changing upload handlers, the middleware skips this
+    view and ``_store_upload`` runs the CSRF check once the handler is in place.
 
     Parameters
     ----------
@@ -514,67 +555,57 @@ def upload(request: HttpRequest) -> JsonResponse:
 
     Returns
     -------
-    JsonResponse
-        JSON response containing a success message if the file was uploaded successfully, or an error message if not.
+    HttpResponse
+        See ``_upload_response``: a success message if the file was uploaded, an error message if not.
     """
     raw_content_length = request.META.get("CONTENT_LENGTH")
     if raw_content_length in ("",):
-        return JsonResponse({"error": "Invalid Content-Length header."}, status=400)
+        return _upload_error(request, "Invalid Content-Length header.", 400)
     try:
         content_length = int(raw_content_length or 0)
     except (TypeError, ValueError):
-        return JsonResponse({"error": "Invalid Content-Length header."}, status=400)
+        return _upload_error(request, "Invalid Content-Length header.", 400)
     if content_length < 0:
-        return JsonResponse({"error": "Invalid Content-Length header."}, status=400)
+        return _upload_error(request, "Invalid Content-Length header.", 400)
 
     if content_length > MAX_UPLOAD_BODY_SIZE:
-        return JsonResponse(
-            {"error": (f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.")},
-            status=413,
-        )
+        return _upload_too_large(request)
 
-    request.upload_handlers = [
-        BodySizeLimitUploadHandler(request, MAX_UPLOAD_BODY_SIZE),
-        *request.upload_handlers,
-    ]
+    request.upload_handlers.insert(0, BodySizeLimitUploadHandler(request, MAX_UPLOAD_BODY_SIZE))
+    return _store_upload(request)
+
+
+@csrf_protect
+def _store_upload(request: HttpRequest) -> HttpResponse:
+    """Parse, validate and save the uploaded file (the CSRF check parses the body first)."""
     try:
         files = request.FILES
     except MultiPartParserError:
-        return JsonResponse({"error": "Malformed multipart request."}, status=400)
+        return _upload_error(request, "Malformed multipart request.", 400)
     if getattr(request, "_upload_body_too_large", False):
-        return JsonResponse(
-            {"error": (f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.")},
-            status=413,
-        )
+        return _upload_too_large(request)
 
     if "file" not in files:
-        return JsonResponse({"error": "No file provided."}, status=400)
+        return _upload_error(request, "No file provided.", 400)
 
     uploaded_file = files["file"]
     filename, file_extension = os.path.splitext(uploaded_file.name)
 
     # Check file extension
     if file_extension.lower() != ".inp":
-        return JsonResponse(
-            {"error": "Invalid file type. Please upload a .inp file."},
-            status=400,
-        )
+        return _upload_error(request, "Invalid file type. Please upload a .inp file.", 400)
 
     # Check file size
     if uploaded_file.size > MAX_UPLOAD_SIZE:
-        return JsonResponse(
-            {"error": f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB."},
-            status=413,
-        )
+        return _upload_too_large(request)
 
     # Validate file content
     if not _validate_inp_file_stream(uploaded_file):
         logger.warning(f"Invalid .inp file content uploaded: {uploaded_file.name}")
-        return JsonResponse(
-            {
-                "error": "Invalid file content. The file does not appear to be a valid SWMM .inp file."
-            },
-            status=400,
+        return _upload_error(
+            request,
+            "Invalid file content. The file does not appear to be a valid SWMM .inp file.",
+            400,
         )
 
     # Sanitize filename and scope to user
@@ -602,7 +633,7 @@ def upload(request: HttpRequest) -> JsonResponse:
     request.session.pop("_subcatchment_ids_file", None)
     logger.info(f"File uploaded successfully: {file_path}")
 
-    return JsonResponse({"message": "File was sent."})
+    return _upload_response(request, {"message": "File was sent."})
 
 
 @require_POST
@@ -756,12 +787,14 @@ def _get_catchment_choices(request: HttpRequest) -> list[tuple[str, str]]:
     """
     Extract subcatchment IDs from the uploaded INP file stored in the session.
 
-    Returns a list of (id, id) tuples suitable for a Select widget, or a
-    placeholder when no file is available.
+    Returns a list of (id, id) tuples suitable for a Select widget, or a single
+    placeholder saying why there is nothing to choose (same texts as upload_zone.js).
     """
     ids = _get_subcatchment_ids(request)
     if ids:
-        return [("", "--- Select catchment ---")] + [(sid, sid) for sid in ids]
+        return [("", "--- Select subcatchment ---")] + [(sid, sid) for sid in ids]
+    if request.session.get("uploaded_file_path"):
+        return [("", "--- No subcatchments found in this model ---")]
     return [("", "--- Upload a file first ---")]
 
 

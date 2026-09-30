@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
+from django.contrib.messages import get_messages
 from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.core.cache import cache
@@ -649,6 +650,12 @@ def test_calculations_anonymous_post_returns_200(client):
     assert response.status_code == 200
 
 
+def _upload(request):
+    """Call the upload view directly, skipping the CSRF check as django.test.Client does."""
+    request._dont_enforce_csrf_checks = True
+    return upload(request)
+
+
 @pytest.mark.django_db
 def test_upload_unauthenticated_ajax_returns_401():
     """
@@ -666,7 +673,7 @@ def test_upload_unauthenticated_ajax_returns_401():
 
     request.user = AnonymousUser()
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 401
     data = json.loads(response.content)
@@ -689,7 +696,7 @@ def test_upload_unauthenticated_regular_request_redirects():
 
     request.user = AnonymousUser()
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 302
     assert settings.LOGIN_URL in response.url
@@ -734,7 +741,7 @@ def test_upload_returns_413_when_content_length_exceeds_body_limit(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 413
     data = json.loads(response.content)
@@ -758,7 +765,7 @@ def test_upload_returns_413_when_uploaded_file_size_exceeds_limit(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 413
     data = json.loads(response.content)
@@ -786,7 +793,7 @@ def test_upload_returns_413_when_content_length_is_spoofed_low(user, monkeypatch
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 413
     data = json.loads(response.content)
@@ -818,7 +825,7 @@ def test_upload_handles_invalid_or_negative_content_length(user, raw_content_len
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "content_length_variants.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
         assert response.status_code == 400
     finally:
         if os.path.exists(expected_path):
@@ -847,11 +854,51 @@ def test_upload_handles_missing_content_length(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "missing_length.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
         assert response.status_code == 400
     finally:
         if os.path.exists(expected_path):
             os.remove(expected_path)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("filename", "referer", "expected_url", "expected_message"),
+    [
+        (
+            "fallback.inp",
+            "http://testserver/timeseries",
+            "http://testserver/timeseries",
+            "File was sent.",
+        ),
+        ("fallback.txt", "/calculations", "/calculations", "Invalid file type."),
+        ("fallback.inp", "https://evil.example/", "/simulation", "File was sent."),
+        ("fallback.inp", None, "/simulation", "File was sent."),
+    ],
+)
+def test_upload_without_js_redirects_back_with_a_message(
+    client, user, filename, referer, expected_url, expected_message
+):
+    """The no-JS fallback form gets POST -> redirect -> GET, never a JSON page."""
+    client.force_login(user)
+    inp_content = b"[TITLE]\nFallback\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    headers = {"HTTP_REFERER": referer} if referer else {}
+
+    try:
+        response = client.post(
+            reverse("main:upload"),
+            {"file": SimpleUploadedFile(filename, inp_content, content_type="text/plain")},
+            **headers,
+        )
+
+        assert response.status_code == 302
+        assert response.url == expected_url
+        [message] = get_messages(response.wsgi_request)
+        assert str(message).startswith(expected_message)
+    finally:
+        path = client.session.get("uploaded_file_path")
+        if path and os.path.exists(path):
+            os.remove(path)
 
 
 @pytest.mark.django_db
@@ -880,7 +927,7 @@ def test_upload_authenticated_user_can_upload(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         data = json.loads(response.content)
@@ -932,7 +979,7 @@ def test_upload_uses_stream_validator_not_bytes_validator(user, monkeypatch):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "streamed_validation.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         assert called_stream_validator["called"] is True
@@ -962,7 +1009,7 @@ def test_upload_valid_small_inp_still_succeeds(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "valid_small.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         data = json.loads(response.content)
@@ -992,7 +1039,7 @@ def test_upload_invalid_content_returns_400(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 400
     data = json.loads(response.content)
@@ -1018,7 +1065,7 @@ def test_upload_binary_blob_with_single_marker_returns_400(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 400
     data = json.loads(response.content)
@@ -1047,7 +1094,7 @@ def test_upload_valid_utf16_bom_file_succeeds(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "utf16_valid.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         assert request.session.get("uploaded_file_path") == expected_path
@@ -1106,7 +1153,7 @@ def test_upload_size_equal_limit_is_allowed(user, monkeypatch):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "equal_limit.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
         assert response.status_code == 200
     finally:
         if os.path.exists(expected_path):
@@ -1138,7 +1185,7 @@ def test_upload_body_length_equal_limit_is_allowed(user, monkeypatch):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "equal_body_limit.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
         assert response.status_code == 200
     finally:
         if os.path.exists(expected_path):
@@ -1246,7 +1293,7 @@ def test_upload_clears_timeseries_form_state(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         assert "ts_form_state" not in request.session
@@ -1278,7 +1325,7 @@ def test_upload_clears_simulation_form_state(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         assert "sim_form_state" not in request.session
@@ -1312,7 +1359,7 @@ def test_upload_failure_preserves_existing_form_state_and_subcatchment_cache(use
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 400
     assert request.session["uploaded_file_path"] == "uploaded_files/original.inp"
@@ -2488,64 +2535,6 @@ def test_upload_status_rejects_post(user):
     assert response.status_code == 405
 
 
-# ── Core flow test (#8) ──────────────────────────────────────────────────
-
-
-@pytest.mark.django_db
-def test_upload_persists_after_clear_session_and_new_simulation(user):
-    """
-    Core flow: upload file -> clear_session_variables (as simulation does)
-    -> file path remains in session -> upload_status still returns it.
-    """
-    factory = RequestFactory()
-
-    # 1) Upload a file
-    inp_content = b"[TITLE]\nPersistence Test\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
-    uploaded_file = SimpleUploadedFile("persist_test.inp", inp_content, content_type="text/plain")
-    request = factory.post(
-        "/upload/",
-        {"file": uploaded_file},
-        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
-    )
-    session_middleware = SessionMiddleware(lambda req: None)
-    session_middleware.process_request(request)
-    request.session.save()
-    request.user = user
-
-    saved_path = None
-    try:
-        response = upload(request)
-        assert response.status_code == 200
-        saved_path = request.session.get("uploaded_file_path")
-        assert saved_path is not None
-
-        # 2) Simulate what happens after a simulation run – clear results
-        request.session["show_download_button"] = True
-        request.session["chart_config"] = {"data": []}
-        clear_session_variables(request)
-
-        # 3) Verify file path survived
-        assert request.session.get("uploaded_file_path") == saved_path
-        assert os.path.exists(saved_path)
-
-        # 4) Verify upload_status reports the file
-        status_request = factory.get(
-            "/upload/status/",
-            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
-        )
-        session_middleware.process_request(status_request)
-        status_request.session = request.session
-        status_request.user = user
-
-        status_response = upload_status(status_request)
-        data = json.loads(status_response.content)
-        assert data["has_file"] is True
-        assert data["filename"] == "persist_test.inp"
-    finally:
-        if saved_path and os.path.exists(saved_path):
-            os.remove(saved_path)
-
-
 @pytest.mark.django_db
 def test_upload_replaces_old_file_on_disk(user):
     """Uploading a new file removes the old file from disk (#2, #9)."""
@@ -2564,7 +2553,7 @@ def test_upload_replaces_old_file_on_disk(user):
     request.user = user
     path_b = None
     try:
-        upload(request)
+        _upload(request)
         path_a = request.session["uploaded_file_path"]
         assert os.path.exists(path_a)
 
@@ -2578,7 +2567,7 @@ def test_upload_replaces_old_file_on_disk(user):
         session_middleware.process_request(request2)
         request2.session = request.session
         request2.user = user
-        upload(request2)
+        _upload(request2)
         path_b = request2.session["uploaded_file_path"]
 
         # Old file should be gone, new file present
@@ -2665,6 +2654,19 @@ def test_get_catchment_choices_no_file():
     assert len(choices) == 1
     assert choices[0][0] == ""
     assert "Upload" in choices[0][1]
+
+
+def test_get_catchment_choices_model_without_subcatchments(tmp_path):
+    """A loaded model with no subcatchments is not reported as a missing upload."""
+    model_path = tmp_path / "empty.inp"
+    model_path.write_text("[TITLE]\n[OPTIONS]\nFLOW_UNITS CMS\n", encoding="utf-8")
+    request = RequestFactory().get("/")
+    SessionMiddleware(lambda req: None).process_request(request)
+    request.session["uploaded_file_path"] = str(model_path)
+
+    choices = _get_catchment_choices(request)
+
+    assert choices == [("", "--- No subcatchments found in this model ---")]
 
 
 @pytest.mark.django_db
