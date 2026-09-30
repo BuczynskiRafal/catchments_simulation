@@ -1,7 +1,4 @@
-"""
-This module contains views and helper functions for rendering and managing
-the main view, about page, contact form, and user profiles.
-"""
+"""Views and helper functions for the main Django application."""
 
 import datetime
 import hashlib
@@ -86,6 +83,15 @@ CALCULATIONS_RESULTS_TEMPLATE = "main/partials/_calculations_results.html"
 AUTH_REQUIRED_MESSAGE = "Authentication required."
 FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
+SIM_SESSION_DEFAULTS = {
+    "show_download_button": False,
+    "chart_config": None,
+    "results_columns": [],
+    "results_data": [],
+    "feature_name": "",
+    "output_file_name": None,
+    "download_token": None,
+}
 
 
 class ResultPayloadTooLargeError(ValueError):
@@ -144,11 +150,10 @@ def _classify_run_error(
 
 def ajax_login_required(view_func):
     """
-    Decorator that checks authentication for AJAX requests.
+    Like ``@login_required`` but returns 401 JSON for AJAX requests.
 
-    For AJAX requests, returns a 401 JSON response with a login URL
-    (``error`` for the upload zone, ``message``/``field_errors`` for async forms).
-    For regular requests, redirects to the login page.
+    The JSON carries ``error`` for the upload zone and ``message``/``field_errors``
+    for async forms.
     """
 
     @wraps(view_func)
@@ -377,6 +382,38 @@ def _safe_remove_file(path: str | None) -> None:
         os.remove(path)
 
 
+def _file_too_large_message() -> str:
+    return f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB."
+
+
+def _timestamp_suffix() -> str:
+    return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _get_download_payload(
+    request: HttpRequest,
+    *,
+    scope: str,
+    redirect_name: str,
+    missing_message: str,
+) -> tuple[dict | None, HttpResponseRedirect | None]:
+    token = request.POST.get("token")
+    if not _is_valid_result_token(token):
+        messages.error(request, "Invalid download token.")
+        return None, redirect(redirect_name)
+
+    payload = _load_cached_result(scope, request.user.id, token)
+    if not payload:
+        messages.error(request, missing_message)
+        return None, redirect(redirect_name)
+
+    return payload, None
+
+
+def _default_simulation_session_data() -> dict:
+    return dict(SIM_SESSION_DEFAULTS)
+
+
 def _coerce_input_validation_error(error: Exception) -> InputValidationError | None:
     """Normalize known user-facing errors to InputValidationError."""
     if isinstance(error, InputValidationError):
@@ -435,56 +472,15 @@ def _uploaded_model_path(request: HttpRequest) -> str:
 
 
 def main_view(request: HttpRequest) -> HttpResponse:
-    """
-    Render the home page: example hydrograph, tool overview and package docs.
-
-    ``home`` is None when the precomputed example data cannot be loaded; the
-    page then renders without the example charts.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered main view template.
-    """
+    """Home page; ``home`` is None when the precomputed example data cannot be loaded."""
     return render(request, "main/main_view.html", {"home": _load_home_data()})
 
 
 def about(request: HttpRequest) -> HttpResponse:
-    """
-    Render the about page.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered about page template.
-    """
     return render(request, "main/about.html")
 
 
 def contact(request: HttpRequest) -> HttpResponse:
-    """
-    Render the contact form and handle form submission.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered contact form template.
-    """
     if request.method == "POST":
         form = ContactForm(data=request.POST)
         if form.is_valid():
@@ -498,47 +494,42 @@ def contact(request: HttpRequest) -> HttpResponse:
     return render(request, "main/contact.html", {"form": form})
 
 
+def _build_user_profile_form(user, *, data: object | None = None) -> UserProfileForm:
+    form_kwargs = {}
+    if data is not None:
+        form_kwargs["data"] = data
+
+    try:
+        return UserProfileForm(instance=user.userprofile, **form_kwargs)
+    except AttributeError:
+        if data is None:
+            logger.debug("User %s has no profile, creating empty form", user.id)
+        else:
+            logger.debug("User %s has no profile, creating new form for POST", user.id)
+        return UserProfileForm(initial={"user": user, "bio": ""}, **form_kwargs)
+
+
+def _set_profile_form_read_only(form: UserProfileForm) -> None:
+    for field in form.fields.values():
+        field.disabled = True
+    form.helper.inputs = []
+
+
 def user_profile(request: HttpRequest, user_id: int) -> HttpResponse:
-    """
-    Render the user profile page and handle form submission.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-    user_id : int
-        The user ID for the profile.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered user profile template.
-    """
+    """Display user profile; owners can edit, others get read-only view."""
     user = get_object_or_404(get_user_model(), id=user_id)
     if request.method == "POST":
         if request.user != user:
             return HttpResponseForbidden("You are not allowed to edit this profile.")
-        try:
-            profile = user.userprofile
-            form = UserProfileForm(request.POST, instance=profile)
-        except AttributeError:
-            logger.debug(f"User {user_id} has no profile, creating new form for POST")
-            form = UserProfileForm(request.POST, initial={"user": user, "bio": ""})
+        form = _build_user_profile_form(user, data=request.POST)
         if form.is_valid():
             form.save()
             messages.success(request, "Profile updated.")
             return HttpResponseRedirect(reverse("main:userprofile", args=[user_id]))
     else:
-        try:
-            profile = user.userprofile
-            form = UserProfileForm(instance=profile)
-        except AttributeError:
-            logger.debug(f"User {user_id} has no profile, creating empty form")
-            form = UserProfileForm(initial={"user": user, "bio": ""})
+        form = _build_user_profile_form(user)
         if request.user != user:
-            for field in form.fields:
-                form.fields[field].disabled = True
-            form.helper.inputs = []
+            _set_profile_form_read_only(form)
     return render(request, "main/userprofile.html", {"form": form})
 
 
@@ -563,12 +554,7 @@ def _sanitize_filename(filename: str) -> str:
 
 
 def _validate_inp_file_content(file_content: bytes) -> bool:
-    """
-    Validate that the file content appears to be a valid SWMM .inp file.
-
-    SWMM .inp files typically start with section headers like [TITLE], [OPTIONS], etc.
-    Handles BOM markers and various line endings (CRLF/LF).
-    """
+    """Check in-memory bytes for SWMM section headers. Handles BOM and mixed line endings."""
     try:
         if file_content.startswith(b"\xef\xbb\xbf"):
             file_content = file_content[3:]
@@ -735,9 +721,7 @@ def _upload_error(request: HttpRequest, message: str, status: int) -> HttpRespon
 
 
 def _upload_too_large(request: HttpRequest) -> HttpResponse:
-    return _upload_error(
-        request, f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.", 413
-    )
+    return _upload_error(request, _file_too_large_message(), 413)
 
 
 @csrf_exempt
@@ -745,25 +729,12 @@ def _upload_too_large(request: HttpRequest) -> HttpResponse:
 @ajax_login_required
 def upload(request: HttpRequest) -> HttpResponse:
     """
-    Upload a .inp file to the server.
-
-    Requires user authentication. For AJAX requests (like Dropzone.js),
-    returns a 401 JSON response if not authenticated.
+    Accept a user-uploaded .inp file after size and content validation.
 
     The size-limiting upload handler must be installed before anything reads
     the body, and CsrfViewMiddleware reads it to look for the token. So, as
     Django documents for changing upload handlers, the middleware skips this
     view and ``_store_upload`` runs the CSRF check once the handler is in place.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        See ``_upload_response``: a success message if the file was uploaded, an error message if not.
     """
     raw_content_length = request.META.get("CONTENT_LENGTH")
     if raw_content_length in ("",):
@@ -808,7 +779,7 @@ def _store_upload(request: HttpRequest) -> HttpResponse:
 
     # Validate file content
     if not _validate_inp_file_stream(uploaded_file):
-        logger.warning(f"Invalid .inp file content uploaded: {uploaded_file.name}")
+        logger.warning("Invalid .inp file content uploaded: %s", uploaded_file.name)
         return _upload_error(
             request,
             "Invalid file content. The file does not appear to be a valid SWMM .inp file.",
@@ -833,7 +804,7 @@ def _store_upload(request: HttpRequest) -> HttpResponse:
             destination.write(chunk)
 
     unchanged = _adopt_model(request, file_path)
-    logger.info(f"File uploaded successfully: {file_path}")
+    logger.info("File uploaded successfully: %s", file_path)
 
     return _upload_response(request, {"message": "File was sent.", "unchanged": unchanged})
 
@@ -889,20 +860,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
 @require_GET
 @ajax_login_required
 def upload_status(request: HttpRequest) -> JsonResponse:
-    """
-    Return the current uploaded file status from the session.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    JsonResponse
-        JSON with ``has_file``, ``filename``, and ``size`` when a file is
-        present, or ``has_file: false`` otherwise.
-    """
+    """Return ``{has_file, filename, size}`` for the current session upload."""
     file_path = request.session.get("uploaded_file_path")
     if file_path:
         try:
@@ -922,19 +880,7 @@ def upload_status(request: HttpRequest) -> JsonResponse:
 
 @ajax_login_required
 def upload_clear(request: HttpRequest) -> JsonResponse:
-    """
-    Clear the uploaded file from the session and disk.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    JsonResponse
-        JSON response confirming the upload was cleared.
-    """
+    """Remove uploaded file from disk and clear related session state."""
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed."}, status=405)
 
@@ -946,13 +892,7 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
 
 
 def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
-    """
-    Return subcatchment IDs from the uploaded INP file, using session cache.
-
-    The result is cached in the session under ``_subcatchment_ids`` and
-    ``_subcatchment_ids_file``.  The cache is invalidated when the uploaded
-    file path changes.
-    """
+    """Return subcatchment IDs from the uploaded INP, cached per session/file path."""
     file_path = request.session.get("uploaded_file_path")
     cached_file = request.session.get("_subcatchment_ids_file")
     if file_path and file_path == cached_file:
@@ -979,10 +919,9 @@ def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
 
 def _get_catchment_choices(request: HttpRequest) -> list[tuple[str, str]]:
     """
-    Extract subcatchment IDs from the uploaded INP file stored in the session.
+    Build ``(value, label)`` choices for the subcatchment ``<select>`` widget.
 
-    Returns a list of (id, id) tuples suitable for a Select widget, or a single
-    placeholder saying why there is nothing to choose (same texts as upload_zone.js).
+    Without IDs, a single placeholder says why (same texts as upload_zone.js).
     """
     ids = _get_subcatchment_ids(request)
     if ids:
@@ -995,36 +934,12 @@ def _get_catchment_choices(request: HttpRequest) -> list[tuple[str, str]]:
 @require_GET
 @ajax_login_required
 def subcatchments(request: HttpRequest) -> JsonResponse:
-    """
-    Return the list of subcatchment IDs from the uploaded INP file.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    JsonResponse
-        JSON with ``subcatchments`` list.
-    """
+    """AJAX endpoint returning subcatchment IDs from the uploaded INP."""
     return JsonResponse({"subcatchments": _get_subcatchment_ids(request)})
 
 
 def get_feature_name(method_name: str) -> str:
-    """
-    Get the feature name based on the method name.
-
-    Parameters
-    ----------
-    method_name : str
-        The name of the method.
-
-    Returns
-    -------
-    str
-        The feature name associated with the method name.
-    """
+    """Map simulation method name (e.g. ``simulate_area``) to INP column name."""
 
     feature_map = {
         "simulate_percent_slope": "PercSlope",
@@ -1193,47 +1108,19 @@ def _excel_attachment_response(
 
 
 def get_session_variables(request: HttpRequest) -> dict:
-    """
-    Get the session variables.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    dict
-        A dictionary containing the session variables.
-    """
+    """Load simulation result context from cache for template rendering."""
     user = getattr(request, "user", None)
     user_id = user.id if getattr(user, "is_authenticated", False) else None
 
     if user_id is None:
-        return {
-            "show_download_button": False,
-            "chart_config": None,
-            "results_columns": [],
-            "results_data": [],
-            "feature_name": "",
-            "output_file_name": None,
-            "download_token": None,
-        }
+        return _default_simulation_session_data()
 
     token = request.session.get(SIM_RESULT_TOKEN_SESSION_KEY)
     payload = _load_cached_result("sim", user_id, token)
     if not payload:
         if token:
             request.session.pop(SIM_RESULT_TOKEN_SESSION_KEY, None)
-        return {
-            "show_download_button": False,
-            "chart_config": None,
-            "results_columns": [],
-            "results_data": [],
-            "feature_name": "",
-            "output_file_name": None,
-            "download_token": None,
-        }
+        return _default_simulation_session_data()
 
     return {
         "show_download_button": True,
@@ -1252,11 +1139,7 @@ def _save_form_state(
     cleaned_data: dict,
     fields: tuple[str, ...],
 ) -> None:
-    """
-    Persist selected form values in session for subsequent GET requests.
-
-    Values that are ``None`` are skipped so the form can fall back to field defaults.
-    """
+    """Persist non-None form values in session so the form is pre-filled on next GET."""
     state = {}
     for field_name in fields:
         value = cleaned_data.get(field_name)
@@ -1272,13 +1155,7 @@ def _get_form_initial(
     form_class: type[forms.Form],
     fields: tuple[str, ...],
 ) -> dict:
-    """
-    Return sanitized initial values restored from session.
-
-    Dynamic ``catchment_name`` is validated against current catchment choices.
-    Other fields are validated/coerced using Django field ``to_python`` and
-    static choice sets where applicable.
-    """
+    """Restore form values from session, validating against current choices and field types."""
     state = request.session.get(session_key)
     if not isinstance(state, dict):
         return {}
@@ -1350,8 +1227,7 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
         y_columns=other_cols,
         flow_units=flow_units,
     )
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file_name = f"{request.user.username}_simulation_result_{timestamp}.xlsx"
+    output_file_name = f"{request.user.username}_simulation_result_{_timestamp_suffix()}.xlsx"
     chart_config = {
         "data": json.loads(df.to_json(orient="records")),
         "x": feature_name,
@@ -1374,21 +1250,11 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
 @ajax_login_required
 def simulation_view(request: HttpRequest) -> HttpResponse:
     """
-    Render the simulation view.
+    Parameter sweep page; POST runs the sweep.
 
-    A regular POST redirects back to the page (PRG). A POST sent with
-    ``X-Requested-With: XMLHttpRequest`` returns the results fragment on success
-    and a JSON error (``{"message", "field_errors"}``) otherwise.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered simulation template.
+    A regular POST redirects back to the page (PRG). An async POST
+    (``X-Requested-With: XMLHttpRequest``) gets the results fragment, or
+    ``{"message", "field_errors"}`` JSON on failure.
     """
     catchment_choices = _get_catchment_choices(request)
     if request.method != "POST":
@@ -1439,14 +1305,14 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
 @require_POST
 def download_simulation_results(request: HttpRequest) -> HttpResponse:
     """Download simulation results as an Excel file generated in memory."""
-    token = request.POST.get("token")
-    if not _is_valid_result_token(token):
-        messages.error(request, "Invalid download token.")
-        return redirect("main:simulation")
-    payload = _load_cached_result("sim", request.user.id, token)
-    if not payload:
-        messages.error(request, "No simulation results available to download.")
-        return redirect("main:simulation")
+    payload, redirect_response = _get_download_payload(
+        request,
+        scope="sim",
+        redirect_name="main:simulation",
+        missing_message="No simulation results available to download.",
+    )
+    if redirect_response:
+        return redirect_response
 
     try:
         df = pd.DataFrame(payload["results_data"], columns=payload["results_columns"])
@@ -1461,14 +1327,14 @@ def download_simulation_results(request: HttpRequest) -> HttpResponse:
 @require_POST
 def download_timeseries_results(request: HttpRequest) -> HttpResponse:
     """Download timeseries analysis results as an in-memory Excel file."""
-    token = request.POST.get("token")
-    if not _is_valid_result_token(token):
-        messages.error(request, "Invalid download token.")
-        return redirect("main:timeseries")
-    payload = _load_cached_result("ts", request.user.id, token)
-    if not payload:
-        messages.error(request, "No timeseries results available to download.")
-        return redirect("main:timeseries")
+    payload, redirect_response = _get_download_payload(
+        request,
+        scope="ts",
+        redirect_name="main:timeseries",
+        missing_message="No timeseries results available to download.",
+    )
+    if redirect_response:
+        return redirect_response
 
     mode = payload.get("mode")
     data = payload.get("data")
@@ -1515,15 +1381,14 @@ def _timeseries_payload_to_csv_df(payload: dict) -> pd.DataFrame:
 @require_POST
 def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
     """Download timeseries analysis results as CSV."""
-    token = request.POST.get("token")
-    if not _is_valid_result_token(token):
-        messages.error(request, "Invalid download token.")
-        return redirect("main:timeseries")
-
-    payload = _load_cached_result("ts", request.user.id, token)
-    if not payload:
-        messages.error(request, "No timeseries results available to download.")
-        return redirect("main:timeseries")
+    payload, redirect_response = _get_download_payload(
+        request,
+        scope="ts",
+        redirect_name="main:timeseries",
+        missing_message="No timeseries results available to download.",
+    )
+    if redirect_response:
+        return redirect_response
 
     try:
         df = _timeseries_payload_to_csv_df(payload)
@@ -1655,7 +1520,7 @@ def _run_timeseries(request: HttpRequest, form: TimeseriesForm) -> None:
     ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
     x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
     chart_config = {"mode": mode, "columns": ts_columns, "xLabel": x_label, "yLabels": y_labels}
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = _timestamp_suffix()
 
     with FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path) as model:
         if mode == "single":
@@ -1714,27 +1579,9 @@ def _run_timeseries(request: HttpRequest, form: TimeseriesForm) -> None:
 @ajax_login_required
 def timeseries_view(request: HttpRequest) -> HttpResponse:
     """
-    Render the timeseries analysis view.
+    Timeseries analysis: single run with metrics or parameter sweep with overlaid hydrographs.
 
-    Supports two modes:
-    - single: Run a single simulation and display per-timestep data with
-      analytical metrics (time to peak, runoff volume).
-    - sweep: Vary a subcatchment parameter over a range and overlay the
-      resulting hydrographs.
-
-    A regular POST redirects back to the page (PRG). A POST sent with
-    ``X-Requested-With: XMLHttpRequest`` returns the results fragment on success
-    and a JSON error (``{"message", "field_errors"}``) otherwise.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered timeseries template.
+    POST behaves as in ``simulation_view``.
     """
     catchment_choices = _get_catchment_choices(request)
     if request.method != "POST":
@@ -1801,20 +1648,10 @@ def _cleanup_swmm_side_files(inp_path: str) -> None:
 
 def calculations(request: HttpRequest) -> HttpResponse:
     """
-    Render the SWMM vs ANN comparison page and run the comparison on POST.
+    SWMM vs ANN comparison page.
 
-    GET is public and shows the session's last comparison; POST requires
-    authentication (see ``_run_calculations``).
-
-    Parameters
-    ----------
-    request : HttpRequest
-        The incoming HTTP request.
-
-    Returns
-    -------
-    HttpResponse
-        The HTTP response with the rendered calculations template.
+    GET is public and shows the session's last comparison; POST runs one and
+    requires authentication (see ``_run_calculations``).
     """
     if request.method == "POST":
         return _run_calculations(request)
@@ -1840,7 +1677,7 @@ def _check_in_user_upload_dir(path: str, user_id: int) -> None:
     except ValueError:
         common_path = None
     if common_path != user_dir:
-        logger.warning(f"File path traversal attempt or cross-user access: {path}")
+        logger.warning("File path traversal attempt or cross-user access: %s", path)
         raise InputValidationError("invalid_path")
 
 
