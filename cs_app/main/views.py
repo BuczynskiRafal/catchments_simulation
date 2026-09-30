@@ -68,6 +68,8 @@ SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
 US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
 SIMULATION_TEMPLATE = "main/simulation.html"
 SIMULATION_RESULTS_TEMPLATE = "main/partials/_simulation_results.html"
+TIMESERIES_TEMPLATE = "main/timeseries.html"
+TIMESERIES_RESULTS_TEMPLATE = "main/partials/_timeseries_results.html"
 AUTH_REQUIRED_MESSAGE = "Authentication required."
 FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
@@ -154,6 +156,10 @@ def ajax_login_required(view_func):
         return view_func(request, *args, **kwargs)
 
     return wrapper
+
+
+def _is_finite_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool) and np.isfinite(value)
 
 
 def _load_chart_json(filename: str, x_key: str, y_key: str) -> list[dict]:
@@ -966,7 +972,10 @@ def _unit_system(flow_units: str | None) -> str:
 
 
 def _unit_labels(flow_units: str | None) -> dict[str, str]:
-    """Return display units for chart labels."""
+    """Return display units for chart labels.
+
+    SWMM reports rainfall and infiltration rates per hour but evaporation rates per day.
+    """
     normalized = _normalize_flow_units(flow_units)
     system = _unit_system(normalized)
     if system == "SI":
@@ -975,7 +984,8 @@ def _unit_labels(flow_units: str | None) -> dict[str, str]:
             "area": "ha",
             "storage": "mm",
             "depth_rate": "mm/h",
-            "volume": "m3",
+            "evaporation_rate": "mm/day",
+            "volume": "m³",
             "flow_rate": normalized,
         }
     if system == "US":
@@ -984,7 +994,8 @@ def _unit_labels(flow_units: str | None) -> dict[str, str]:
             "area": "acre",
             "storage": "in",
             "depth_rate": "in/h",
-            "volume": "ft3",
+            "evaporation_rate": "in/day",
+            "volume": "ft³",
             "flow_rate": normalized,
         }
     return {
@@ -992,6 +1003,7 @@ def _unit_labels(flow_units: str | None) -> dict[str, str]:
         "area": "model area units",
         "storage": "model storage units",
         "depth_rate": "model depth/time units",
+        "evaporation_rate": "model evaporation rate units",
         "volume": "model volume units",
         "flow_rate": normalized or "model flow units",
     }
@@ -1039,7 +1051,7 @@ def _build_timeseries_axis_labels(
         "rainfall": "Rainfall Intensity [{depth_rate}]",
         "runoff": "Runoff Rate [{flow_rate}]",
         "infiltration_loss": "Infiltration Loss [{depth_rate}]",
-        "evaporation_loss": "Evaporation Loss [{depth_rate}]",
+        "evaporation_loss": "Evaporation Loss [{evaporation_rate}]",
         "runon": "Runon Rate [{flow_rate}]",
     }
     y_labels = {}
@@ -1456,7 +1468,162 @@ def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
         return redirect("main:timeseries")
 
 
-@login_required
+# runoff_volume() integrates flow over seconds, i.e. returns flow unit x s; these
+# factors turn that into the volume unit of the model's unit system (m³ or ft³).
+_US_GALLON_FT3 = 0.133680556
+RUNOFF_VOLUME_FACTORS = {
+    "CMS": 1.0,
+    "LPS": 1e-3,
+    "MLD": 1e3 / 86_400,
+    "CFS": 1.0,
+    "GPM": _US_GALLON_FT3 / 60,
+    "MGD": 1e6 * _US_GALLON_FT3 / 86_400,
+}
+
+
+def _runoff_volume_unit(flow_units: str | None) -> tuple[float, str]:
+    """Return the factor from runoff_volume() to the display volume unit, and that unit."""
+    normalized = _normalize_flow_units(flow_units)
+    units = _unit_labels(normalized)
+    if normalized in RUNOFF_VOLUME_FACTORS:
+        return RUNOFF_VOLUME_FACTORS[normalized], units["volume"]
+    return 1.0, f"{units['flow_rate']} × s"
+
+
+def _format_duration(delta: pd.Timedelta) -> str:
+    """Format a duration as e.g. "1 d 8 h 55 min", leaving out zero parts."""
+    remaining = round(delta.total_seconds())
+    parts = []
+    for size, unit in ((86_400, "d"), (3_600, "h"), (60, "min"), (1, "s")):
+        amount, remaining = divmod(remaining, size)
+        if amount:
+            parts.append(f"{amount} {unit}")
+    return " ".join(parts) or "0 min"
+
+
+def _format_parameter_value(value: float) -> str:
+    """Shortest text for a swept value, without float noise: 0.0 -> "0", 0.30000000000000004 -> "0.3"."""
+    return f"{value:.10g}"
+
+
+def _timeseries_records(ts_df: pd.DataFrame) -> list[dict]:
+    """JSON-safe rows of one run: the datetime index as text, NaN as null."""
+    frame = ts_df.reset_index()
+    frame["datetime"] = frame["datetime"].astype(str)
+    return json.loads(frame.to_json(orient="records"))
+
+
+def _hydrograph_metrics(ts_df: pd.DataFrame, volume_factor: float) -> dict:
+    """Peak, time to peak and volume of one run's runoff; None where a value is undefined."""
+    runoff = ts_df["runoff"]
+    try:
+        delay = time_to_peak(ts_df, column="runoff")
+    except ValueError:  # no runoff at all, so there is no peak to time
+        delay = pd.NaT
+    try:
+        volume = runoff_volume(ts_df, column="runoff") * volume_factor
+    except ValueError:  # fewer than two timesteps
+        volume = None
+    peak = float(runoff.max()) if not runoff.empty else None
+    has_peak = not pd.isna(delay)
+    return {
+        "peak": peak if _is_finite_number(peak) else None,
+        "peak_at": runoff.idxmax().strftime("%Y-%m-%d %H:%M") if has_peak else None,
+        "time_to_peak": _format_duration(delay) if has_peak else None,
+        "time_to_peak_seconds": delay.total_seconds() if has_peak else None,
+        "volume": volume if _is_finite_number(volume) else None,
+    }
+
+
+def _get_timeseries_session_variables(request: HttpRequest) -> dict:
+    """Return the timeseries results context stored for the current session."""
+    token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
+    payload = _load_cached_result("ts", request.user.id, token)
+    if token and not payload:
+        request.session.pop(TS_RESULT_TOKEN_SESSION_KEY, None)
+    if not payload:
+        return {"ts_show_results": False}
+    chart_config = payload.get("chart_config")
+    return {
+        # The rows are cached once, under "data", and shared by the chart and the downloads.
+        "ts_chart_config": {"data": payload.get("data"), **chart_config} if chart_config else None,
+        "ts_metrics": payload.get("metrics"),
+        "ts_sweep_summary": payload.get("sweep_summary"),
+        "ts_units": payload.get("units", {}),
+        "ts_show_results": payload.get("ts_show_results", False),
+        "output_file_name": payload.get("output_file_name"),
+        "download_token": token,
+    }
+
+
+def _run_timeseries(request: HttpRequest, form: TimeseriesForm) -> None:
+    """Run a single or sweep timeseries analysis and store its results for the session."""
+    mode = form.cleaned_data["mode"]
+    catchment_name = form.cleaned_data["catchment_name"]
+
+    uploaded_file_path = _uploaded_model_path(request)
+    flow_units = _read_flow_units(uploaded_file_path)
+    volume_factor, volume_unit = _runoff_volume_unit(flow_units)
+    ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
+    x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
+    chart_config = {"mode": mode, "columns": ts_columns, "xLabel": x_label, "yLabels": y_labels}
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    with FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path) as model:
+        if mode == "single":
+            ts_df = model.calculate_timeseries()
+            data = _timeseries_records(ts_df)
+            summary = {"metrics": _hydrograph_metrics(ts_df, volume_factor)}
+            chart_config["title"] = f"Timeseries for subcatchment {catchment_name}"
+            output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
+        else:
+            feature = form.cleaned_data["feature"]
+            results = model.simulate_subcatchment_timeseries(
+                feature=feature,
+                start=form.cleaned_data["start"],
+                stop=form.cleaned_data["stop"],
+                step=form.cleaned_data["step"],
+            )
+            # The formatted values are the chart legend, the Excel sheet names and the CSV column.
+            runs = {_format_parameter_value(value): ts_df for value, ts_df in results.items()}
+            data = {value: _timeseries_records(ts_df) for value, ts_df in runs.items()}
+            summary = {
+                "sweep_summary": [
+                    {"value": value, **_hydrograph_metrics(ts_df, volume_factor)}
+                    for value, ts_df in runs.items()
+                ]
+            }
+            # The same label as the simulation page's axis: "Percent Slope [%]".
+            parameter_label, _ = _build_simulation_axis_labels(feature, [], flow_units)
+            parameter_name = parameter_label.split(" [")[0]
+            chart_config.update(
+                title=f"Timeseries sweep: {parameter_name} for {catchment_name}",
+                parameterLabel=parameter_label,
+                parameterName=parameter_name,
+                catchment=catchment_name,
+                # Rainfall is the same input in every run, so only the flows can be compared.
+                series=[
+                    {"field": column, "label": y_labels[column]}
+                    for column in ts_columns
+                    if column != "rainfall"
+                ],
+            )
+            output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
+
+    payload = {
+        "mode": mode,
+        "data": data,
+        "chart_config": chart_config,
+        "units": {"flow": _unit_labels(flow_units)["flow_rate"], "volume": volume_unit},
+        "output_file_name": output_file_name,
+        "ts_show_results": True,
+        **summary,
+    }
+    _replace_session_result(request, "ts", TS_RESULT_TOKEN_SESSION_KEY, payload)
+    _save_form_state(request, TS_FORM_STATE_SESSION_KEY, form.cleaned_data, TS_FORM_STATE_FIELDS)
+
+
+@ajax_login_required
 def timeseries_view(request: HttpRequest) -> HttpResponse:
     """
     Render the timeseries analysis view.
@@ -1466,6 +1633,10 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
       analytical metrics (time to peak, runoff volume).
     - sweep: Vary a subcatchment parameter over a range and overlay the
       resulting hydrographs.
+
+    A regular POST redirects back to the page (PRG). A POST sent with
+    ``X-Requested-With: XMLHttpRequest`` returns the results fragment on success
+    and a JSON error (``{"message", "field_errors"}``) otherwise.
 
     Parameters
     ----------
@@ -1477,152 +1648,8 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
     HttpResponse
         The HTTP response with the rendered timeseries template.
     """
-    session_data = {}
-
-    if request.method == "POST":
-        catchment_choices = _get_catchment_choices(request)
-        form = TimeseriesForm(request.POST, catchment_choices=catchment_choices)
-        if form.is_valid():
-            mode = form.cleaned_data["mode"]
-            catchment_name = form.cleaned_data["catchment_name"]
-
-            uploaded_file_path = request.session.get(
-                "uploaded_file_path",
-                os.path.abspath("catchment_simulation/example.inp"),
-            )
-            flow_units = _read_flow_units(uploaded_file_path)
-
-            try:
-                with FeaturesSimulation(
-                    subcatchment_id=catchment_name, raw_file=uploaded_file_path
-                ) as model:
-                    if mode == "single":
-                        ts_df = model.calculate_timeseries()
-
-                        # Compute analytical metrics
-                        try:
-                            ttp = time_to_peak(ts_df, column="runoff")
-                            ttp_str = str(ttp)
-                        except ValueError:
-                            ttp_str = "N/A"
-
-                        try:
-                            vol = runoff_volume(ts_df, column="runoff")
-                            vol_str = f"{vol:.4f}"
-                        except ValueError:
-                            vol_str = "N/A"
-
-                        # Serialize timeseries data as JSON for frontend rendering
-                        ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
-                        ts_df_reset = ts_df.reset_index()
-                        ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
-                        x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
-
-                        # Save for download
-                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
-                        chart_config = {
-                            "mode": "single",
-                            "data": json.loads(ts_df_reset.to_json(orient="records")),
-                            "columns": ts_columns,
-                            "title": f"Timeseries for subcatchment {catchment_name}",
-                            "xLabel": x_label,
-                            "yLabels": y_labels,
-                        }
-                        payload = {
-                            "mode": "single",
-                            "data": chart_config["data"],
-                            "output_file_name": output_file_name,
-                            "chart_config": chart_config,
-                            "ts_time_to_peak": ttp_str,
-                            "ts_runoff_volume": vol_str,
-                            "ts_show_results": True,
-                        }
-                        old_token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
-                        token = _store_cached_result("ts", request.user.id, payload)
-                        _delete_cached_result("ts", request.user.id, old_token)
-                        request.session[TS_RESULT_TOKEN_SESSION_KEY] = token
-
-                        _save_form_state(
-                            request,
-                            TS_FORM_STATE_SESSION_KEY,
-                            form.cleaned_data,
-                            TS_FORM_STATE_FIELDS,
-                        )
-                        return redirect("main:timeseries")
-
-                    elif mode == "sweep":
-                        feature = form.cleaned_data["feature"]
-                        start = form.cleaned_data["start"]
-                        stop = form.cleaned_data["stop"]
-                        step = form.cleaned_data["step"]
-
-                        results = model.simulate_subcatchment_timeseries(
-                            feature=feature, start=start, stop=stop, step=step
-                        )
-
-                        ts_columns = list(FeaturesSimulation.TIMESERIES_KEYS)
-                        sweep_data = {}
-                        for param_val, ts_df in results.items():
-                            ts_df_reset = ts_df.reset_index()
-                            ts_df_reset["datetime"] = ts_df_reset["datetime"].astype(str)
-                            sweep_data[str(param_val)] = ts_df_reset.to_dict(orient="records")
-                        x_label, y_labels = _build_timeseries_axis_labels(ts_columns, flow_units)
-
-                        # Save multi-sheet Excel
-                        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
-                        chart_config = {
-                            "mode": "sweep",
-                            "data": sweep_data,
-                            "columns": ts_columns,
-                            "title": f"Timeseries sweep: {feature} for {catchment_name}",
-                            "feature": feature,
-                            "catchment": catchment_name,
-                            "xLabel": x_label,
-                            "yLabels": y_labels,
-                        }
-                        payload = {
-                            "mode": "sweep",
-                            "data": sweep_data,
-                            "output_file_name": output_file_name,
-                            "chart_config": chart_config,
-                            "ts_show_results": True,
-                            "ts_time_to_peak": None,
-                            "ts_runoff_volume": None,
-                        }
-                        old_token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
-                        token = _store_cached_result("ts", request.user.id, payload)
-                        _delete_cached_result("ts", request.user.id, old_token)
-                        request.session[TS_RESULT_TOKEN_SESSION_KEY] = token
-
-                        _save_form_state(
-                            request,
-                            TS_FORM_STATE_SESSION_KEY,
-                            form.cleaned_data,
-                            TS_FORM_STATE_FIELDS,
-                        )
-                        return redirect("main:timeseries")
-
-            except ResultPayloadTooLargeError:
-                messages.error(
-                    request,
-                    "Result set is too large to keep for download. Narrow the timeseries range.",
-                )
-            except Exception as error:
-                input_error = _coerce_input_validation_error(error)
-                if input_error:
-                    logger.warning("Timeseries input validation failed", exc_info=True)
-                    messages.error(request, _format_input_error_message(input_error))
-                    return render(
-                        request,
-                        "main/timeseries.html",
-                        {"form": form, "ts_show_results": False},
-                    )
-                logger.exception("Timeseries analysis failed")
-                messages.error(request, "An error occurred while running the analysis.")
-    else:
-        catchment_choices = _get_catchment_choices(request)
+    catchment_choices = _get_catchment_choices(request)
+    if request.method != "POST":
         initial = _get_form_initial(
             request,
             TS_FORM_STATE_SESSION_KEY,
@@ -1631,20 +1658,45 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
             TS_FORM_STATE_FIELDS,
         )
         form = TimeseriesForm(catchment_choices=catchment_choices, initial=initial)
-        token = request.session.get(TS_RESULT_TOKEN_SESSION_KEY)
-        payload = _load_cached_result("ts", request.user.id, token)
-        if token and not payload:
-            request.session.pop(TS_RESULT_TOKEN_SESSION_KEY, None)
-        session_data = {
-            "ts_chart_config": payload.get("chart_config") if payload else None,
-            "ts_time_to_peak": payload.get("ts_time_to_peak") if payload else None,
-            "ts_runoff_volume": payload.get("ts_runoff_volume") if payload else None,
-            "ts_show_results": payload.get("ts_show_results", False) if payload else False,
-            "output_file_name": payload.get("output_file_name") if payload else None,
-            "download_token": token if payload else None,
-        }
+        return render(
+            request,
+            TIMESERIES_TEMPLATE,
+            {"form": form, **_get_timeseries_session_variables(request)},
+        )
 
-    return render(request, "main/timeseries.html", {"form": form, **session_data})
+    form = TimeseriesForm(request.POST, catchment_choices=catchment_choices)
+    if not form.is_valid():
+        if _is_ajax(request):
+            return _form_invalid_json(form)
+        return render(
+            request,
+            TIMESERIES_TEMPLATE,
+            {"form": form, **_get_timeseries_session_variables(request)},
+        )
+
+    try:
+        _run_timeseries(request, form)
+    except Exception as error:
+        message, status = _classify_run_error(
+            error,
+            "Timeseries analysis",
+            "Result set is too large to keep for download. Narrow the timeseries range.",
+            "An error occurred while running the analysis.",
+        )
+        # A failed run leaves the previous result in place, so the page keeps showing it.
+        return _run_failed(
+            request,
+            message,
+            status,
+            TIMESERIES_TEMPLATE,
+            {"form": form, **_get_timeseries_session_variables(request)},
+        )
+
+    if _is_ajax(request):
+        return render(
+            request, TIMESERIES_RESULTS_TEMPLATE, _get_timeseries_session_variables(request)
+        )
+    return redirect("main:timeseries")
 
 
 def _cleanup_swmm_side_files(inp_path: str) -> None:

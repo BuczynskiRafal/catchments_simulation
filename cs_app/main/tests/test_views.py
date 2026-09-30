@@ -323,7 +323,7 @@ def test_simulation_view_post_range_persists_form_state(client, user, monkeypatc
     payload = json.loads(cached_payload)
     chart_config = payload["chart_config"]
     assert chart_config["xLabel"] == "Percent Slope [%]"
-    assert chart_config["yLabels"]["runoff"] == "Total Runoff Volume [m3]"
+    assert chart_config["yLabels"]["runoff"] == "Total Runoff Volume [m³]"
 
     get_response = client.get(reverse("main:simulation"))
     assert get_response.status_code == 200
@@ -1613,6 +1613,10 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
     assert chart_config["xLabel"] == "Time"
     assert chart_config["yLabels"]["runoff"] == "Runoff Rate [CMS]"
     assert chart_config["yLabels"]["rainfall"] == "Rainfall Intensity [mm/h]"
+    assert chart_config["yLabels"]["evaporation_loss"] == "Evaporation Loss [mm/day]"
+    assert {"field": "evaporation_loss", "label": "Evaporation Loss [mm/day]"} in chart_config[
+        "series"
+    ]
 
     get_response = client.get(reverse("main:timeseries"))
     assert get_response.status_code == 200
@@ -1679,6 +1683,7 @@ def test_timeseries_view_post_single_adds_axis_labels(client, user, monkeypatch)
     assert chart_config["xLabel"] == "Time"
     assert chart_config["yLabels"]["runoff"] == "Runoff Rate [CMS]"
     assert chart_config["yLabels"]["infiltration_loss"] == "Infiltration Loss [mm/h]"
+    assert chart_config["yLabels"]["evaporation_loss"] == "Evaporation Loss [mm/day]"
 
 
 @pytest.mark.django_db
@@ -1912,6 +1917,27 @@ def test_timeseries_view_uses_refactored_assets_and_has_no_chart_json_without_re
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("saved_state", "checked_mode"), [({}, "single"), ({"mode": "sweep"}, "sweep")]
+)
+def test_timeseries_mode_renders_as_radio_group(client, user, saved_state, checked_mode):
+    """Mode is a segmented radio group; exactly one option is checked (single by default)."""
+    client.force_login(user)
+    session = client.session
+    session["ts_form_state"] = saved_state
+    session.save()
+
+    content = client.get(reverse("main:timeseries")).content.decode()
+
+    radios = re.findall(r'<input type="radio" name="mode"[^>]*>', content)
+    assert [re.search(r'value="(\w+)"', radio).group(1) for radio in radios] == ["single", "sweep"]
+    assert [radio for radio in radios if " checked" in radio] == [
+        next(radio for radio in radios if f'value="{checked_mode}"' in radio)
+    ]
+    assert all('class="btn-check"' in radio for radio in radios)
+
+
+@pytest.mark.django_db
 def test_calculations_view_uses_upload_zone_component_contract(client, user):
     """Calculations page should include the shared upload-zone contract."""
     client.force_login(user)
@@ -2008,9 +2034,9 @@ def test_timeseries_template_shows_csv_and_png_buttons_when_results_exist(client
     response = client.get(reverse("main:timeseries"))
 
     assert response.status_code == 200
-    assert b"Export timeseries to CSV" in response.content
+    assert b"Download Results (.csv)" in response.content
     assert b'id="download-timeseries-png-button"' in response.content
-    assert b'data-filename="timeseries_single.xlsx"' in response.content
+    assert b'data-filename="timeseries_single"' in response.content
 
 
 @pytest.mark.django_db
@@ -2247,6 +2273,123 @@ def test_timeseries_form_sweep_too_many_steps():
     )
     assert not form.is_valid()
     assert "step" in form.errors
+
+
+INVALID_SWEEP_RANGE = {"feature": "Nope", "start": "-5", "stop": "abc", "step": "0"}
+
+
+def test_timeseries_form_single_mode_ignores_invalid_sweep_fields():
+    """The sweep range is irrelevant to a single run, so its leftover values cannot block it."""
+    from main.forms import TimeseriesForm
+
+    form = TimeseriesForm(
+        data={"mode": "single", "catchment_name": "S1", **INVALID_SWEEP_RANGE},
+        catchment_choices=[("S1", "S1")],
+    )
+
+    assert form.is_valid(), f"Form errors: {form.errors}"
+
+
+def test_timeseries_form_sweep_mode_reports_each_invalid_field_once():
+    """In sweep mode field-level errors stand; 'Required' is not added on top of them."""
+    from main.forms import TimeseriesForm
+
+    form = TimeseriesForm(
+        data={"mode": "sweep", "catchment_name": "S1", **INVALID_SWEEP_RANGE},
+        catchment_choices=[("S1", "S1")],
+    )
+
+    assert not form.is_valid()
+    assert set(form.errors) == {"feature", "start", "stop", "step"}
+    assert all(len(errors) == 1 for errors in form.errors.values())
+    assert "Required for parameter sweep mode." not in form.errors["start"]
+
+
+@pytest.mark.parametrize(
+    ("flow_units", "factor", "unit"),
+    [
+        ("CMS", 1.0, "m³"),
+        ("lps", 0.001, "m³"),
+        ("MLD", 1000 / 86400, "m³"),
+        ("CFS", 1.0, "ft³"),
+        ("GPM", 0.133680556 / 60, "ft³"),
+        (None, 1.0, "model flow units × s"),
+    ],
+)
+def test_runoff_volume_unit_converts_flow_seconds_to_a_volume(flow_units, factor, unit):
+    from main.views import _runoff_volume_unit
+
+    actual_factor, actual_unit = _runoff_volume_unit(flow_units)
+
+    assert actual_factor == pytest.approx(factor)
+    assert actual_unit == unit
+
+
+@pytest.mark.parametrize(
+    ("flow_units", "flow", "depth_rate", "evaporation_rate"),
+    [
+        ("CMS", "CMS", "mm/h", "mm/day"),
+        ("lps", "LPS", "mm/h", "mm/day"),
+        ("MLD", "MLD", "mm/h", "mm/day"),
+        ("CFS", "CFS", "in/h", "in/day"),
+        ("gpm", "GPM", "in/h", "in/day"),
+        ("MGD", "MGD", "in/h", "in/day"),
+        (None, "model flow units", "model depth/time units", "model evaporation rate units"),
+        ("XYZ", "XYZ", "model depth/time units", "model evaporation rate units"),
+    ],
+)
+def test_timeseries_axis_labels_give_each_series_its_swmm_unit(
+    flow_units, flow, depth_rate, evaporation_rate
+):
+    """SWMM reports rainfall and infiltration per hour, evaporation per day, flows in FLOW_UNITS."""
+    from main.views import _build_timeseries_axis_labels
+
+    x_label, y_labels = _build_timeseries_axis_labels(
+        ["rainfall", "runoff", "infiltration_loss", "evaporation_loss", "runon"], flow_units
+    )
+
+    assert x_label == "Time"
+    assert y_labels == {
+        "rainfall": f"Rainfall Intensity [{depth_rate}]",
+        "runoff": f"Runoff Rate [{flow}]",
+        "infiltration_loss": f"Infiltration Loss [{depth_rate}]",
+        "evaporation_loss": f"Evaporation Loss [{evaporation_rate}]",
+        "runon": f"Runon Rate [{flow}]",
+    }
+    # The hydrograph picks axes by the unit in the label: a shared unit would share an axis.
+    assert evaporation_rate != depth_rate
+
+
+@pytest.mark.parametrize(
+    ("seconds", "text"),
+    [
+        (0, "0 min"),
+        (45, "45 s"),
+        (3600, "1 h"),
+        (32100, "8 h 55 min"),
+        (93784, "1 d 2 h 3 min 4 s"),
+    ],
+)
+def test_format_duration_drops_zero_parts(seconds, text):
+    from main.views import _format_duration
+
+    assert _format_duration(pd.Timedelta(seconds=seconds)) == text
+
+
+def test_hydrograph_metrics_without_runoff_has_no_peak_time():
+    """A run with no runoff has a peak of 0 but no time to peak (the package raises)."""
+    from main.views import _hydrograph_metrics
+
+    index = pd.date_range("2025-01-01", periods=3, freq="h", name="datetime")
+    metrics = _hydrograph_metrics(pd.DataFrame({"runoff": [0.0, 0.0, 0.0]}, index=index), 1.0)
+
+    assert metrics == {
+        "peak": 0.0,
+        "peak_at": None,
+        "time_to_peak": None,
+        "time_to_peak_seconds": None,
+        "volume": 0.0,
+    }
 
 
 @pytest.mark.django_db

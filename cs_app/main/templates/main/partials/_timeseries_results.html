@@ -1,0 +1,122 @@
+{# Results root, rendered by the full page and returned alone to async runs; its export buttons submit the page's #timeseries-export-form. timeseries.js draws the chart and the timestep table from #ts-chart-config. #}
+<div id="timeseries-results">
+    {% if ts_show_results %}
+    {% with config=ts_chart_config metrics=ts_metrics units=ts_units %}
+    <div class="ts-results__body cs-reveal" data-cs-results>
+        <div class="ts-results__header">
+            <p class="cs-eyebrow">{% if config.mode == "sweep" %}Parameter sweep · {{ config.parameterName }}{% else %}Single run{% endif %}</p>
+            <h2 id="timeseries-results-heading" class="ts-results__title" tabindex="-1">{{ config.title|default:"Timeseries results" }}</h2>
+        </div>
+
+        {% if config.mode != "sweep" %}
+        <div class="cs-metrics">
+            <div class="cs-metric">
+                <p class="cs-metric__label">Peak runoff</p>
+                {% if metrics.peak is not None %}
+                <p class="cs-metric__value">{{ metrics.peak|floatformat:"3g" }}<span class="cs-metric__unit">{{ units.flow }}</span></p>
+                {% else %}
+                <p class="cs-metric__value">—</p>
+                {% endif %}
+                {% if metrics.peak_at %}<p class="ts-metric__note">At {{ metrics.peak_at }}</p>{% endif %}
+            </div>
+            <div class="cs-metric">
+                <p class="cs-metric__label">Time to peak</p>
+                <p class="cs-metric__value">{{ metrics.time_to_peak|default:"—" }}</p>
+                <p class="ts-metric__note">{% if metrics.time_to_peak %}From simulation start{% else %}No runoff in this run{% endif %}</p>
+            </div>
+            <div class="cs-metric">
+                <p class="cs-metric__label">Runoff volume</p>
+                {% if metrics.volume is not None %}
+                <p class="cs-metric__value">{{ metrics.volume|floatformat:"2g" }}<span class="cs-metric__unit">{{ units.volume }}</span></p>
+                {% else %}
+                <p class="cs-metric__value">—</p>
+                {% endif %}
+                <p class="ts-metric__note">Integrated over the whole run</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <section class="cs-chart-card" aria-labelledby="ts-chart-title">
+            <div class="cs-chart-card__toolbar">
+                <h3 class="cs-chart-card__title" id="ts-chart-title">{% if config.mode == "sweep" %}Hydrographs for each {{ config.parameterName }} value{% else %}Rainfall and runoff{% endif %}</h3>
+                <div class="ts-chart-tools">
+                    {% if config.mode == "sweep" %}
+                    <div class="ts-series">
+                        <label class="ts-series__label" for="ts-sweep-series">Series</label>
+                        <select class="form-select form-select-sm" id="ts-sweep-series" data-ts-series>
+                            {% for series in config.series %}
+                            <option value="{{ series.field }}"{% if forloop.first %} selected{% endif %}>{{ series.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    {# Shown by timeseries.js: the chart, and so its export, needs JavaScript. #}
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="download-timeseries-png-button" data-filename="{{ output_file_name|default:'timeseries_chart'|cut:'.xlsx' }}" aria-describedby="timeseries-export-feedback" hidden>Download PNG</button>
+                </div>
+            </div>
+            <div class="cs-chart-card__body">
+                <div id="timeseries-chart" class="ts-chart"><noscript><p class="cs-empty-state">The chart needs JavaScript. The numbers above and the downloads below work without it.</p></noscript></div>
+            </div>
+            <p id="timeseries-export-feedback" class="ts-export-feedback" role="status"></p>
+            {% if config.mode != "sweep" %}
+            <p class="ts-chart-note">Rainfall hangs from the top axis and infiltration loss shares its rate scale. Evaporation loss is reported per day, so it opens a panel of its own below. Select a legend entry to show them or runon.</p>
+            {% endif %}
+        </section>
+
+        {% if config.mode == "sweep" %}
+        <section class="ts-table-section" aria-labelledby="ts-summary-title">
+            <h3 class="ts-table-section__title" id="ts-summary-title">Runoff summary per {{ config.parameterName }} value</h3>
+            <div class="cs-table-wrap" tabindex="0" role="region" aria-labelledby="ts-summary-title">
+                <table class="table cs-table" data-ts-table="sweep">
+                    <caption class="visually-hidden">Peak runoff, time to peak and runoff volume for each {{ config.parameterName }} value</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col" class="cs-num">{{ config.parameterLabel }}</th>
+                            <th scope="col" class="cs-num">Peak runoff [{{ units.flow }}]</th>
+                            <th scope="col" class="cs-num">Time to peak</th>
+                            <th scope="col" class="cs-num">Runoff volume [{{ units.volume }}]</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in ts_sweep_summary %}
+                        <tr>
+                            <th scope="row" class="cs-num">{{ row.value }}</th>
+                            <td class="cs-num">{{ row.peak|floatformat:"3g"|default:"—" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.time_to_peak_seconds|default_if_none:'' }}">{{ row.time_to_peak|default:"—" }}</td>
+                            <td class="cs-num">{{ row.volume|floatformat:"2g"|default:"—" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        {% else %}
+        {# Filled by timeseries.js when first opened: long runs have thousands of timesteps. #}
+        <details class="ts-table-section" data-ts-data hidden>
+            <summary class="ts-data__summary" id="ts-data-title">Timestep data</summary>
+            <div class="cs-table-wrap" tabindex="0" role="region" aria-labelledby="ts-data-title">
+                <table class="table cs-table" data-ts-table="single"></table>
+            </div>
+        </details>
+        {% endif %}
+
+        {{ config|json_script:"ts-chart-config" }}
+
+        {% if output_file_name %}
+        {# The buttons belong to the page's #timeseries-export-form: fragments carry no <form> of their own. #}
+        <div class="cs-actions">
+            <input type="hidden" name="token" value="{{ download_token }}" form="timeseries-export-form">
+            <button type="submit" class="btn btn-primary" form="timeseries-export-form">Download Results (.xlsx)</button>
+            <button type="submit" class="btn btn-outline-primary" form="timeseries-export-form" formaction="{% url 'main:download_timeseries_csv' %}">Download Results (.csv)</button>
+        </div>
+        {% endif %}
+    </div>
+    {% endwith %}
+    {% else %}
+    <div class="cs-empty-state">
+        <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h32M9 4v6M14 4v10M19 4v5M24 4v3"/><path d="M4 36h32M4 34c6 0 8-14 13-14s8 12 19 14"/></svg>
+        <h2 class="cs-empty-state__title">No results yet</h2>
+        <p class="cs-empty-state__text">Load a model, choose a subcatchment and run the analysis. The rainfall and runoff chart appears here.</p>
+    </div>
+    {% endif %}
+</div>

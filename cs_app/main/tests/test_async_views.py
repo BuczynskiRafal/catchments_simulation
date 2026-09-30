@@ -1,10 +1,11 @@
 """Tests for the async (fetch) contract of the run views.
 
-Run views (simulation) answer requests sent with
+Run views (simulation, timeseries) answer requests sent with
 ``X-Requested-With: XMLHttpRequest`` with the results fragment on success and a
 ``{"message", "field_errors"}`` JSON body on failure, without flash messages.
 """
 
+import json
 import os
 import re
 
@@ -12,21 +13,34 @@ import numpy as np
 import pandas as pd
 import pytest
 from django.conf import settings
+from django.core.cache import cache
 from django.urls import reverse
 
 from main.views import (
     FORM_INVALID_MESSAGE,
     NO_MODEL_MESSAGE,
     SIM_RESULT_TOKEN_SESSION_KEY,
+    TS_RESULT_TOKEN_SESSION_KEY,
+    _result_cache_key,
 )
 
 AJAX = {"HTTP_X_REQUESTED_WITH": "XMLHttpRequest"}
 SIMULATION_PARTIAL = "main/partials/_simulation_results.html"
+TIMESERIES_PARTIAL = "main/partials/_timeseries_results.html"
 SIMULATION_POST = {
     "option": "simulate_percent_slope",
     "start": "1",
     "stop": "5",
     "step": "2",
+    "catchment_name": "S1",
+}
+TIMESERIES_SINGLE_POST = {"mode": "single", "catchment_name": "S1"}
+TIMESERIES_SWEEP_POST = {
+    "mode": "sweep",
+    "feature": "PercSlope",
+    "start": "0",
+    "stop": "20",
+    "step": "5",
     "catchment_name": "S1",
 }
 NON_NUMERIC_MESSAGE = "Input file contains non-numeric values where numbers are required."
@@ -263,7 +277,7 @@ def test_simulation_non_ajax_input_error_still_flashes_message(run_client, monke
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("url_name", ["main:simulation"])
+@pytest.mark.parametrize("url_name", ["main:simulation", "main:timeseries"])
 def test_run_view_anonymous_ajax_post_returns_401_json(client, url_name):
     response = client.post(reverse(url_name), data=SIMULATION_POST, **AJAX)
 
@@ -272,7 +286,7 @@ def test_run_view_anonymous_ajax_post_returns_401_json(client, url_name):
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("url_name", ["main:simulation"])
+@pytest.mark.parametrize("url_name", ["main:simulation", "main:timeseries"])
 def test_run_view_anonymous_get_redirects_to_login(client, url_name):
     url = reverse(url_name)
 
@@ -293,7 +307,7 @@ def test_run_view_login_redirect_keeps_the_query_string(client):
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("url_name", "data"),
-    [("main:simulation", SIMULATION_POST)],
+    [("main:simulation", SIMULATION_POST), ("main:timeseries", TIMESERIES_SINGLE_POST)],
 )
 def test_run_view_without_model_returns_400_json(client, user, url_name, data):
     """There is no fallback model: a run needs one loaded in the session."""
@@ -308,7 +322,7 @@ def test_run_view_without_model_returns_400_json(client, user, url_name, data):
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("url_name", "data"),
-    [("main:simulation", SIMULATION_POST)],
+    [("main:simulation", SIMULATION_POST), ("main:timeseries", TIMESERIES_SINGLE_POST)],
 )
 def test_run_view_without_model_flashes_message(client, user, url_name, data):
     client.force_login(user)
@@ -318,6 +332,197 @@ def test_run_view_without_model_flashes_message(client, user, url_name, data):
     assert response.status_code == 200
     assert b"alert-danger" in response.content
     assert NO_MODEL_MESSAGE.encode() in response.content
+
+
+# ---------------------------------------------------------------------------
+# Timeseries
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_timeseries_ajax_single_returns_results_fragment(run_client, fake_simulation):
+    response = run_client.post(reverse("main:timeseries"), data=TIMESERIES_SINGLE_POST, **AJAX)
+
+    _assert_fragment(response, TIMESERIES_PARTIAL, "timeseries-results")
+    content = response.content.decode()
+    assert 'id="ts-chart-config"' in content
+    assert 'id="timeseries-results-heading"' in content
+    assert "Time to peak" in content
+    assert "Runoff volume" in content
+    assert 'id="download-timeseries-png-button"' in content
+    token = run_client.session[TS_RESULT_TOKEN_SESSION_KEY]
+    assert f'value="{token}"' in content
+
+
+@pytest.mark.django_db
+def test_timeseries_single_metrics_are_rendered_by_the_server(run_client, fake_simulation):
+    """Peak, time to peak and volume (with units) are in the fragment, not left to JS."""
+    content = run_client.post(
+        reverse("main:timeseries"), data=TIMESERIES_SINGLE_POST, **AJAX
+    ).content.decode()
+
+    metric_values = re.findall(r'<p class="cs-metric__value">(.*?)</p>', content, re.S)
+    # Hourly runoff 0.5, 1.2, 0.3 CMS: peak in the second hour; trapezoidal volume 5760 m³.
+    assert metric_values == [
+        '1.200<span class="cs-metric__unit">CMS</span>',
+        "1 h",
+        '5,760.00<span class="cs-metric__unit">m³</span>',
+    ]
+    assert "At 2025-01-01 01:00" in content
+
+
+@pytest.mark.django_db
+def test_timeseries_ajax_sweep_returns_results_fragment(run_client, fake_simulation):
+    response = run_client.post(reverse("main:timeseries"), data=TIMESERIES_SWEEP_POST, **AJAX)
+
+    _assert_fragment(response, TIMESERIES_PARTIAL, "timeseries-results")
+    content = response.content.decode()
+    assert '"mode": "sweep"' in content
+    assert "Time to peak</p>" not in content, "a sweep has a summary table, not metric tiles"
+    assert 'data-ts-table="sweep"' in content
+    assert run_client.session["ts_form_state"]["feature"] == "PercSlope"
+
+
+@pytest.mark.django_db
+def test_timeseries_sweep_summary_and_series_are_rendered_by_the_server(
+    run_client, fake_simulation
+):
+    content = run_client.post(
+        reverse("main:timeseries"), data=TIMESERIES_SWEEP_POST, **AJAX
+    ).content.decode()
+
+    table = re.search(
+        r'<table class="table cs-table" data-ts-table="sweep">.*?</table>', content, re.S
+    )
+    rows = re.findall(r'<tr>\s*<th scope="row"[^>]*>(.*?)</th>', table.group(0), re.S)
+    # Swept values are labelled without float noise ("5", not "5.0").
+    assert rows == ["0", "5", "10", "15", "20"]
+    assert "Peak runoff [CMS]" in table.group(0)
+    assert "Runoff volume [m³]" in table.group(0)
+    # The swept parameter reads as on the simulation page, with its unit, not as the SWMM key.
+    assert '<th scope="col" class="cs-num">Percent Slope [%]</th>' in table.group(0)
+    assert "Timeseries sweep: Percent Slope for S1" in content
+    assert "PercSlope" not in content
+    assert 'data-sort-value="3600.0">1 h</td>' in table.group(0)
+    options = re.findall(r'<option value="(\w+)"', content)
+    assert options == ["runoff", "infiltration_loss", "evaporation_loss", "runon"]
+
+
+@pytest.mark.django_db
+def test_timeseries_payload_keeps_one_copy_of_the_rows(run_client, fake_simulation):
+    """Rows are cached once (for the downloads) and merged into the chart config on render."""
+    run_client.post(reverse("main:timeseries"), data=TIMESERIES_SWEEP_POST, **AJAX)
+    token = run_client.session[TS_RESULT_TOKEN_SESSION_KEY]
+    user_id = int(run_client.session["_auth_user_id"])
+    payload = json.loads(cache.get(_result_cache_key("ts", user_id, token)))
+
+    assert "data" not in payload["chart_config"]
+    assert list(payload["data"]) == ["0", "5", "10", "15", "20"]
+    page = run_client.get(reverse("main:timeseries"))
+    assert list(page.context["ts_chart_config"]["data"]) == ["0", "5", "10", "15", "20"]
+
+
+@pytest.mark.django_db
+def test_timeseries_exports_submit_the_page_export_form(run_client, fake_simulation):
+    """The fragment is swapped outside the run form, so its exports target a page-level form."""
+    fragment = run_client.post(
+        reverse("main:timeseries"), data=TIMESERIES_SINGLE_POST, **AJAX
+    ).content.decode()
+    page = run_client.get(reverse("main:timeseries")).content.decode()
+
+    token = run_client.session[TS_RESULT_TOKEN_SESSION_KEY]
+    assert f'value="{token}" form="timeseries-export-form"' in fragment
+    assert fragment.count('form="timeseries-export-form"') == 3
+    assert f'formaction="{reverse("main:download_timeseries_csv")}"' in fragment
+    export_form = re.search(r'<form id="timeseries-export-form"[^>]*>(.*?)</form>', page, re.S)
+    assert export_form
+    assert f'action="{reverse("main:download_timeseries_results")}"' in export_form.group(0)
+    assert 'name="csrfmiddlewaretoken"' in export_form.group(1)
+
+
+@pytest.mark.django_db
+def test_timeseries_full_page_renders_same_results_partial(run_client, fake_simulation):
+    run_client.post(reverse("main:timeseries"), data=TIMESERIES_SINGLE_POST, **AJAX)
+
+    response = run_client.get(reverse("main:timeseries"))
+
+    assert TIMESERIES_PARTIAL in _template_names(response)
+    assert b'id="ts-chart-config"' in response.content
+
+
+@pytest.mark.django_db
+def test_timeseries_non_ajax_post_still_redirects(run_client, fake_simulation):
+    response = run_client.post(reverse("main:timeseries"), data=TIMESERIES_SINGLE_POST)
+
+    assert response.status_code == 302
+    assert response.url == reverse("main:timeseries")
+
+
+@pytest.mark.django_db
+def test_timeseries_ajax_invalid_form_returns_field_errors(run_client, fake_simulation):
+    data = {"mode": "sweep", "catchment_name": "S1"}
+
+    response = run_client.post(reverse("main:timeseries"), data=data, **AJAX)
+
+    body = _assert_json_error(response, 400, FORM_INVALID_MESSAGE)
+    assert set(body["field_errors"]) == {"feature", "start", "stop", "step"}
+    assert body["field_errors"]["feature"] == ["Required for parameter sweep mode."]
+    _assert_no_flash_on_next_page(run_client, reverse("main:timeseries"), "Required for")
+
+
+@pytest.mark.django_db
+def test_timeseries_page_without_results_renders_empty_results_root(run_client):
+    response = run_client.get(reverse("main:timeseries"))
+
+    assert TIMESERIES_PARTIAL in _template_names(response)
+    assert b'id="timeseries-results"' in response.content
+    assert b'id="timeseries-results-heading"' not in response.content
+    assert b"No results yet" in response.content
+
+
+@pytest.mark.django_db
+def test_timeseries_ajax_oversized_result_returns_413(run_client, fake_simulation, monkeypatch):
+    monkeypatch.setattr("main.views.MAX_RESULT_CACHE_BYTES", 10)
+
+    response = run_client.post(reverse("main:timeseries"), data=TIMESERIES_SWEEP_POST, **AJAX)
+
+    _assert_json_error(
+        response,
+        413,
+        "Result set is too large to keep for download. Narrow the timeseries range.",
+    )
+    assert TS_RESULT_TOKEN_SESSION_KEY not in run_client.session
+
+
+@pytest.mark.django_db
+def test_timeseries_ajax_input_error_returns_json_without_flash(run_client, monkeypatch):
+    monkeypatch.setattr("main.views.FeaturesSimulation", InvalidInputFeaturesSimulation)
+
+    response = run_client.post(reverse("main:timeseries"), data=TIMESERIES_SINGLE_POST, **AJAX)
+
+    _assert_json_error(response, 400, NON_NUMERIC_MESSAGE)
+    assert "ts_form_state" not in run_client.session
+    _assert_no_flash_on_next_page(run_client, reverse("main:timeseries"), NON_NUMERIC_MESSAGE)
+
+
+@pytest.mark.django_db
+def test_timeseries_non_ajax_input_error_still_flashes_message(run_client, monkeypatch):
+    monkeypatch.setattr("main.views.FeaturesSimulation", InvalidInputFeaturesSimulation)
+
+    response = run_client.post(reverse("main:timeseries"), data=TIMESERIES_SINGLE_POST)
+
+    assert response.status_code == 200
+    assert b"alert-danger" in response.content
+    assert NON_NUMERIC_MESSAGE.encode() in response.content
+
+
+@pytest.mark.django_db
+def test_timeseries_ajax_unexpected_error_returns_500(run_client, monkeypatch):
+    monkeypatch.setattr("main.views.FeaturesSimulation", CrashingFeaturesSimulation)
+
+    response = run_client.post(reverse("main:timeseries"), data=TIMESERIES_SINGLE_POST, **AJAX)
+
+    _assert_json_error(response, 500, "An error occurred while running the analysis.")
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +539,12 @@ def test_run_view_without_model_flashes_message(client, user, url_name, data):
             SIMULATION_POST,
             {**SIMULATION_POST, "start": "10", "stop": "5"},
             "simulation-results-heading",
+        ),
+        (
+            "main:timeseries",
+            TIMESERIES_SWEEP_POST,
+            {**TIMESERIES_SWEEP_POST, "start": "30"},
+            "timeseries-results-heading",
         ),
     ],
 )
@@ -354,6 +565,7 @@ def test_non_ajax_invalid_run_keeps_previous_results(
     ("url_name", "post", "heading_id"),
     [
         ("main:simulation", SIMULATION_POST, "simulation-results-heading"),
+        ("main:timeseries", TIMESERIES_SINGLE_POST, "timeseries-results-heading"),
     ],
 )
 def test_non_ajax_crashed_run_keeps_previous_results(

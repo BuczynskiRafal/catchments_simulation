@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load static %}
+{% load static crispy_forms_tags %}
 
 {% block title %}Timeseries Analysis{% endblock %}
 
@@ -16,118 +16,84 @@
 {% endblock %}
 
 {% block content %}
+<header class="cs-page-header">
+    <p class="cs-eyebrow">Hydrograph analysis</p>
+    <h1 class="cs-page-header__title">Timeseries analysis</h1>
+    <p class="cs-page-header__lead">See how a subcatchment turns rainfall into runoff over time, or how its hydrograph shifts as you vary one parameter.</p>
+</header>
 
-{% include 'main/_upload_zone.html' %}
-
-{% load crispy_forms_tags %}
-
-<form method="post">
-    {% csrf_token %}
-        <div class="container">
-            <div class="row d-flex justify-content-center">
-                <div class="col-md-2">
-                    {{ form.mode|as_crispy_field }}
-                </div>
-                <div class="col-md-2" id="feature-wrapper">
-                    {{ form.feature|as_crispy_field }}
-                </div>
-                <div class="col-md-2" id="start-wrapper">
-                    {{ form.start|as_crispy_field }}
-                </div>
-                <div class="col-md-2" id="stop-wrapper">
-                    {{ form.stop|as_crispy_field }}
-                </div>
-                <div class="col-md-2" id="step-wrapper">
-                    {{ form.step|as_crispy_field }}
-                </div>
-                <div class="col-md-2">
-                    {{ form.catchment_name|as_crispy_field }}
-                </div>
+<div class="cs-workbench">
+    <aside class="cs-panel" aria-label="Analysis setup">
+        <section class="cs-step" aria-labelledby="ts-step-model">
+            <div class="cs-step__header">
+                <span class="cs-step__num" aria-hidden="true">1</span>
+                <h2 class="cs-step__title" id="ts-step-model">Model</h2>
             </div>
-        </div>
-        <div class="row mt-3">
-            <div class="col-md-12 d-flex justify-content-center">
-                <button type="submit" class="btn btn-primary" id="run-timeseries-button" data-authenticated="{{ request.user.is_authenticated }}">Run Timeseries Analysis</button>
-            </div>
-        </div>
-        <div id="timeseries-loading-state" class="row mt-2 d-none" aria-live="polite">
-            <div class="col-md-12 d-flex justify-content-center align-items-center gap-2 text-muted">
-                <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
-                <span>Running timeseries analysis...</span>
-            </div>
-        </div>
+            {% include 'main/_upload_zone.html' with compact=True %}
+        </section>
 
-        {% if ts_show_results %}
-        <!-- Analytical metric cards -->
-        {% if ts_time_to_peak or ts_runoff_volume %}
-        <div class="row mt-4 d-flex justify-content-center">
-            {% if ts_time_to_peak %}
-            <div class="col-md-3">
-                <div class="card metric-card text-center">
-                    <div class="card-body">
-                        <h6 class="card-subtitle mb-2 text-muted">Time to Peak</h6>
-                        <h4 class="card-title">{{ ts_time_to_peak }}</h4>
+        <section class="cs-step" aria-labelledby="ts-step-analysis">
+            <div class="cs-step__header">
+                <span class="cs-step__num" aria-hidden="true">2</span>
+                <h2 class="cs-step__title" id="ts-step-analysis">Analysis</h2>
+            </div>
+
+            <form method="post" action="{% url 'main:timeseries' %}" id="timeseries-form" class="ts-form"
+                  data-max-steps="{{ form.MAX_SWEEP_STEPS }}">
+                {% csrf_token %}
+                {% if form.non_field_errors %}
+                <div class="alert alert-danger" role="alert">{{ form.non_field_errors|join:" " }}</div>
+                {% endif %}
+
+                {{ form.catchment_name|as_crispy_field }}
+
+                <fieldset class="ts-mode mb-3">
+                    <legend class="form-label">{{ form.mode.label }}</legend>
+                    <div class="cs-segmented">
+                        {% for radio in form.mode %}
+                        {{ radio.tag }}
+                        <label class="btn cs-segmented__option" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label>
+                        {% endfor %}
                     </div>
-                </div>
-            </div>
-            {% endif %}
-            {% if ts_runoff_volume %}
-            <div class="col-md-3">
-                <div class="card metric-card text-center">
-                    <div class="card-body">
-                        <h6 class="card-subtitle mb-2 text-muted">Runoff Volume</h6>
-                        <h4 class="card-title">{{ ts_runoff_volume }} m&sup3;</h4>
+                    <p class="form-text ts-mode__hint" data-ts-mode-hint="single">Runs the model once and plots rainfall against runoff.</p>
+                    <p class="form-text ts-mode__hint" data-ts-mode-hint="sweep">Re-runs the model for each value of one parameter and overlays the hydrographs.</p>
+                    {% for error in form.mode.errors %}
+                    <div class="invalid-feedback d-block">{{ error }}</div>
+                    {% endfor %}
+                </fieldset>
+
+                {# Hidden by CSS in single mode, so it works without JS; timeseries.js also disables it there so its inputs are neither validated nor sent. #}
+                <fieldset class="ts-sweep" id="ts-sweep-fields">
+                    <legend class="visually-hidden">Sweep range</legend>
+                    <div id="feature-wrapper">
+                        {{ form.feature|as_crispy_field }}
                     </div>
+                    <div class="ts-sweep__range">
+                        <div id="start-wrapper">{{ form.start|as_crispy_field }}</div>
+                        <div id="stop-wrapper">{{ form.stop|as_crispy_field }}</div>
+                        <div id="step-wrapper">{{ form.step|as_crispy_field }}</div>
+                    </div>
+                    <p class="cs-hint cs-hint--count mb-0" id="ts-runs-hint" aria-live="polite" aria-atomic="true"></p>
+                </fieldset>
+
+                <button type="submit" class="btn btn-primary w-100" id="run-timeseries-button" data-authenticated="{{ request.user.is_authenticated }}">Run Timeseries Analysis</button>
+                <div id="timeseries-loading-state" class="cs-progress" hidden>
+                    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                    <span class="cs-progress__elapsed" data-cs-elapsed aria-hidden="true"></span>
+                    <span role="status">Running SWMM… a sweep runs it once per value, so it can take a while.</span>
                 </div>
-            </div>
-            {% endif %}
-        </div>
-        {% endif %}
+            </form>
+        </section>
+    </aside>
 
-        <!-- Timeseries chart -->
-        <div id="timeseries-chart"><p class="text-muted text-center">Loading chart...</p></div>
-        {{ ts_chart_config|json_script:"ts-chart-config" }}
+    {# CS.asyncForm replaces this element's content, so it must hold nothing but the results partial. #}
+    <section class="cs-canvas" id="timeseries-canvas" aria-label="Results">
+        {% include 'main/partials/_timeseries_results.html' %}
+    </section>
+</div>
 
-        <!-- Download button -->
-        {% if output_file_name %}
-        <div class="row mt-3">
-            <div class="col-md-12 d-flex justify-content-center flex-wrap gap-2">
-                <input type="hidden" name="token" value="{{ download_token }}">
-                <button
-                    type="submit"
-                    class="btn btn-success"
-                    formaction="{% url 'main:download_timeseries_results' %}"
-                    formmethod="post"
-                    formnovalidate
-                >
-                    Download Results
-                </button>
-                <button
-                    type="submit"
-                    class="btn btn-outline-primary"
-                    formaction="{% url 'main:download_timeseries_csv' %}"
-                    formmethod="post"
-                    formnovalidate
-                >
-                    Export timeseries to CSV
-                </button>
-                <button
-                    type="button"
-                    class="btn btn-outline-secondary"
-                    id="download-timeseries-png-button"
-                    data-filename="{{ output_file_name }}"
-                >
-                    Download chart as PNG
-                </button>
-            </div>
-            <div class="col-md-12 text-center mt-2">
-                <small id="timeseries-export-feedback" class="text-danger d-none"></small>
-            </div>
-        </div>
-        {% endif %}
-        {% endif %}
-</form>
-
+{# Target of the results' export buttons (form="…"); kept outside the swapped canvas so it survives every run. #}
+<form id="timeseries-export-form" method="post" action="{% url 'main:download_timeseries_results' %}">{% csrf_token %}</form>
 {% endblock %}
 
 {% block additional_scripts %}

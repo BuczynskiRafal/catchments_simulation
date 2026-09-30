@@ -198,8 +198,8 @@ class TimeseriesForm(forms.Form):
     """
 
     MODE_CHOICES = (
-        ("single", "Single Timeseries"),
-        ("sweep", "Parameter Sweep Timeseries"),
+        ("single", "Single run"),
+        ("sweep", "Parameter sweep"),
     )
 
     FEATURE_CHOICES = (
@@ -210,16 +210,21 @@ class TimeseriesForm(forms.Form):
         ("CurbLength", "Curb Length (m)"),
     )
 
+    # Rendered as a segmented control (radios + button labels) by timeseries.html.
     mode = forms.ChoiceField(
+        label="Analysis mode",
         choices=MODE_CHOICES,
-        widget=forms.Select(attrs={"class": "form-select"}),
+        initial="single",
+        widget=forms.RadioSelect(attrs={"class": "btn-check", "autocomplete": "off"}),
     )
     feature = forms.ChoiceField(
+        label="Parameter to vary",
         choices=FEATURE_CHOICES,
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
     start = forms.FloatField(
+        label="Start",
         min_value=0,
         max_value=10000,
         initial=0,
@@ -227,6 +232,7 @@ class TimeseriesForm(forms.Form):
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
     stop = forms.FloatField(
+        label="Stop",
         min_value=0,
         max_value=10000,
         initial=100,
@@ -234,12 +240,14 @@ class TimeseriesForm(forms.Form):
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
     step = forms.FloatField(
+        label="Step",
         min_value=0.1,
         initial=10,
         required=False,
         widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
     catchment_name = forms.CharField(
+        label="Subcatchment",
         widget=forms.Select(
             choices=[("", "--- Upload a file first ---")],
             attrs={"class": "form-select"},
@@ -250,31 +258,32 @@ class TimeseriesForm(forms.Form):
         super().__init__(*args, **kwargs)
         if catchment_choices is not None:
             self.fields["catchment_name"].widget.choices = catchment_choices
-        self.helper = FormHelper()
-        self.helper.form_method = "post"
-        self.helper.form_action = "timeseries"
-        self.helper.add_input(Submit("submit", "Run Analysis"))
 
     MAX_SWEEP_STEPS = 100
+    SWEEP_FIELDS = ("feature", "start", "stop", "step")
 
     def clean(self):
         cleaned_data = super().clean()
-        if cleaned_data.get("mode") == "sweep":
-            if not cleaned_data.get("feature"):
-                self.add_error("feature", "Required for parameter sweep mode.")
-            for field in ("start", "stop", "step"):
-                if cleaned_data.get(field) is None:
-                    self.add_error(field, "Required for parameter sweep mode.")
-            start = cleaned_data.get("start")
-            stop = cleaned_data.get("stop")
-            step = cleaned_data.get("step")
-            if start is not None and stop is not None and start > stop:
-                self.add_error("stop", "Stop must be >= start.")
-            if start is not None and stop is not None and step and step > 0:
-                if (stop - start) / step >= self.MAX_SWEEP_STEPS:
-                    self.add_error(
-                        "step",
-                        f"Too many steps (max {self.MAX_SWEEP_STEPS}). "
-                        "Increase step size or reduce range.",
-                    )
+        if cleaned_data.get("mode") != "sweep":
+            # The sweep range is not used outside sweep mode, so values the user left
+            # there (even invalid ones) must not block the run.
+            for field in self.SWEEP_FIELDS:
+                self.errors.pop(field, None)
+            return cleaned_data
+
+        for field in self.SWEEP_FIELDS:
+            if cleaned_data.get(field) in (None, "") and field not in self.errors:
+                self.add_error(field, "Required for parameter sweep mode.")
+        start = cleaned_data.get("start")
+        stop = cleaned_data.get("stop")
+        step = cleaned_data.get("step")
+        if start is not None and stop is not None and start > stop:
+            self.add_error("stop", STOP_BEFORE_START_MESSAGE)
+        if start is not None and stop is not None and step and step > 0:
+            if (stop - start) / step >= self.MAX_SWEEP_STEPS:
+                self.add_error(
+                    "step",
+                    f"Too many steps (max {self.MAX_SWEEP_STEPS}). "
+                    "Increase step size or reduce range.",
+                )
         return cleaned_data
