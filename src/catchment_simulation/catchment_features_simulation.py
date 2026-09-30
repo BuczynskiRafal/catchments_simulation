@@ -195,7 +195,10 @@ class FeaturesSimulation:
         -------
         pd.DataFrame
             DataFrame with a ``DatetimeIndex`` (name ``"datetime"``) and columns
-            corresponding to ``TIMESERIES_KEYS``.
+            corresponding to ``TIMESERIES_KEYS``, in SWMM's reporting units:
+            ``rainfall`` and ``infiltration_loss`` in mm/h (in/h for US-unit
+            models), ``evaporation_loss`` in mm/day (in/day), ``runoff`` and
+            ``runon`` in the model's ``FLOW_UNITS``.
         """
         records: list[dict[str, Any]] = []
         with Simulation(self.file) as sim:
@@ -277,7 +280,8 @@ class FeaturesSimulation:
         Returns
         -------
         dict[float, pd.DataFrame]
-            Mapping of parameter values to DataFrames with timeseries data.
+            Mapping of parameter values to DataFrames with timeseries data, shaped
+            and in the units described in ``calculate_timeseries``.
         """
         self._validate_simulation_params(start, stop, step)
         self.file = self.copy_file(self.raw_file)

@@ -150,6 +150,8 @@ model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
 ts = model.calculate_timeseries()
 # ts is a DataFrame with DatetimeIndex and columns:
 # rainfall, runoff, infiltration_loss, evaporation_loss, runon
+# rainfall and infiltration_loss are in mm/h (in/h for US-unit models),
+# evaporation_loss in mm/day (in/day), runoff and runon in the model's FLOW_UNITS
 ```
 
 #### Collect timeseries for varying subcatchment parameter values.
