@@ -1,8 +1,24 @@
 {% extends 'base.html' %}
-{% load crispy_forms_tags %}
+{% load crispy_forms_tags static %}
 
-{% block title %}Kontakt{% endblock %}
+{% block title %}Contact — Catchment Simulation{% endblock %}
+
+{% block style %}
+<link rel="stylesheet" href="{% static 'main/css/content.css' %}">
+{% endblock %}
 
 {% block content %}
-{% crispy form form.helper %}
+<div class="content-page content-page--form">
+    <header class="cs-page-header">
+        <p class="cs-eyebrow">Contact</p>
+        <h1 class="cs-page-header__title">Contact</h1>
+        <p class="cs-page-header__lead">Ask about the package, report a problem with a model or suggest a tool. You will get a reply by email.</p>
+    </header>
+
+    <div class="cs-card">
+        {% crispy form form.helper %}
+    </div>
+
+    <p class="content-page__aside">Found a bug in the package? You can also <a href="https://github.com/BuczynskiRafal/catchments_simulation/issues" rel="noopener">open an issue on GitHub</a>.</p>
+</div>
 {% endblock %}

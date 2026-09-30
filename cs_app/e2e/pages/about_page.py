@@ -14,7 +14,7 @@ class AboutPage(BasePage):
         self.navigate(self.PATH)
 
     def get_main_heading(self) -> str | None:
-        return self.get_heading(level=2)
+        return self.get_heading(level=1)
 
     def get_body_text(self) -> str:
         return self.page.locator(".content-wrapper").inner_text()

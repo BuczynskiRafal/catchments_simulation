@@ -12,7 +12,7 @@ import uuid
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client
-from playwright.sync_api import Page
+from playwright.sync_api import Browser, BrowserContext, Page
 
 # Allow Django ORM access from async Playwright threads.
 os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
@@ -81,3 +81,25 @@ def auth_page(page: Page, live_server, test_user) -> Page:
     # Reload so the server sees the session cookie
     page.reload(wait_until="domcontentloaded")
     return page
+
+
+def new_context_without_js(browser: Browser) -> BrowserContext:
+    """
+    A browser context with JavaScript off, for testing the no-JS fallbacks.
+
+    Reduced motion switches off Bootstrap's smooth scrolling: the scroll a click
+    starts would otherwise animate, and on a slow runner the click can keep finding
+    its target outside the viewport until it times out.
+    """
+    return browser.new_context(java_script_enabled=False, reduced_motion="reduce")
+
+
+def wait_for_styles(page: Page) -> None:
+    """
+    Wait until the stylesheets and web fonts have been applied.
+
+    Without JavaScript nothing holds DOMContentLoaded back for the stylesheets,
+    so the page first lays out unstyled and then shifts; act only after that.
+    """
+    page.wait_for_load_state("load")
+    page.evaluate("document.fonts.ready.then(() => true)")

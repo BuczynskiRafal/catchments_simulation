@@ -1,0 +1,103 @@
+/*
+ * Simulation page (main/simulation.html). Shared layout and result components
+ * live in app.css; this file only holds what the parameter sweep adds.
+ *
+ *   .sim-range            borderless fieldset with start/stop/step (.sim-range__fields) and the
+ *                         live run-count hint
+ *   .sim-results          results column: header, key figures, chart card, table, actions
+ *   .sim-metrics          <dl> of .cs-metric tiles; .cs-metric__note names the swept value
+ *   .sim-chart            chart container; holds the no-JS fallback until Plotly draws
+ *   .sim-empty            empty state before the first run, with a list of what a run gives
+ */
+
+/* ── Panel ────────────────────────────────────────────────────────── */
+
+.sim-range {
+    min-width: 0;
+    margin: 0 0 1rem;
+    padding: 0;
+    border: 0;
+}
+
+.sim-range__fields {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+/* crispy wraps each field in .mb-3; the grid gap spaces them instead. */
+.sim-range__fields > .mb-3 {
+    margin-bottom: 0 !important;
+}
+
+/* ── Results ──────────────────────────────────────────────────────── */
+
+.sim-results {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.sim-results__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+}
+
+.sim-results__title {
+    margin: 0;
+    font-size: var(--cs-fs-h3);
+}
+
+.sim-results__meta {
+    margin: 0;
+    color: var(--cs-ink-muted);
+    font-family: var(--cs-font-mono);
+    font-size: var(--cs-fs-caption);
+}
+
+.sim-metrics {
+    margin: 0;
+}
+
+.sim-metrics dd {
+    margin: 0;
+}
+
+.sim-metrics .cs-metric__note {
+    margin-top: 0.375rem;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+    overflow-wrap: anywhere;
+}
+
+.sim-chart {
+    min-height: 300px;
+}
+
+.sim-chart__fallback {
+    margin: 0;
+    padding: 2rem 1rem;
+    color: var(--cs-ink-muted);
+    text-align: center;
+}
+
+.sim-table__title {
+    margin: 0 0 0.75rem;
+    font-size: 1.0625rem;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────── */
+
+.sim-empty__list {
+    margin: 0.75rem 0 0;
+    padding-left: 1.25rem;
+    font-size: var(--cs-fs-small);
+    text-align: left;
+}
+
+.sim-empty__list li + li {
+    margin-top: 0.25rem;
+}

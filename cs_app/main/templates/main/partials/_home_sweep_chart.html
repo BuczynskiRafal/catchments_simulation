@@ -1,0 +1,25 @@
+{# Home page example chart. Context: key (plot-<key> id), sweep (chart_data.sweeps entry), title. #}
+{% if sweep %}
+<figure class="cs-chart-card home-example__chart">
+    <div class="cs-chart-card__toolbar">
+        <h4 class="cs-chart-card__title">{{ title }}</h4>
+    </div>
+    <div class="cs-chart-card__body">
+        <noscript><p class="home-chart__noscript">Turn on JavaScript to see the interactive chart. The key numbers are listed below it.</p></noscript>
+        <div id="plot-{{ key }}" class="home-chart" data-home-sweep="{{ key }}" role="img"
+             aria-label="{{ title }}" aria-describedby="plot-{{ key }}-summary"></div>
+    </div>
+    <figcaption>
+        <dl class="home-example__summary" id="plot-{{ key }}-summary">
+            <div>
+                <dt>{{ sweep.xLabel }}</dt>
+                <dd class="cs-mono">{{ sweep.xRange.0|floatformat:"-2g" }} → {{ sweep.xRange.1|floatformat:"-2g" }}</dd>
+            </div>
+            <div>
+                <dt>{{ sweep.yLabel }}</dt>
+                <dd class="cs-mono">{{ sweep.runoffRange.0|floatformat:"0g" }} → {{ sweep.runoffRange.1|floatformat:"0g" }}</dd>
+            </div>
+        </dl>
+    </figcaption>
+</figure>
+{% endif %}

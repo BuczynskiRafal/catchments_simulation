@@ -1,120 +1,120 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Catchment Calculations{% endblock %}
+{% block title %}Calculations: SWMM vs ANN runoff{% endblock %}
+
+{% block head_scripts %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
+        integrity="sha384-cCVCZkAjYNxaYKbM8lsArLznDF/SvMFr1jcZrvOpSTCa0W40ZAdLzHCEulnUa5i7"
+        crossorigin="anonymous"></script>
+<script src="{% static 'main/js/charts.js' %}"></script>
+{% endblock %}
 
 {% block style %}
 <link rel="stylesheet" href="{% static 'main/css/upload_zone.css' %}">
+<link rel="stylesheet" href="{% static 'main/css/calculations.css' %}">
 {% endblock %}
 
 {% block content %}
+<header class="cs-page-header">
+    <p class="cs-eyebrow">Model comparison</p>
+    <h1 class="cs-page-header__title">SWMM vs neural network runoff</h1>
+    <p class="cs-page-header__lead">Run your SWMM model and see how closely the neural network reproduces its runoff for every subcatchment.</p>
+</header>
 
-<div class="container-fluid">
-    <div class="row">
-        <div class="col-md-6">
-            <!-- Left column -->
-            <div class="bg-light p-3" style="min-height: 100%;">
-                <h3 style="text-align: center;">Catchment Area Neural Network Model</h3>
-                <p  style="text-align: justify;">The Catchment Area Neural Network Model is a machine learning model designed to analyze and predict the behavior of water flow in catchment areas. The model takes into account various features of the catchment area, such as the land surface, slope, imperviousness, and infiltration properties. By understanding the relationships between these features, the model can provide valuable insights for water resource management, flood control, and environmental conservation efforts.</p>
-                <p>
-                    <h4 style="text-align: center;">Features</h4><br>
-                    <p>The model utilizes the following features as inputs:</p>
-                    <ul style="list-style-type: disc;">
-                        <li>Area (ha): The actual area of the catchment</li>
-                        <li>Width (m): The characteristic width of the overland flow path for surface runoff</li>
-                        <li>Slope (%): The average percentage slope of the catchment</li>
-                        <li>Imperv (%): The percentage of land surface (excluding any LID) that is impervious</li>
-                        <li>N-Imperv (-): Manning's n coefficient for overland flow through the impervious portion of the partial catchment</li>
-                        <li>N-Perv (-): Manning's n coefficient for overland flow through the pervious portion of the partial catchment</li>
-                        <li>Dstore-Imperv (m): Depth of depression storage on the impervious portion of the partial catchment (inches or millimeters)</li>
-                        <li>Dstore-Perv (m): Depth of depression storage on the pervious portion of the partial catchment (inches or millimeters)</li>
-                        <li>Zero-Imperv (%): Percentage of impervious area without depression storage</li>
-                        <li>Infiltration Data (-): Infiltration model (Horton, Modified Horton, Green-Ampt, Modified Green-Ampt, Curve Number (SCS))</li>
-                    </ul>
-                    <br>
-                    <h4 style="text-align: center;">Model Architecture:</h4>
-                    The model is a fully connected neural network with the following architecture:<br>
-                    <br>
-                    <img src="{% static 'main/img/nn.png' %}" alt="Opis obrazu" class="img-fluid" style="display: block; width: 60%; height: auto; margin-left: auto; margin-right: auto;">
+<div class="cs-workbench">
+    <section class="cs-panel" aria-label="Calculation controls">
+        <div class="cs-step">
+            <div class="cs-step__header">
+                <span class="cs-step__num" aria-hidden="true">1</span>
+                <h2 class="cs-step__title"><span class="visually-hidden">Step 1: </span>Model</h2>
+            </div>
+            {% include 'main/_upload_zone.html' with compact=True %}
+        </div>
 
-                    <ul>
-                        <li>Input layer with 8 neurons and ReLU activation function<br></li>
-                        <li>Hidden layer with 8 neurons and ReLU activation function<br></li>
-                        <li>Output layer with 1 neuron and ReLU activation function<br></li>
-                        <li>The model is compiled using the Adam optimizer and Mean Squared Error (MSE) as the loss function. Additional metrics used for evaluation are Mean Absolute Error (MAE) and Mean Squared Error (MSE).<br></li>
-                    </ul>
-                    <br>
-                    <h4  style="text-align: center;">Applications</h4>
-                    This model can be used for various applications, including:<br>
-                    <br>
-                    <ul>
-                    <li>Water resource management: By predicting the behavior of water flow in catchment areas, the model can help inform decision-making for water allocation and conservation efforts.<br></li>
-                    <li>Flood control: Understanding the factors that contribute to flooding can help identify areas at risk and inform the design of effective flood mitigation measures.<br></li>
-                    <li>Environmental conservation: Predicting the impact of changes in land use, climate, or other factors on catchment areas can help inform conservation strategies and preserve valuable ecosystems.</li>
-                    </ul>
-                </p>
-
+        <div class="cs-step">
+            <div class="cs-step__header">
+                <span class="cs-step__num" aria-hidden="true">2</span>
+                <h2 class="cs-step__title"><span class="visually-hidden">Step 2: </span>Compare</h2>
+            </div>
+            <form method="post" action="{% url 'main:calculations' %}" id="calculations-form">
+                {% csrf_token %}
+                <p class="cs-hint">SWMM runs the model, then the network predicts runoff from the same subcatchment properties.</p>
+                <button type="submit" class="btn btn-primary w-100" id="run-calculations-button" data-authenticated="{{ request.user.is_authenticated }}">Run Calculations</button>
+                <div class="cs-progress" id="calculations-loading-state" hidden>
+                    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                    <span class="cs-progress__elapsed" data-cs-elapsed aria-hidden="true"></span>
+                    <span role="status">Running SWMM and the neural network…</span>
+                </div>
+            </form>
+            <div class="calc-note" role="note" aria-labelledby="calc-validity-title">
+                <svg class="calc-note__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg>
+                <div>
+                    <p class="calc-note__title" id="calc-validity-title">Validity range</p>
+                    <p class="calc-note__text">Trained on a small data set, the network is reliable only within a limited precipitation range. Treat results outside it as indicative.</p>
+                </div>
             </div>
         </div>
-        <div class="col-md-6">
-            <!-- Roght column -->
-            <div class="bg-light p-3" style="min-height: 100%;">
+    </section>
 
-                <h3 style="text-align: center;">Comparison of SWMM and ANN in runoff calculation.</h3>
+    <div class="cs-canvas">
+        {# CS.asyncForm replaces this wrapper's contents with the results fragment. #}
+        <div id="calculations-output">
+            {% include 'main/partials/_calculations_results.html' %}
+        </div>
 
-                {% include 'main/_upload_zone.html' %}
+        <section class="cs-card calc-model" aria-labelledby="calc-model-title">
+            <p class="cs-eyebrow">About the model</p>
+            <h2 class="cs-card__title calc-model__title" id="calc-model-title">Catchment Area Neural Network Model</h2>
+            <p class="calc-model__lead">A small fully connected network that estimates subcatchment runoff from the same properties SWMM uses, so it can be checked against a full SWMM run.</p>
 
-                <!-- Run calculations button -->
-                <form method="post">
-                    {% csrf_token %}
-                    <div class="row mt-3">
-                        <div class="col-md-12 d-flex justify-content-center">
-                            <button type="submit" class="btn btn-primary" id="run-calculations-button" data-authenticated="{{ request.user.is_authenticated }}">Run Calculations</button>
-                        </div>
+            <div class="calc-details">
+                <details class="calc-details__item">
+                    <summary class="calc-details__title">Features</summary>
+                    <div class="calc-details__body">
+                        <p>The network reads eight properties of each subcatchment from the SWMM model:</p>
+                        <dl class="calc-features">
+                            <dt>Imperv (%)</dt><dd>Share of the land surface, excluding LID, that is impervious.</dd>
+                            <dt>Width</dt><dd>Characteristic width of the overland flow path.</dd>
+                            <dt>Slope (%)</dt><dd>Average surface slope.</dd>
+                            <dt>N-Imperv</dt><dd>Manning's n for overland flow over the impervious area.</dd>
+                            <dt>N-Perv</dt><dd>Manning's n for overland flow over the pervious area.</dd>
+                            <dt>Dstore-Imperv</dt><dd>Depression storage depth on the impervious area.</dd>
+                            <dt>Dstore-Perv</dt><dd>Depression storage depth on the pervious area.</dd>
+                            <dt>Zero-Imperv (%)</dt><dd>Share of the impervious area without depression storage.</dd>
+                        </dl>
                     </div>
-                </form>
-
-
-                <br>
-                <h6>Warning!</h6>
-                <p>Sensitivity analysis indicates that the model works correctly only within a certain range of precipitation. This is due to the small training set.
-                </p>
-                <h4 style="text-align: center;">Results Comparison</h4>
-
-
-
-                <table class="table table-striped">
-                    <thead>
-                        <tr>
-                            <th class="text-center">Name</th>
-                            <th class="text-center">SWMM Runoff [m3]</th>
-                            <th class="text-center">ANN Runoff [m3]</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% if not df_is_empty %}
-                            {% for index, row in df.iterrows %}
-                                <tr>
-                                    <td class="text-center">{{ row.Name }}</td>
-                                    <td class="text-center">{{ row.SWMM_Runoff_m3|floatformat:2 }}</td>
-                                    <td class="text-center">{{ row.ANN_Runoff_m3|floatformat:2 }}</td>
-                                </tr>
-                            {% endfor %}
-                        {% else %}
-                            <tr>
-                                <td class="text-center">-</td>
-                                <td class="text-center">-</td>
-                                <td class="text-center">-</td>
-                            </tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-
-
+                </details>
+                <details class="calc-details__item">
+                    <summary class="calc-details__title">Architecture</summary>
+                    <div class="calc-details__body">
+                        <figure class="calc-model__diagram">
+                            <img src="{% static 'main/img/nn.png' %}" width="1208" height="937" loading="lazy" alt="Diagram of the neural network: 8 inputs, 8 hidden neurons, 1 output">
+                        </figure>
+                        <ul>
+                            <li>Input layer: 8 neurons, ReLU activation.</li>
+                            <li>Hidden layer: 8 neurons, ReLU activation.</li>
+                            <li>Output layer: 1 neuron, ReLU activation.</li>
+                            <li>Trained with the Adam optimiser and mean squared error (MSE) loss; evaluated with mean absolute error (MAE) and MSE.</li>
+                        </ul>
+                    </div>
+                </details>
+                <details class="calc-details__item">
+                    <summary class="calc-details__title">Applications</summary>
+                    <div class="calc-details__body">
+                        <ul>
+                            <li><strong>Water resource management:</strong> predicting catchment runoff informs water allocation and conservation decisions.</li>
+                            <li><strong>Flood control:</strong> understanding what drives runoff helps locate areas at risk and design mitigation measures.</li>
+                            <li><strong>Environmental conservation:</strong> estimating the effect of land-use or climate changes supports conservation strategies.</li>
+                        </ul>
+                    </div>
+                </details>
             </div>
-        </div>
-
+        </section>
     </div>
 </div>
+{% endblock %}
 
+{% block additional_scripts %}
+<script src="{% static 'main/js/pages/calculations.js' %}"></script>
 {% endblock %}

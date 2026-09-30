@@ -1,11 +1,24 @@
 "use strict";
 
+/*
+ * Upload zone (main/_upload_zone.html).
+ *
+ * Events dispatched on `document`:
+ *   "cs:model-changed"  detail: {filename, size, subcatchments: [name, ...], restored}
+ *                       fired once the subcatchment list of a newly loaded model
+ *                       (upload, sample data or restored session) is known;
+ *                       `restored` is true when the session's model is unchanged: shown
+ *                       on page load, or the same content loaded again (the server
+ *                       answers `unchanged`), so results computed from it stay valid.
+ *   "cs:model-cleared"  fired after the user removes the loaded model.
+ */
 document.addEventListener("DOMContentLoaded", function () {
     if (typeof Dropzone === "undefined") {
         return;
     }
 
     var dropzoneForm = document.getElementById("my-dropzone");
+    // Also stops a second copy of this script when the partial is included twice.
     if (!dropzoneForm || dropzoneForm.dropzone) {
         return;
     }
@@ -21,12 +34,21 @@ document.addEventListener("DOMContentLoaded", function () {
     var clearUrl = dropzoneForm.dataset.uploadClearUrl;
     var statusUrl = dropzoneForm.dataset.uploadStatusUrl;
     var subcatchmentsUrl = dropzoneForm.dataset.subcatchmentsUrl;
-    var loginUrl = document.body ? document.body.dataset.loginUrl || "" : "";
 
     if (!uploadUrl) {
         return;
     }
 
+    var wrapper = dropzoneForm.closest(".upload-zone-wrapper");
+    var statusElement = document.getElementById("upload-status");
+    var statusText = document.getElementById("upload-status-text");
+    var statusMeta = document.getElementById("upload-status-meta");
+    var removeButton = wrapper ? wrapper.querySelector(".upload-chip-remove") : null;
+    var trigger = dropzoneForm.querySelector(".upload-trigger");
+
+    var currentModel = null;
+    // Incremented per subcatchment request so a stale response cannot overwrite a newer model.
+    var subcatchmentsRequestId = 0;
     var preferredCatchmentValue = "";
     var catchmentSelect = document.getElementById("id_catchment_name");
 
@@ -37,58 +59,141 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    function fetchSubcatchments() {
-        var select = document.getElementById("id_catchment_name");
-        if (!select || !subcatchmentsUrl) {
+    function notify(message, level) {
+        if (window.CS && typeof window.CS.toast === "function") {
+            window.CS.toast(message, level);
+            return true;
+        }
+        window.alert(message);
+        return false;
+    }
+
+    function handleUnauthorized() {
+        var toastShown = notify("You must be logged in to upload files.", "warning");
+        // Leave the toast on screen briefly; an alert has already blocked until dismissed.
+        window.setTimeout(window.CS.redirectToLogin, toastShown ? 1500 : 0);
+    }
+
+    function formatFileSize(bytes) {
+        if (!bytes) {
+            return "";
+        }
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        if (bytes < 1024 * 1024) {
+            return (bytes / 1024).toFixed(1) + " KB";
+        }
+        return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    }
+
+    function describeModel(model, subcatchments) {
+        var parts = [formatFileSize(model.size)];
+        if (subcatchments) {
+            var count = subcatchments.length;
+            parts.push(count + (count === 1 ? " subcatchment" : " subcatchments"));
+        }
+        return parts.filter(Boolean).join(" · ");
+    }
+
+    function setChipVisible(visible) {
+        if (wrapper) {
+            wrapper.classList.toggle("has-model", visible);
+        }
+        if (statusElement) {
+            statusElement.style.display = visible ? "" : "none";
+        }
+    }
+
+    /** names: the model's subcatchments, or null when they could not be read. */
+    function populateCatchmentSelect(select, names, previousValue) {
+        select.innerHTML = "";
+        if (!names || names.length === 0) {
+            var emptyOption = document.createElement("option");
+            emptyOption.value = "";
+            emptyOption.textContent = names
+                ? "--- No subcatchments found in this model ---"
+                : "--- Could not read subcatchments ---";
+            select.appendChild(emptyOption);
+            preferredCatchmentValue = "";
             return;
         }
-        if (select.value) {
-            preferredCatchmentValue = select.value;
-        }
-        var previousValue = preferredCatchmentValue;
-        select.disabled = true;
-        select.innerHTML = '<option value="">Loading...</option>';
-        fetch(subcatchmentsUrl, {
-            headers: { "X-Requested-With": "XMLHttpRequest" },
-        })
-            .then(function (response) {
-                return response.ok ? response.json() : null;
-            })
-            .then(function (data) {
-                select.innerHTML = "";
-                if (!data || !data.subcatchments || data.subcatchments.length === 0) {
-                    var emptyOption = document.createElement("option");
-                    emptyOption.value = "";
-                    emptyOption.textContent = "--- Upload a file first ---";
-                    select.appendChild(emptyOption);
-                    preferredCatchmentValue = "";
-                    return;
-                }
-                var placeholder = document.createElement("option");
-                placeholder.value = "";
-                placeholder.textContent = "--- Select catchment ---";
-                select.appendChild(placeholder);
+        var placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "--- Select subcatchment ---";
+        select.appendChild(placeholder);
 
-                var hasSelectedValue = false;
-                data.subcatchments.forEach(function (name) {
-                    var option = document.createElement("option");
-                    option.value = name;
-                    option.textContent = name;
-                    if (name === previousValue) {
-                        option.selected = true;
-                        hasSelectedValue = true;
-                    }
-                    select.appendChild(option);
-                });
-                if (!hasSelectedValue) {
-                    preferredCatchmentValue = "";
-                }
-            })
+        var hasSelectedValue = false;
+        names.forEach(function (name) {
+            var option = document.createElement("option");
+            option.value = name;
+            option.textContent = name;
+            if (name === previousValue) {
+                option.selected = true;
+                hasSelectedValue = true;
+            }
+            select.appendChild(option);
+        });
+        if (!hasSelectedValue) {
+            preferredCatchmentValue = "";
+        }
+    }
+
+    function announceModel(subcatchments) {
+        if (!currentModel) {
+            return;
+        }
+        if (statusMeta) {
+            statusMeta.textContent = describeModel(currentModel, subcatchments);
+        }
+        document.dispatchEvent(new CustomEvent("cs:model-changed", {
+            detail: {
+                filename: currentModel.filename,
+                size: currentModel.size,
+                subcatchments: (subcatchments || []).slice(),
+                restored: currentModel.restored,
+            },
+        }));
+    }
+
+    function fetchSubcatchments() {
+        var requestId = ++subcatchmentsRequestId;
+        var select = document.getElementById("id_catchment_name");
+        var previousValue = "";
+        if (select) {
+            if (select.value) {
+                preferredCatchmentValue = select.value;
+            }
+            previousValue = preferredCatchmentValue;
+            select.disabled = true;
+            select.innerHTML = '<option value="">Loading...</option>';
+        }
+
+        var request = subcatchmentsUrl
+            ? fetch(subcatchmentsUrl, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+                .then(function (response) {
+                    return response.ok ? response.json() : null;
+                })
+            : Promise.resolve(null);
+
+        request
             .catch(function (error) {
                 console.warn("subcatchments fetch failed:", error);
+                return null;
             })
-            .finally(function () {
-                select.disabled = false;
+            .then(function (data) {
+                if (requestId !== subcatchmentsRequestId) {
+                    return;
+                }
+                // null means "unknown": the chip then shows the file size only.
+                var names = data && Array.isArray(data.subcatchments) ? data.subcatchments : null;
+                // Re-query in case the page swapped its form while the request was in flight.
+                select = document.getElementById("id_catchment_name");
+                if (select) {
+                    populateCatchmentSelect(select, names, previousValue);
+                    select.disabled = false;
+                }
+                announceModel(names);
             });
     }
 
@@ -98,16 +203,20 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
         preferredCatchmentValue = "";
+        select.disabled = false;
         select.innerHTML = '<option value="">--- Upload a file first ---</option>';
     }
 
-    function showUploadStatus(filename) {
-        var statusElement = document.getElementById("upload-status");
-        var statusText = document.getElementById("upload-status-text");
-        if (statusElement && statusText) {
-            statusText.textContent = "Loaded: " + filename;
-            statusElement.style.display = "";
+    function setModel(filename, size, restored) {
+        currentModel = { filename: filename, size: size || 0, restored: restored };
+        if (statusText) {
+            statusText.textContent = filename;
         }
+        if (statusMeta) {
+            statusMeta.textContent = describeModel(currentModel, null);
+        }
+        setChipVisible(true);
+        fetchSubcatchments();
     }
 
     function parseJsonSafely(response) {
@@ -123,70 +232,49 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    var replacingUpload = false;
+    var previewTemplate =
+        '<div class="dz-preview dz-file-preview">' +
+        '<div class="dz-details">' +
+        '<span class="dz-filename" data-dz-name></span>' +
+        '<span class="dz-size" data-dz-size></span>' +
+        "</div>" +
+        '<div class="dz-progress" aria-hidden="true"><span class="dz-upload" data-dz-uploadprogress></span></div>' +
+        '<p class="dz-error-message" role="alert"><span data-dz-errormessage></span></p>' +
+        '<button type="button" class="upload-preview-dismiss" data-dz-remove aria-label="Dismiss upload">' +
+        '<span aria-hidden="true">×</span></button>' +
+        "</div>";
+
     var dzInstance = new Dropzone(dropzoneForm, {
         url: uploadUrl,
         acceptedFiles: ".inp",
         maxFilesize: 10,
         maxFiles: 1,
-        addRemoveLinks: true,
-        dictRemoveFile: "\u00d7",
+        previewTemplate: previewTemplate,
+        // Same units as the model chip (formatFileSize).
+        filesizeBase: 1024,
+        dictFileSizeUnits: { tb: "TB", gb: "GB", mb: "MB", kb: "KB", b: "B" },
         headers: {
             "X-Requested-With": "XMLHttpRequest",
             "X-CSRFToken": csrfToken,
         },
         init: function () {
+            this.on("success", function (file, response) {
+                setModel(file.name, file.size, Boolean(file.restored || (response && response.unchanged)));
+            });
             this.on("removedfile", function () {
-                var messageElement = document.querySelector("#my-dropzone .dz-message");
-                if (messageElement) {
-                    messageElement.style.display = "";
+                // Dismissing a preview removes the focused button; keep focus in the upload zone.
+                if (trigger && document.activeElement === document.body) {
+                    trigger.focus();
                 }
-                var statusElement = document.getElementById("upload-status");
-                if (statusElement) {
-                    statusElement.style.display = "none";
-                }
-                if (!replacingUpload && clearUrl) {
-                    fetch(clearUrl, {
-                        method: "POST",
-                        headers: {
-                            "X-CSRFToken": csrfToken,
-                            "X-Requested-With": "XMLHttpRequest",
-                        },
-                    }).catch(function (error) {
-                        console.warn("upload clear failed:", error);
-                    });
-                    resetCatchmentDropdown();
-                }
-            });
-            this.on("addedfile", function () {
-                var messageElement = document.querySelector("#my-dropzone .dz-message");
-                if (messageElement) {
-                    messageElement.style.display = "none";
-                }
-            });
-            this.on("success", function (file) {
-                var statusElement = document.getElementById("upload-status");
-                var statusText = document.getElementById("upload-status-text");
-                if (statusElement && statusText) {
-                    statusText.textContent = "Loaded: " + file.name;
-                    statusElement.style.display = "";
-                }
-                fetchSubcatchments();
             });
             this.on("maxfilesexceeded", function (file) {
-                replacingUpload = true;
                 this.removeAllFiles();
-                replacingUpload = false;
                 this.addFile(file);
             });
         },
         error: function (file, response, xhr) {
             if (xhr && xhr.status === 401) {
-                var redirectUrl = response && response.login_url ? response.login_url : loginUrl;
-                alert("You must be logged in to upload files.");
-                if (redirectUrl) {
-                    window.location.href = redirectUrl + "?next=" + encodeURIComponent(window.location.pathname);
-                }
+                handleUnauthorized();
                 return;
             }
 
@@ -209,16 +297,16 @@ document.addEventListener("DOMContentLoaded", function () {
         },
     });
 
-    function showMockFile(filename, size) {
-        replacingUpload = true;
+    /** Show a model the server already holds (sample data, or `restored` from the session). */
+    function showMockFile(filename, size, restored) {
         dzInstance.removeAllFiles();
-        replacingUpload = false;
 
         var mockFile = {
             name: filename,
             size: size || 0,
             status: Dropzone.SUCCESS,
             accepted: true,
+            restored: restored,
         };
 
         dzInstance.files.push(mockFile);
@@ -227,10 +315,40 @@ document.addEventListener("DOMContentLoaded", function () {
         dzInstance.emit("complete", mockFile);
     }
 
+    function clearModel() {
+        subcatchmentsRequestId++;
+        currentModel = null;
+        dzInstance.removeAllFiles(true);
+        setChipVisible(false);
+        resetCatchmentDropdown();
+        if (clearUrl) {
+            fetch(clearUrl, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": csrfToken,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            }).catch(function (error) {
+                console.warn("upload clear failed:", error);
+            });
+        }
+        document.dispatchEvent(new CustomEvent("cs:model-cleared"));
+        // The remove button just disappeared; keep keyboard users inside the upload zone.
+        if (trigger) {
+            trigger.focus();
+        }
+    }
+
+    if (removeButton) {
+        removeButton.addEventListener("click", clearModel);
+    }
+
     var sampleButton = document.getElementById("load-sample-data-button");
     if (sampleButton && sampleUploadUrl) {
+        sampleButton.hidden = false;
         var defaultText = sampleButton.textContent;
         sampleButton.addEventListener("click", function () {
+            var hadFocus = document.activeElement === sampleButton;
             sampleButton.disabled = true;
             sampleButton.textContent = "Loading sample data...";
 
@@ -243,38 +361,31 @@ document.addEventListener("DOMContentLoaded", function () {
             })
                 .then(function (response) {
                     if (response.status === 401) {
-                        return parseJsonSafely(response).then(function (payload) {
-                            var redirectUrl = payload && payload.login_url ? payload.login_url : loginUrl;
-                            if (redirectUrl) {
-                                window.location.href =
-                                    redirectUrl + "?next=" + encodeURIComponent(window.location.pathname);
-                            }
-                            return null;
-                        });
+                        handleUnauthorized();
+                        return null;
                     }
                     if (!response.ok) {
                         return parseJsonSafely(response).then(function (payload) {
-                            throw new Error(
-                                payload && payload.error ? payload.error : "Failed to load sample data."
-                            );
+                            throw new Error(payload.error || "Failed to load sample data.");
                         });
                     }
                     return parseJsonSafely(response);
                 })
                 .then(function (data) {
-                    if (!data) {
-                        return;
+                    if (data) {
+                        showMockFile(data.filename || "example.inp", data.size, data.unchanged === true);
                     }
-                    var filename = data.filename || "example.inp";
-                    showMockFile(filename, data.size);
-                    showUploadStatus(filename);
                 })
                 .catch(function (error) {
-                    alert(error.message || "Failed to load sample data.");
+                    notify(error.message || "Failed to load sample data.", "danger");
                 })
                 .finally(function () {
                     sampleButton.disabled = false;
                     sampleButton.textContent = defaultText;
+                    // Disabling the button dropped its focus; give it back to keyboard users.
+                    if (hadFocus && document.activeElement === document.body) {
+                        sampleButton.focus();
+                    }
                 });
         });
     }
@@ -287,10 +398,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 return response.ok ? response.json() : null;
             })
             .then(function (data) {
-                if (data && data.has_file) {
-                    showMockFile(data.filename, data.size);
-                    showUploadStatus(data.filename);
-                    fetchSubcatchments();
+                // Ignore the restored state if the user loaded a model while this was in flight.
+                if (data && data.has_file && !currentModel) {
+                    showMockFile(data.filename, data.size, true);
                 }
             })
             .catch(function (error) {

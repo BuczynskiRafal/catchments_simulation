@@ -1,12 +1,13 @@
 """Reusable Upload Zone (Dropzone.js) component POM.
 
-Used by Simulation, Timeseries, and Calculations pages.  Upload clearing is
-done via the Dropzone's ×  remove-link (``dz-remove``), not a standalone
-"Clear" button.
+Used by Simulation, Timeseries, and Calculations pages.  The loaded model is
+shown as a chip (``#upload-status``); clearing it is done via the chip's ×
+button (``.dz-remove``), not a standalone "Clear" button.
 """
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from playwright.sync_api import Locator, expect
@@ -42,9 +43,24 @@ class UploadComponent:
         return self.page.locator("#upload-status-text")
 
     @property
+    def upload_status_meta(self) -> Locator:
+        """Size and subcatchment count shown in the model chip."""
+        return self.page.locator("#upload-status-meta")
+
+    @property
     def dropzone_remove_link(self) -> Locator:
-        """The × remove link added by Dropzone ``addRemoveLinks: true``."""
+        """The × button of the loaded-model chip (class ``dz-remove``)."""
         return self.page.locator(".dz-remove")
+
+    @property
+    def trigger(self) -> Locator:
+        """Keyboard-focusable button inside the drop target that opens the file dialog."""
+        return self.page.locator("#my-dropzone .upload-trigger")
+
+    @property
+    def error_preview_dismiss(self) -> Locator:
+        """Dismiss button of the failed upload preview."""
+        return self.page.locator("#my-dropzone .dz-error .upload-preview-dismiss")
 
     @property
     def file_input(self) -> Locator:
@@ -71,17 +87,20 @@ class UploadComponent:
     def upload_file(self, path: str) -> None:
         """Upload a file by setting it on the hidden input.
 
-        Waits for the Dropzone success event (upload status becomes visible)
-        or for a Dropzone error element to appear.
+        Waits until the model chip shows this file (success) or a Dropzone
+        error element appears; matching the name keeps it correct when a
+        model is already loaded.
         """
         self.file_input.set_input_files(path)
-        # Wait for async Dropzone processing to complete
         self.page.wait_for_function(
-            """() => {
+            """(name) => {
                 const status = document.getElementById('upload-status');
-                const error = document.querySelector('.dz-error');
-                return (status && status.style.display !== 'none') || !!error;
+                const text = document.getElementById('upload-status-text');
+                const loaded = status && status.style.display !== 'none'
+                    && text && text.textContent.includes(name);
+                return loaded || !!document.querySelector('.dz-error');
             }""",
+            arg=os.path.basename(path),
             timeout=15_000,
         )
 
@@ -95,6 +114,22 @@ class UploadComponent:
     def clear_upload(self) -> None:
         """Remove the file via Dropzone's × remove link."""
         self.dropzone_remove_link.click()
+
+    def record_model_events(self) -> None:
+        """Store ``cs:model-changed`` / ``cs:model-cleared`` details on ``window`` for assertions."""
+        self.page.evaluate(
+            """() => {
+                window.__csModelChanged = null;
+                window.__csModelCleared = false;
+                document.addEventListener('cs:model-changed', (e) => { window.__csModelChanged = e.detail; });
+                document.addEventListener('cs:model-cleared', () => { window.__csModelCleared = true; });
+            }"""
+        )
+
+    def wait_for_model_changed(self) -> dict:
+        """Wait for the next recorded ``cs:model-changed`` event and return its detail."""
+        handle = self.page.wait_for_function("() => window.__csModelChanged", timeout=15_000)
+        return handle.json_value()
 
     def wait_for_sample_button_ready(self) -> None:
         """Wait until the sample button is enabled (not loading)."""

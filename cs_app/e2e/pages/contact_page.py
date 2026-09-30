@@ -10,11 +10,7 @@ from .base_page import BasePage
 class ContactPage(BasePage):
     """POM for the contact form page (``/contact``).
 
-    Form labels are in Polish:
-      - email  → "Adres email"
-      - title  → "Tytuł"
-      - content → "Treść"
-      - submit → "Wyślij"
+    Labels: "Email", "Subject", "Message", "Send me a copy"; submit "Send message".
     """
 
     PATH = "/contact"
@@ -44,7 +40,7 @@ class ContactPage(BasePage):
 
     @property
     def submit_button(self) -> Locator:
-        return self.page.get_by_role("button", name="Wyślij")
+        return self.page.get_by_role("button", name="Send message", exact=True)
 
     def fill_form(self, email: str, title: str, content: str, *, send_to_me: bool = False) -> None:
         self.email_input.fill(email)
@@ -64,4 +60,4 @@ class ContactPage(BasePage):
         return self.email_input.is_visible() and self.title_input.is_visible()
 
     def get_error_messages(self) -> list[str]:
-        return self.page.locator(".errorlist li").all_inner_texts()
+        return self.page.locator(".invalid-feedback").all_inner_texts()

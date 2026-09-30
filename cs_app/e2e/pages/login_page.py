@@ -29,7 +29,11 @@ class LoginPage(BasePage):
 
     @property
     def submit_button(self) -> Locator:
-        return self.page.get_by_role("button", name="Login")
+        return self.page.get_by_role("button", name="Log in", exact=True)
+
+    @property
+    def password_toggle(self) -> Locator:
+        return self.page.get_by_role("button", name="Show password", exact=True)
 
     def fill_credentials(self, username: str, password: str) -> None:
         self.username_input.fill(username)
@@ -51,8 +55,5 @@ class LoginPage(BasePage):
         return self.username_input.is_visible() and self.password_input.is_visible()
 
     def get_error_messages(self) -> list[str]:
-        """Return non-field error messages shown by crispy forms.
-
-        Uses ``all_inner_texts()`` to avoid race conditions.
-        """
-        return self.page.locator(".errorlist li").all_inner_texts()
+        """Return the non-field error messages (wrong credentials) shown above the fields."""
+        return self.page.locator("form .alert-danger li").all_inner_texts()

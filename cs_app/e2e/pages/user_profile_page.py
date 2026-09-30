@@ -10,29 +10,36 @@ from .base_page import BasePage
 class UserProfilePage(BasePage):
     """POM for the user profile page (``/user/<id>/profile``).
 
-    The profile view is public for GET, but the form is read-only when
-    viewed by a user other than the owner (fields disabled, submit hidden).
-    Only the owner can POST updates.
+    The profile view is public for GET. The owner gets an editable bio form;
+    everyone else sees the bio as text, without a form or submit button.
     """
 
     def navigate_to(self, user_id: int) -> None:
         self.navigate(f"/user/{user_id}/profile")
 
     # ------------------------------------------------------------------
-    # Form fields
+    # Elements
     # ------------------------------------------------------------------
 
     @property
-    def user_field(self) -> Locator:
-        return self.page.locator("#id_user")
+    def profile_name(self) -> Locator:
+        return self.page.locator("#profile-name")
+
+    @property
+    def profile_meta(self) -> Locator:
+        return self.page.locator(".profile-card__meta")
 
     @property
     def bio_field(self) -> Locator:
         return self.page.locator("#id_bio")
 
     @property
+    def bio_text(self) -> Locator:
+        return self.page.locator(".profile-card__bio")
+
+    @property
     def submit_button(self) -> Locator:
-        return self.page.get_by_role("button", name="Wyślij")
+        return self.page.get_by_role("button", name="Save profile", exact=True)
 
     # ------------------------------------------------------------------
     # Actions
@@ -52,8 +59,8 @@ class UserProfilePage(BasePage):
         return self.bio_field.is_visible()
 
     def is_read_only(self) -> bool:
-        """Check if the form is in read-only mode (fields disabled)."""
-        return self.bio_field.is_disabled()
+        """The bio is shown as text and there is no form to edit it."""
+        return self.bio_field.count() == 0 and self.bio_text.is_visible()
 
     def has_submit_button(self) -> bool:
         return self.submit_button.count() > 0 and self.submit_button.is_visible()

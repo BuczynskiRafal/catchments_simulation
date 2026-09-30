@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import uuid
 from io import BytesIO, StringIO
 from types import SimpleNamespace
 
@@ -9,24 +10,29 @@ import pandas as pd
 import pytest
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
+from django.contrib.messages import get_messages
 from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory
 from django.urls import reverse
+from django.utils import timezone
 
 from main.views import (
+    MODEL_DIGEST_SESSION_KEY,
+    RESULT_SESSION_KEYS,
     SIM_RESULT_TOKEN_SESSION_KEY,
     TS_RESULT_TOKEN_SESSION_KEY,
     _get_catchment_choices,
     _get_subcatchment_ids,
+    _load_comparison,
     _result_cache_key,
     _safe_download_filename,
+    _summarise_comparison,
     _user_upload_dir,
     _validate_inp_file_stream,
     calculations,
-    clear_session_variables,
     simulation_view,
     subcatchments,
     timeseries_view,
@@ -321,7 +327,7 @@ def test_simulation_view_post_range_persists_form_state(client, user, monkeypatc
     payload = json.loads(cached_payload)
     chart_config = payload["chart_config"]
     assert chart_config["xLabel"] == "Percent Slope [%]"
-    assert chart_config["yLabels"]["runoff"] == "Total Runoff Volume [m3]"
+    assert chart_config["yLabels"]["runoff"] == "Total Runoff Volume [m³]"
 
     get_response = client.get(reverse("main:simulation"))
     assert get_response.status_code == 200
@@ -558,6 +564,7 @@ def test_calculations_get(user):
     """
     factory = RequestFactory()
     request = factory.get("calculations")
+    SessionMiddleware(lambda req: None).process_request(request)
     request.user = user
 
     response = calculations(request)
@@ -591,6 +598,8 @@ def test_calculations_uses_model_after_simulation(monkeypatch, user):
             if state["report_ready"]:
                 base["TotalRunoffMG"] = [12.34]
             self.subcatchments = SimpleNamespace(dataframe=base)
+            options = pd.DataFrame(index=["FLOW_UNITS"], data={"Value": ["CMS"]})
+            self.inp = SimpleNamespace(options=options)
 
     monkeypatch.setattr("main.views.Simulation", FakeSimulation)
     monkeypatch.setattr("main.views.swmmio.Model", FakeModel)
@@ -604,7 +613,11 @@ def test_calculations_uses_model_after_simulation(monkeypatch, user):
     session_middleware.process_request(request)
 
     user_dir = _user_upload_dir(user.id)
-    request.session["uploaded_file_path"] = os.path.join(user_dir, "test.inp")
+    model_path = os.path.join(user_dir, "test.inp")
+    os.makedirs(user_dir, exist_ok=True)
+    with open(model_path, "w", encoding="utf-8") as model_file:
+        model_file.write("[TITLE]\n[OPTIONS]\n")
+    request.session["uploaded_file_path"] = model_path
     request.session.save()
 
     message_middleware = MessageMiddleware(lambda req: None)
@@ -612,11 +625,14 @@ def test_calculations_uses_model_after_simulation(monkeypatch, user):
 
     request.user = user
 
-    response = calculations(request)
+    try:
+        response = calculations(request)
+    finally:
+        os.remove(model_path)
 
-    assert response.status_code == 200
-    assert b"S1" in response.content
-    assert b"12.34" in response.content
+    assert response.status_code == 302
+    [row] = _load_comparison(request)["rows"]
+    assert (row["Name"], row["SWMM_Runoff"]) == ("S1", pytest.approx(12340.0))
 
 
 @pytest.mark.django_db
@@ -641,11 +657,100 @@ def test_calculations_anonymous_get_returns_200(client):
 
 
 @pytest.mark.django_db
-def test_calculations_anonymous_post_returns_200(client):
-    """Anonymous POST to /calculations returns 200 with 'upload a file' error (no redirect)."""
+def test_calculations_anonymous_post_redirects_to_login(client):
+    """Running calculations requires login server-side; only the GET page is public."""
     calc_url = reverse("main:calculations")
     response = client.post(calc_url)
-    assert response.status_code == 200
+    assert response.status_code == 302
+    assert response.url == f"{settings.LOGIN_URL}?next={calc_url}"
+
+
+def _comparison_frame(swmm, ann):
+    return pd.DataFrame(
+        {
+            "Name": [f"S{i + 1}" for i in range(len(swmm))],
+            "SWMM_Runoff": swmm,
+            "ANN_Runoff": np.array(ann, dtype=np.float32),
+        }
+    )
+
+
+def test_summarise_comparison_rows_and_metrics():
+    summary = _summarise_comparison(_comparison_frame([10.0, 20.0], [12.0, 17.0]), "m³")
+
+    assert summary["unit"] == "m³"
+    first, second = summary["rows"]
+    assert first == {
+        "Name": "S1",
+        "SWMM_Runoff": 10.0,
+        "ANN_Runoff": 12.0,
+        "Difference": 2.0,
+        "Difference_pct": 20.0,
+    }
+    assert second["Difference"] == -3.0
+    assert second["Difference_pct"] == -15.0
+    # Plain floats: json_script cannot serialise numpy scalars.
+    assert all(type(value) is float for value in first.values() if value != "S1")
+    metrics = summary["metrics"]
+    assert metrics["count"] == 2
+    assert metrics["mae"] == pytest.approx(2.5)
+    assert metrics["rmse"] == pytest.approx(np.sqrt((4 + 9) / 2))
+    assert metrics["mape"] == pytest.approx(17.5)
+    assert metrics["mape_excluded"] == 0
+
+
+def test_summarise_comparison_skips_zero_swmm_runoff_in_percentages():
+    summary = _summarise_comparison(_comparison_frame([0.0, 10.0], [1.0, 11.0]), "m³")
+
+    assert summary["rows"][0]["Difference_pct"] is None
+    assert summary["rows"][0]["Difference"] == 1.0
+    assert summary["metrics"]["mape"] == pytest.approx(10.0)
+    assert summary["metrics"]["mape_excluded"] == 1
+    assert summary["metrics"]["mae"] == pytest.approx(1.0)
+
+
+def test_summarise_comparison_without_nonzero_swmm_runoff_has_no_mape():
+    summary = _summarise_comparison(_comparison_frame([0.0], [0.5]), "m³")
+
+    assert summary["metrics"]["mape"] is None
+    assert summary["metrics"]["mape_excluded"] == 1
+
+
+def test_summarise_comparison_of_empty_frame_is_none():
+    assert _summarise_comparison(_comparison_frame([], []), "m³") is None
+
+
+@pytest.mark.django_db
+def test_calculations_results_render_metrics_and_differences(client, user, monkeypatch):
+    """Full-page (no-JS) POST shows the metric tiles, difference columns and chart rows."""
+    monkeypatch.setattr(
+        "main.views._compare_swmm_and_ann",
+        lambda _path: (_comparison_frame([0.0, 10.0], [1.0, 12.5]), "m³"),
+    )
+    monkeypatch.setattr("main.views._cleanup_swmm_side_files", lambda _path: None)
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = os.path.join(_user_upload_dir(user.id), "test.inp")
+    session.save()
+
+    response = client.post(reverse("main:calculations"), follow=True)
+
+    html = response.content.decode()
+    assert response.redirect_chain == [(reverse("main:calculations"), 302)]
+    assert "Mean absolute error" in html
+    assert "Excludes 1 subcatchment with zero SWMM runoff" in html
+    assert 'data-sort-value="25.0">25.0</td>' in html
+    assert "Difference [%]" in html
+    chart_rows = re.search(
+        r'<script id="calculations-chart-data" type="application/json">(.*?)</script>', html
+    )
+    assert json.loads(chart_rows.group(1))[0]["Difference_pct"] is None
+
+
+def _upload(request):
+    """Call the upload view directly, skipping the CSRF check as django.test.Client does."""
+    request._dont_enforce_csrf_checks = True
+    return upload(request)
 
 
 @pytest.mark.django_db
@@ -665,7 +770,7 @@ def test_upload_unauthenticated_ajax_returns_401():
 
     request.user = AnonymousUser()
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 401
     data = json.loads(response.content)
@@ -688,7 +793,7 @@ def test_upload_unauthenticated_regular_request_redirects():
 
     request.user = AnonymousUser()
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 302
     assert settings.LOGIN_URL in response.url
@@ -733,7 +838,7 @@ def test_upload_returns_413_when_content_length_exceeds_body_limit(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 413
     data = json.loads(response.content)
@@ -757,7 +862,7 @@ def test_upload_returns_413_when_uploaded_file_size_exceeds_limit(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 413
     data = json.loads(response.content)
@@ -785,7 +890,7 @@ def test_upload_returns_413_when_content_length_is_spoofed_low(user, monkeypatch
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 413
     data = json.loads(response.content)
@@ -817,7 +922,7 @@ def test_upload_handles_invalid_or_negative_content_length(user, raw_content_len
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "content_length_variants.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
         assert response.status_code == 400
     finally:
         if os.path.exists(expected_path):
@@ -846,11 +951,51 @@ def test_upload_handles_missing_content_length(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "missing_length.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
         assert response.status_code == 400
     finally:
         if os.path.exists(expected_path):
             os.remove(expected_path)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("filename", "referer", "expected_url", "expected_message"),
+    [
+        (
+            "fallback.inp",
+            "http://testserver/timeseries",
+            "http://testserver/timeseries",
+            "File was sent.",
+        ),
+        ("fallback.txt", "/calculations", "/calculations", "Invalid file type."),
+        ("fallback.inp", "https://evil.example/", "/simulation", "File was sent."),
+        ("fallback.inp", None, "/simulation", "File was sent."),
+    ],
+)
+def test_upload_without_js_redirects_back_with_a_message(
+    client, user, filename, referer, expected_url, expected_message
+):
+    """The no-JS fallback form gets POST -> redirect -> GET, never a JSON page."""
+    client.force_login(user)
+    inp_content = b"[TITLE]\nFallback\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+    headers = {"HTTP_REFERER": referer} if referer else {}
+
+    try:
+        response = client.post(
+            reverse("main:upload"),
+            {"file": SimpleUploadedFile(filename, inp_content, content_type="text/plain")},
+            **headers,
+        )
+
+        assert response.status_code == 302
+        assert response.url == expected_url
+        [message] = get_messages(response.wsgi_request)
+        assert str(message).startswith(expected_message)
+    finally:
+        path = client.session.get("uploaded_file_path")
+        if path and os.path.exists(path):
+            os.remove(path)
 
 
 @pytest.mark.django_db
@@ -879,7 +1024,7 @@ def test_upload_authenticated_user_can_upload(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         data = json.loads(response.content)
@@ -931,7 +1076,7 @@ def test_upload_uses_stream_validator_not_bytes_validator(user, monkeypatch):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "streamed_validation.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         assert called_stream_validator["called"] is True
@@ -961,7 +1106,7 @@ def test_upload_valid_small_inp_still_succeeds(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "valid_small.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         data = json.loads(response.content)
@@ -991,7 +1136,7 @@ def test_upload_invalid_content_returns_400(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 400
     data = json.loads(response.content)
@@ -1017,7 +1162,7 @@ def test_upload_binary_blob_with_single_marker_returns_400(user):
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 400
     data = json.loads(response.content)
@@ -1046,7 +1191,7 @@ def test_upload_valid_utf16_bom_file_succeeds(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "utf16_valid.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         assert request.session.get("uploaded_file_path") == expected_path
@@ -1105,7 +1250,7 @@ def test_upload_size_equal_limit_is_allowed(user, monkeypatch):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "equal_limit.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
         assert response.status_code == 200
     finally:
         if os.path.exists(expected_path):
@@ -1137,7 +1282,7 @@ def test_upload_body_length_equal_limit_is_allowed(user, monkeypatch):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "equal_body_limit.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
         assert response.status_code == 200
     finally:
         if os.path.exists(expected_path):
@@ -1245,7 +1390,7 @@ def test_upload_clears_timeseries_form_state(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         assert "ts_form_state" not in request.session
@@ -1277,7 +1422,7 @@ def test_upload_clears_simulation_form_state(user):
         settings.MEDIA_ROOT, "uploaded_files", str(user.id), "test_upload.inp"
     )
     try:
-        response = upload(request)
+        response = _upload(request)
 
         assert response.status_code == 200
         assert "sim_form_state" not in request.session
@@ -1311,7 +1456,7 @@ def test_upload_failure_preserves_existing_form_state_and_subcatchment_cache(use
     request.session.save()
     request.user = user
 
-    response = upload(request)
+    response = _upload(request)
 
     assert response.status_code == 400
     assert request.session["uploaded_file_path"] == "uploaded_files/original.inp"
@@ -1565,6 +1710,10 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
     assert chart_config["xLabel"] == "Time"
     assert chart_config["yLabels"]["runoff"] == "Runoff Rate [CMS]"
     assert chart_config["yLabels"]["rainfall"] == "Rainfall Intensity [mm/h]"
+    assert chart_config["yLabels"]["evaporation_loss"] == "Evaporation Loss [mm/day]"
+    assert {"field": "evaporation_loss", "label": "Evaporation Loss [mm/day]"} in chart_config[
+        "series"
+    ]
 
     get_response = client.get(reverse("main:timeseries"))
     assert get_response.status_code == 200
@@ -1631,6 +1780,7 @@ def test_timeseries_view_post_single_adds_axis_labels(client, user, monkeypatch)
     assert chart_config["xLabel"] == "Time"
     assert chart_config["yLabels"]["runoff"] == "Runoff Rate [CMS]"
     assert chart_config["yLabels"]["infiltration_loss"] == "Infiltration Loss [mm/h]"
+    assert chart_config["yLabels"]["evaporation_loss"] == "Evaporation Loss [mm/day]"
 
 
 @pytest.mark.django_db
@@ -1809,12 +1959,17 @@ def test_safe_download_filename_handles_empty_extension():
 
 @pytest.mark.django_db
 def test_simulation_template_contains_loading_state(client, user):
-    """Simulation page should include loading state container for submit feedback."""
+    """Simulation page includes a hidden loading state with an elapsed-time counter."""
     client.force_login(user)
     response = client.get(reverse("main:simulation"))
 
     assert response.status_code == 200
-    assert b'id="simulation-loading-state"' in response.content
+    content = response.content.decode()
+    loading = re.search(r'<div[^>]*id="simulation-loading-state"[^>]*>(.*?)</div>', content, re.S)
+    assert loading is not None
+    assert " hidden" in loading.group(0).split(">", 1)[0]
+    assert "data-cs-elapsed" in loading.group(1)
+    assert "neural network" not in content.lower()
 
 
 @pytest.mark.django_db
@@ -1856,6 +2011,27 @@ def test_timeseries_view_uses_refactored_assets_and_has_no_chart_json_without_re
     assert b"/static/main/js/pages/timeseries.js" in response.content
     assert b'id="ts-chart-config"' not in response.content
     assert b"/static/js/charts.js" not in response.content
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("saved_state", "checked_mode"), [({}, "single"), ({"mode": "sweep"}, "sweep")]
+)
+def test_timeseries_mode_renders_as_radio_group(client, user, saved_state, checked_mode):
+    """Mode is a segmented radio group; exactly one option is checked (single by default)."""
+    client.force_login(user)
+    session = client.session
+    session["ts_form_state"] = saved_state
+    session.save()
+
+    content = client.get(reverse("main:timeseries")).content.decode()
+
+    radios = re.findall(r'<input type="radio" name="mode"[^>]*>', content)
+    assert [re.search(r'value="(\w+)"', radio).group(1) for radio in radios] == ["single", "sweep"]
+    assert [radio for radio in radios if " checked" in radio] == [
+        next(radio for radio in radios if f'value="{checked_mode}"' in radio)
+    ]
+    assert all('class="btn-check"' in radio for radio in radios)
 
 
 @pytest.mark.django_db
@@ -1955,9 +2131,9 @@ def test_timeseries_template_shows_csv_and_png_buttons_when_results_exist(client
     response = client.get(reverse("main:timeseries"))
 
     assert response.status_code == 200
-    assert b"Export timeseries to CSV" in response.content
+    assert b"Download Results (.csv)" in response.content
     assert b'id="download-timeseries-png-button"' in response.content
-    assert b'data-filename="timeseries_single.xlsx"' in response.content
+    assert b'data-filename="timeseries_single"' in response.content
 
 
 @pytest.mark.django_db
@@ -1988,6 +2164,10 @@ def test_refactored_pages_do_not_reference_legacy_chart_assets(
     ("url_name", "requires_login"),
     [
         ("main:main_view", False),
+        ("main:about", False),
+        ("main:contact", False),
+        ("login", False),
+        ("register:register", False),
         ("main:simulation", True),
         ("main:timeseries", True),
         ("main:calculations", True),
@@ -2111,6 +2291,24 @@ def test_simulation_form_predefined_method_valid():
     assert form.is_valid(), f"Form errors: {form.errors}"
 
 
+def test_simulation_form_predefined_method_ignores_invalid_range_values():
+    """Values left in the (unused) range fields must not block a literature-value run."""
+    from main.forms import SimulationForm
+
+    form = SimulationForm(
+        data={
+            "option": "simulate_n_imperv",
+            "start": "-5",
+            "stop": "1.5",
+            "step": "0",
+            "catchment_name": "S1",
+        },
+        catchment_choices=[("S1", "S1")],
+    )
+
+    assert form.is_valid(), f"Form errors: {form.errors}"
+
+
 @pytest.mark.django_db
 def test_simulation_form_range_method_requires_params():
     """
@@ -2172,6 +2370,143 @@ def test_timeseries_form_sweep_too_many_steps():
     )
     assert not form.is_valid()
     assert "step" in form.errors
+
+
+INVALID_SWEEP_RANGE = {"feature": "Nope", "start": "-5", "stop": "abc", "step": "0"}
+
+
+def test_timeseries_form_single_mode_ignores_invalid_sweep_fields():
+    """The sweep range is irrelevant to a single run, so its leftover values cannot block it."""
+    from main.forms import TimeseriesForm
+
+    form = TimeseriesForm(
+        data={"mode": "single", "catchment_name": "S1", **INVALID_SWEEP_RANGE},
+        catchment_choices=[("S1", "S1")],
+    )
+
+    assert form.is_valid(), f"Form errors: {form.errors}"
+
+
+def test_timeseries_form_sweep_mode_reports_each_invalid_field_once():
+    """In sweep mode field-level errors stand; 'Required' is not added on top of them."""
+    from main.forms import TimeseriesForm
+
+    form = TimeseriesForm(
+        data={"mode": "sweep", "catchment_name": "S1", **INVALID_SWEEP_RANGE},
+        catchment_choices=[("S1", "S1")],
+    )
+
+    assert not form.is_valid()
+    assert set(form.errors) == {"feature", "start", "stop", "step"}
+    assert all(len(errors) == 1 for errors in form.errors.values())
+    assert "Required for parameter sweep mode." not in form.errors["start"]
+
+
+@pytest.mark.parametrize(
+    ("flow_units", "factor", "unit"),
+    [
+        ("CMS", 1.0, "m³"),
+        ("lps", 0.001, "m³"),
+        ("MLD", 1000 / 86400, "m³"),
+        ("CFS", 1.0, "ft³"),
+        ("GPM", 0.133680556 / 60, "ft³"),
+        (None, 1.0, "model flow units × s"),
+    ],
+)
+def test_runoff_volume_unit_converts_flow_seconds_to_a_volume(flow_units, factor, unit):
+    from main.views import _runoff_volume_unit
+
+    actual_factor, actual_unit = _runoff_volume_unit(flow_units)
+
+    assert actual_factor == pytest.approx(factor)
+    assert actual_unit == unit
+
+
+@pytest.mark.parametrize(
+    ("flow_units", "flow", "depth_rate", "evaporation_rate"),
+    [
+        ("CMS", "CMS", "mm/h", "mm/day"),
+        ("lps", "LPS", "mm/h", "mm/day"),
+        ("MLD", "MLD", "mm/h", "mm/day"),
+        ("CFS", "CFS", "in/h", "in/day"),
+        ("gpm", "GPM", "in/h", "in/day"),
+        ("MGD", "MGD", "in/h", "in/day"),
+        (None, "model flow units", "model depth/time units", "model evaporation rate units"),
+        ("XYZ", "XYZ", "model depth/time units", "model evaporation rate units"),
+    ],
+)
+def test_timeseries_axis_labels_give_each_series_its_swmm_unit(
+    flow_units, flow, depth_rate, evaporation_rate
+):
+    """SWMM reports rainfall and infiltration per hour, evaporation per day, flows in FLOW_UNITS."""
+    from main.views import _build_timeseries_axis_labels
+
+    x_label, y_labels = _build_timeseries_axis_labels(
+        ["rainfall", "runoff", "infiltration_loss", "evaporation_loss", "runon"], flow_units
+    )
+
+    assert x_label == "Time"
+    assert y_labels == {
+        "rainfall": f"Rainfall Intensity [{depth_rate}]",
+        "runoff": f"Runoff Rate [{flow}]",
+        "infiltration_loss": f"Infiltration Loss [{depth_rate}]",
+        "evaporation_loss": f"Evaporation Loss [{evaporation_rate}]",
+        "runon": f"Runon Rate [{flow}]",
+    }
+    # The hydrograph picks axes by the unit in the label: a shared unit would share an axis.
+    assert evaporation_rate != depth_rate
+
+
+@pytest.mark.parametrize(
+    ("flow_units", "factor", "unit"),
+    [
+        ("CMS", 1e3, "m³"),
+        ("lps", 1e3, "m³"),
+        ("CFS", 1e6 * 0.133680556, "ft³"),
+        ("MGD", 1e6 * 0.133680556, "ft³"),
+        (None, 1.0, "10⁶ L or gal"),
+    ],
+)
+def test_report_runoff_unit_converts_report_volumes(flow_units, factor, unit):
+    """The report's total runoff is 10^6 L (SI) or 10^6 US gal (US)."""
+    from main.views import _report_runoff_unit
+
+    actual_factor, actual_unit = _report_runoff_unit(flow_units)
+
+    assert actual_factor == pytest.approx(factor)
+    assert actual_unit == unit
+
+
+@pytest.mark.parametrize(
+    ("seconds", "text"),
+    [
+        (0, "0 min"),
+        (45, "45 s"),
+        (3600, "1 h"),
+        (32100, "8 h 55 min"),
+        (93784, "1 d 2 h 3 min 4 s"),
+    ],
+)
+def test_format_duration_drops_zero_parts(seconds, text):
+    from main.views import _format_duration
+
+    assert _format_duration(pd.Timedelta(seconds=seconds)) == text
+
+
+def test_hydrograph_metrics_without_runoff_has_no_peak_time():
+    """A run with no runoff has a peak of 0 but no time to peak (the package raises)."""
+    from main.views import _hydrograph_metrics
+
+    index = pd.date_range("2025-01-01", periods=3, freq="h", name="datetime")
+    metrics = _hydrograph_metrics(pd.DataFrame({"runoff": [0.0, 0.0, 0.0]}, index=index), 1.0)
+
+    assert metrics == {
+        "peak": 0.0,
+        "peak_at": None,
+        "time_to_peak": None,
+        "time_to_peak_seconds": None,
+        "volume": 0.0,
+    }
 
 
 @pytest.mark.django_db
@@ -2246,40 +2581,119 @@ def test_upload_status_stale_reference(user):
 
 
 @pytest.mark.django_db
-def test_clear_session_preserves_uploaded_file(user):
-    """Test that clear_session_variables does not remove uploaded_file_path."""
-    factory = RequestFactory()
-    request = factory.get("/")
+@pytest.mark.parametrize("url_name", ["main:upload", "main:upload_sample", "main:upload_clear"])
+def test_changing_the_model_drops_every_tools_results(client, user, url_name):
+    """Results of the previous model must not stay current next to a new (or no) model."""
+    client.force_login(user)
+    session = client.session
+    tokens = {}
+    for scope, session_key in RESULT_SESSION_KEYS:
+        tokens[scope] = uuid.uuid4().hex
+        session[session_key] = tokens[scope]
+        cache.set(_result_cache_key(scope, user.id, tokens[scope]), json.dumps({"value": 1}))
+    session.save()
+    data = {}
+    if url_name == "main:upload":
+        inp_content = b"[TITLE]\nNew model\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
+        data["file"] = SimpleUploadedFile("new_model.inp", inp_content, content_type="text/plain")
 
-    session_middleware = SessionMiddleware(lambda req: None)
-    session_middleware.process_request(request)
-    request.session["uploaded_file_path"] = "uploaded_files/test.inp"
-    request.session["show_download_button"] = True
-    request.session["chart_config"] = {"data": []}
-    request.session[SIM_RESULT_TOKEN_SESSION_KEY] = "cccccccccccccccccccccccccccccccc"
-    request.session[TS_RESULT_TOKEN_SESSION_KEY] = "dddddddddddddddddddddddddddddddd"
-    request.session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S1"}
-    request.session["ts_form_state"] = {"mode": "sweep", "catchment_name": "S1"}
-    request.session.save()
-    request.user = user
-    cache.set(
-        _result_cache_key("sim", user.id, "cccccccccccccccccccccccccccccccc"),
-        json.dumps({"value": 1}),
-    )
-    cache.set(
-        _result_cache_key("ts", user.id, "dddddddddddddddddddddddddddddddd"),
-        json.dumps({"value": 1}),
-    )
+    try:
+        response = client.post(reverse(url_name), data, HTTP_X_REQUESTED_WITH="XMLHttpRequest")
 
-    clear_session_variables(request)
+        assert response.status_code == 200
+        for scope, session_key in RESULT_SESSION_KEYS:
+            assert session_key not in client.session
+            assert cache.get(_result_cache_key(scope, user.id, tokens[scope])) is None
+    finally:
+        path = client.session.get("uploaded_file_path")
+        if path and os.path.exists(path):
+            os.remove(path)
 
-    assert request.session.get("uploaded_file_path") == "uploaded_files/test.inp"
-    assert "show_download_button" not in request.session
-    assert "chart_config" not in request.session
-    assert "sim_form_state" not in request.session
-    assert "ts_form_state" not in request.session
-    assert cache.get(_result_cache_key("sim", user.id, "cccccccccccccccccccccccccccccccc")) is None
-    assert cache.get(_result_cache_key("ts", user.id, "dddddddddddddddddddddddddddddddd")) is None
+
+def _seed_results(client, user) -> dict:
+    session = client.session
+    tokens = {}
+    for scope, session_key in RESULT_SESSION_KEYS:
+        tokens[scope] = uuid.uuid4().hex
+        session[session_key] = tokens[scope]
+        cache.set(_result_cache_key(scope, user.id, tokens[scope]), json.dumps({"value": 1}))
+    session["sim_form_state"] = {"option": "simulate_percent_slope", "catchment_name": "S1"}
+    session.save()
+    return tokens
+
+
+def _remove_session_model(client) -> None:
+    path = client.session.get("uploaded_file_path")
+    if path and os.path.exists(path):
+        os.remove(path)
+
+
+@pytest.mark.django_db
+def test_loading_the_same_sample_again_keeps_every_tools_results(client, user):
+    """The sample loaded again from another tool's page is the same model: keep its results."""
+    client.force_login(user)
+    try:
+        first = client.post(reverse("main:upload_sample"), HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+        assert first.json()["unchanged"] is False
+        tokens = _seed_results(client, user)
+
+        again = client.post(reverse("main:upload_sample"), HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+
+        assert again.status_code == 200
+        assert again.json()["unchanged"] is True
+        for scope, session_key in RESULT_SESSION_KEYS:
+            assert client.session[session_key] == tokens[scope]
+            assert cache.get(_result_cache_key(scope, user.id, tokens[scope])) is not None
+        assert client.session["sim_form_state"]["catchment_name"] == "S1"
+    finally:
+        _remove_session_model(client)
+
+
+@pytest.mark.django_db
+def test_uploading_identical_content_keeps_results_and_different_content_drops_them(client, user):
+    client.force_login(user)
+    content = b"[TITLE]\nSame model\n\n[OPTIONS]\nFLOW_UNITS CMS\n"
+
+    def upload(name: str, body: bytes):
+        return client.post(
+            reverse("main:upload"),
+            {"file": SimpleUploadedFile(name, body, content_type="text/plain")},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+    try:
+        assert upload("model.inp", content).json()["unchanged"] is False
+        tokens = _seed_results(client, user)
+
+        # Same content under another name: the results were computed from this model.
+        response = upload("model_copy.inp", content)
+        assert response.json()["unchanged"] is True
+        assert client.session[RESULT_SESSION_KEYS[0][1]] == tokens["sim"]
+
+        response = upload("model_copy.inp", content + b"\n[JUNCTIONS]\n")
+        assert response.json()["unchanged"] is False
+        for scope, session_key in RESULT_SESSION_KEYS:
+            assert session_key not in client.session
+            assert cache.get(_result_cache_key(scope, user.id, tokens[scope])) is None
+    finally:
+        _remove_session_model(client)
+
+
+@pytest.mark.django_db
+def test_clearing_the_model_forgets_its_digest(client, user):
+    """After removing the model, loading it again is a new model (its results are gone)."""
+    client.force_login(user)
+    try:
+        client.post(reverse("main:upload_sample"), HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+        client.post(reverse("main:upload_clear"), HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+        assert MODEL_DIGEST_SESSION_KEY not in client.session
+
+        response = client.post(
+            reverse("main:upload_sample"), HTTP_X_REQUESTED_WITH="XMLHttpRequest"
+        )
+        assert response.json()["unchanged"] is False
+    finally:
+        _remove_session_model(client)
 
 
 # ── upload_clear tests (#4) ──────────────────────────────────────────────
@@ -2483,64 +2897,6 @@ def test_upload_status_rejects_post(user):
     assert response.status_code == 405
 
 
-# ── Core flow test (#8) ──────────────────────────────────────────────────
-
-
-@pytest.mark.django_db
-def test_upload_persists_after_clear_session_and_new_simulation(user):
-    """
-    Core flow: upload file -> clear_session_variables (as simulation does)
-    -> file path remains in session -> upload_status still returns it.
-    """
-    factory = RequestFactory()
-
-    # 1) Upload a file
-    inp_content = b"[TITLE]\nPersistence Test\n\n[OPTIONS]\nFLOW_UNITS LPS\n"
-    uploaded_file = SimpleUploadedFile("persist_test.inp", inp_content, content_type="text/plain")
-    request = factory.post(
-        "/upload/",
-        {"file": uploaded_file},
-        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
-    )
-    session_middleware = SessionMiddleware(lambda req: None)
-    session_middleware.process_request(request)
-    request.session.save()
-    request.user = user
-
-    saved_path = None
-    try:
-        response = upload(request)
-        assert response.status_code == 200
-        saved_path = request.session.get("uploaded_file_path")
-        assert saved_path is not None
-
-        # 2) Simulate what happens after a simulation run – clear results
-        request.session["show_download_button"] = True
-        request.session["chart_config"] = {"data": []}
-        clear_session_variables(request)
-
-        # 3) Verify file path survived
-        assert request.session.get("uploaded_file_path") == saved_path
-        assert os.path.exists(saved_path)
-
-        # 4) Verify upload_status reports the file
-        status_request = factory.get(
-            "/upload/status/",
-            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
-        )
-        session_middleware.process_request(status_request)
-        status_request.session = request.session
-        status_request.user = user
-
-        status_response = upload_status(status_request)
-        data = json.loads(status_response.content)
-        assert data["has_file"] is True
-        assert data["filename"] == "persist_test.inp"
-    finally:
-        if saved_path and os.path.exists(saved_path):
-            os.remove(saved_path)
-
-
 @pytest.mark.django_db
 def test_upload_replaces_old_file_on_disk(user):
     """Uploading a new file removes the old file from disk (#2, #9)."""
@@ -2559,7 +2915,7 @@ def test_upload_replaces_old_file_on_disk(user):
     request.user = user
     path_b = None
     try:
-        upload(request)
+        _upload(request)
         path_a = request.session["uploaded_file_path"]
         assert os.path.exists(path_a)
 
@@ -2573,7 +2929,7 @@ def test_upload_replaces_old_file_on_disk(user):
         session_middleware.process_request(request2)
         request2.session = request.session
         request2.user = user
-        upload(request2)
+        _upload(request2)
         path_b = request2.session["uploaded_file_path"]
 
         # Old file should be gone, new file present
@@ -2662,6 +3018,19 @@ def test_get_catchment_choices_no_file():
     assert "Upload" in choices[0][1]
 
 
+def test_get_catchment_choices_model_without_subcatchments(tmp_path):
+    """A loaded model with no subcatchments is not reported as a missing upload."""
+    model_path = tmp_path / "empty.inp"
+    model_path.write_text("[TITLE]\n[OPTIONS]\nFLOW_UNITS CMS\n", encoding="utf-8")
+    request = RequestFactory().get("/")
+    SessionMiddleware(lambda req: None).process_request(request)
+    request.session["uploaded_file_path"] = str(model_path)
+
+    choices = _get_catchment_choices(request)
+
+    assert choices == [("", "--- No subcatchments found in this model ---")]
+
+
 @pytest.mark.django_db
 def test_subcatchments_with_real_inp_file(user):
     """subcatchments returns correct IDs from a real INP file."""
@@ -2716,3 +3085,171 @@ def test_subcatchment_ids_cached_in_session(user):
     # Second call should use cache (same result)
     ids2 = _get_subcatchment_ids(request)
     assert ids1 == ids2
+
+
+# ----------------------------------------------------------------------
+# App shell (base.html)
+# ----------------------------------------------------------------------
+
+SHELL_PAGES = [
+    ("main:main_view", False),
+    ("main:about", False),
+    ("main:contact", False),
+    ("main:simulation", True),
+    ("main:timeseries", True),
+    ("main:calculations", True),
+]
+
+
+def _get_page(client, user, url_name, requires_login):
+    if requires_login:
+        client.force_login(user)
+    response = client.get(reverse(url_name))
+    assert response.status_code == 200
+    return response.content.decode()
+
+
+def _head(html):
+    return html.split("</head>", 1)[0]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "requires_login"),
+    [(name, login) for name, login in SHELL_PAGES if name != "main:contact"],
+)
+def test_nav_marks_only_the_current_page(client, user, url_name, requires_login):
+    """Exactly one nav link carries aria-current="page" and it points at the page itself."""
+    html = _get_page(client, user, url_name, requires_login)
+
+    current = re.findall(r'<a [^>]*href="([^"]+)"[^>]*aria-current="page"', html)
+    assert current == [reverse(url_name)]
+
+
+@pytest.mark.django_db
+def test_nav_has_no_current_page_outside_primary_sections(client):
+    """Pages that are not in the primary nav (e.g. contact) highlight nothing."""
+    html = client.get(reverse("main:contact")).content.decode()
+
+    assert 'aria-current="page"' not in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(("url_name", "requires_login"), SHELL_PAGES)
+def test_theme_init_runs_synchronously_in_head_before_styles(
+    client, user, url_name, requires_login
+):
+    """Colour mode is applied before paint: blocking script in <head> ahead of stylesheets."""
+    head = _head(_get_page(client, user, url_name, requires_login))
+
+    match = re.search(r'<script src="[^"]*/main/js/core/theme-init\.js"(?P<attrs>[^>]*)>', head)
+    assert match
+    assert "defer" not in match["attrs"] and "async" not in match["attrs"]
+    assert head.index("theme-init.js") < head.index('rel="stylesheet"')
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(("url_name", "requires_login"), SHELL_PAGES)
+def test_external_assets_are_pinned_with_sri(client, user, url_name, requires_login):
+    """Every CDN script/stylesheet carries integrity + crossorigin (Google Fonts CSS excepted)."""
+    html = _get_page(client, user, url_name, requires_login)
+
+    tags = re.findall(r"<(?:script|link)\b[^>]*>", html)
+    external = [
+        tag
+        for tag in tags
+        if re.search(r'(?:src|href)="https://', tag)
+        and ("<script" in tag or 'rel="stylesheet"' in tag)
+        and "fonts.googleapis.com" not in tag
+    ]
+    assert external
+    for tag in external:
+        assert 'integrity="sha384-' in tag, tag
+        assert 'crossorigin="anonymous"' in tag, tag
+
+
+@pytest.mark.django_db
+def test_base_loads_bootstrap_53_and_core_scripts(client):
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert "bootstrap@5.3." in html
+    assert "bootstrap@5.1" not in html
+    for module in ("theme", "toast", "format", "clipboard", "auth-guard", "async-form", "table"):
+        assert f"/static/main/js/core/{module}.js" in html
+    assert "/static/main/css/tokens.css" in html
+    assert "/static/main/css/app.css" in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "requires_login"),
+    [(name, login) for name, login in SHELL_PAGES if name != "main:main_view"],
+)
+def test_prism_is_loaded_only_on_home(client, user, url_name, requires_login):
+    html = _get_page(client, user, url_name, requires_login)
+
+    assert "prismjs" not in html
+
+
+@pytest.mark.django_db
+def test_home_loads_prism_python(client):
+    html = client.get(reverse("main:main_view")).content.decode()
+
+    assert "prismjs@1.30.0/prism.min.js" in html
+    assert "prismjs@1.30.0/components/prism-python.min.js" in html
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("url_name", ["main:main_view", "main:about", "main:contact", "login"])
+def test_dropzone_is_not_loaded_on_pages_without_upload(client, url_name):
+    html = client.get(reverse(url_name)).content.decode()
+
+    assert "dropzone" not in html.lower()
+    assert "upload_zone.js" not in html
+
+
+@pytest.mark.django_db
+def test_shell_has_skip_link_main_landmark_and_toast_region(client):
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert '<a class="visually-hidden-focusable cs-skip-link" href="#main-content">' in html
+    assert '<main id="main-content" class="container content-wrapper" tabindex="-1">' in html
+    assert re.search(r'<div class="toast-container[^"]*" aria-live="polite">', html)
+    assert 'aria-controls="main-nav"' in html and 'id="main-nav"' in html
+
+
+@pytest.mark.django_db
+def test_shell_account_links_for_anonymous_user(client):
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert f'href="{reverse("login")}">Log in</a>' in html
+    assert f'href="{reverse("register:register")}">Create account</a>' in html
+    assert ">Logout</button>" not in html
+
+
+@pytest.mark.django_db
+def test_shell_account_menu_for_authenticated_user(client, user):
+    client.force_login(user)
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert f'href="{reverse("main:userprofile", args=[user.id])}">Profile</a>' in html
+    assert re.search(
+        rf'<form method="post" action="{reverse("logout")}">\s*'
+        r'<input type="hidden" name="csrfmiddlewaretoken"[^>]*>\s*'
+        r'<button type="submit" class="dropdown-item">Logout</button>',
+        html,
+    )
+    assert ">Log in</a>" not in html
+
+
+@pytest.mark.django_db
+def test_footer_shows_current_year_and_project_links(client):
+    html = client.get(reverse("main:about")).content.decode()
+    footer = html.split("<footer", 1)[1]
+
+    assert f"Rafał Buczyński {timezone.now().year}" in footer
+    assert f'href="{reverse("main:contact")}"' in footer
+    assert "https://github.com/BuczynskiRafal/catchments_simulation" in footer
+    assert "https://pypi.org/project/catchment-simulation/" in footer
+    assert "me-md-autolink-dark" not in html
+    assert "/static//img/" not in html

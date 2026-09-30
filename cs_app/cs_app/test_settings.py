@@ -35,7 +35,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "import_export",
     "crispy_forms",
-    "crispy_bootstrap4",
+    "crispy_bootstrap5",
     "storages",
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
@@ -80,6 +80,13 @@ DATABASES = {
     }
 }
 
+# Per-process and empty at start, so tests never see each other's (or a dev server's) results.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }
+}
+
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -96,6 +103,8 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+AUTHENTICATION_BACKENDS = ["register.backends.UsernameOrEmailBackend"]
+
 LOGIN_URL = "/accounts/login/"
 
 LANGUAGE_CODE = "en-us"
@@ -109,7 +118,8 @@ USE_TZ = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
-CRISPY_TEMPLATE_PACK = "bootstrap4"
+CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
+CRISPY_TEMPLATE_PACK = "bootstrap5"
 
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"

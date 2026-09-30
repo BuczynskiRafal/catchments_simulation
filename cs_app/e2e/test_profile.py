@@ -1,71 +1,76 @@
 """User profile page tests.
 
 Profile page (``/user/<id>/profile``) is public for GET, but only the
-owner can edit and submit the form.  Other users see a read-only view.
+owner can edit the bio. Everyone else sees it as text.
 """
 
 from __future__ import annotations
 
-import pytest
-from playwright.sync_api import Page
+import re
 
-from .conftest import OTHER_USER_PASSWORD
+import pytest
+from django.contrib.auth.models import User
+from playwright.sync_api import Page, expect
+
+from .conftest import OTHER_USER_PASSWORD, TEST_EMAIL, TEST_FIRST_NAME, TEST_LAST_NAME
 from .pages.user_profile_page import UserProfilePage
 
 pytestmark = pytest.mark.e2e
 
 
-class TestProfileRendering:
-    """Profile page renders for the owner."""
+@pytest.fixture()
+def other_user(db) -> User:
+    return User.objects.create_user(
+        username="other_user", email="other@example.com", password=OTHER_USER_PASSWORD
+    )
 
-    def test_own_profile_shows_form(self, auth_page: Page, live_server, test_user) -> None:
+
+class TestOwnProfile:
+    def test_shows_identity_and_editable_bio(self, auth_page: Page, live_server, test_user) -> None:
         pp = UserProfilePage(auth_page, live_server.url)
         pp.navigate_to(test_user.id)
+
+        assert pp.get_heading(level=1) == "Profile"
+        expect(pp.profile_name).to_have_text(f"{TEST_FIRST_NAME} {TEST_LAST_NAME}")
+        expect(pp.profile_meta).to_contain_text(TEST_EMAIL)
         assert pp.has_form()
-
-    def test_own_profile_has_submit_button(self, auth_page: Page, live_server, test_user) -> None:
-        pp = UserProfilePage(auth_page, live_server.url)
-        pp.navigate_to(test_user.id)
-        assert pp.has_submit_button()
-
-    def test_own_profile_fields_are_editable(self, auth_page: Page, live_server, test_user) -> None:
-        pp = UserProfilePage(auth_page, live_server.url)
-        pp.navigate_to(test_user.id)
         assert not pp.is_read_only()
+        assert pp.has_submit_button()
+        expect(auth_page.locator("#id_user")).to_have_count(0)
+
+    def test_save_bio_round_trip(self, auth_page: Page, live_server, test_user) -> None:
+        pp = UserProfilePage(auth_page, live_server.url)
+        pp.navigate_to(test_user.id)
+
+        pp.fill_bio("Urban drainage engineer.")
+        pp.submit()
+
+        expect(auth_page).to_have_url(re.compile(rf".*/user/{test_user.id}/profile$"))
+        expect(pp.bio_field).to_have_value("Urban drainage engineer.")
+
+    def test_page_title(self, auth_page: Page, live_server, test_user) -> None:
+        pp = UserProfilePage(auth_page, live_server.url)
+        pp.navigate_to(test_user.id)
+        assert "Profile" in pp.get_title()
 
 
-class TestProfileReadOnly:
-    """Other users see the profile in read-only mode."""
-
+class TestOtherProfile:
     def test_other_user_profile_is_read_only(
-        self, auth_page: Page, live_server, test_user, db
+        self, auth_page: Page, live_server, test_user, other_user
     ) -> None:
-        """Create a second user and view their profile — should be read-only."""
-        from django.contrib.auth.models import User
-
-        other = User.objects.create_user(
-            username="other_user",
-            email="other@example.com",
-            password=OTHER_USER_PASSWORD,
-        )
         pp = UserProfilePage(auth_page, live_server.url)
-        pp.navigate_to(other.id)
-        assert pp.has_form()
+        pp.navigate_to(other_user.id)
+        expect(pp.profile_name).to_have_text("other_user")
         assert pp.is_read_only()
+        expect(pp.bio_text).to_have_text("No bio yet.")
 
-    def test_other_user_profile_hides_submit(
-        self, auth_page: Page, live_server, test_user, db
+    def test_other_user_profile_hides_submit_and_email(
+        self, auth_page: Page, live_server, test_user, other_user
     ) -> None:
-        from django.contrib.auth.models import User
-
-        other = User.objects.create_user(
-            username="other_user2",
-            email="other2@example.com",
-            password=OTHER_USER_PASSWORD,
-        )
         pp = UserProfilePage(auth_page, live_server.url)
-        pp.navigate_to(other.id)
+        pp.navigate_to(other_user.id)
         assert not pp.has_submit_button()
+        expect(pp.profile_meta).not_to_contain_text("other@example.com")
 
 
 class TestProfileAnonymous:
@@ -74,5 +79,17 @@ class TestProfileAnonymous:
     def test_anonymous_can_view_profile(self, page: Page, live_server, test_user) -> None:
         pp = UserProfilePage(page, live_server.url)
         pp.navigate_to(test_user.id)
-        assert pp.has_form()
+        expect(pp.profile_name).to_be_visible()
         assert pp.is_read_only()
+
+    @pytest.mark.parametrize("scheme", ["light", "dark"])
+    def test_no_serious_axe_violations(
+        self, page: Page, live_server, test_user, scheme: str
+    ) -> None:
+        page.emulate_media(color_scheme=scheme)
+        pp = UserProfilePage(page, live_server.url)
+        pp.navigate_to(test_user.id)
+        report = pp.run_axe_audit()
+        assert not report.critical + report.serious, [
+            v.id for v in report.critical + report.serious
+        ]

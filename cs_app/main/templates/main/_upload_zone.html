@@ -1,8 +1,22 @@
 {% load static %}
-<div class="upload-zone-wrapper">
-    <div class="upload-zone-label">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Upload SWMM Model
+{# Self-contained: pages link upload_zone.css themselves; Dropzone is styled entirely by upload_zone.css, so its vendor stylesheet is not loaded. #}
+<script src="https://unpkg.com/dropzone@5.9.3/dist/min/dropzone.min.js"
+        integrity="sha384-PwiT+fWTPpIySx6DrH1FKraKo+LvVpOClsjx0TSdMYTKi7BR1hR149f4VHLUUnfA"
+        crossorigin="anonymous"></script>
+<script>Dropzone.autoDiscover = false;</script>
+<script src="{% static 'main/js/upload_zone.js' %}"></script>
+<div class="upload-zone-wrapper{% if compact %} upload-zone--compact{% endif %}">
+    <p class="upload-zone-label">SWMM model</p>
+    <div class="upload-chip">
+        <svg class="upload-chip-icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <div id="upload-status" class="upload-chip-body" role="status" aria-live="polite" aria-atomic="true" style="display: none;">
+            <span class="visually-hidden">Loaded model:</span>
+            <span id="upload-status-text" class="upload-chip-name"></span>
+            <span id="upload-status-meta" class="upload-chip-meta"></span>
+        </div>
+        <button type="button" class="dz-remove upload-chip-remove" aria-label="Remove model file">
+            <svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
     </div>
     <form action="{% url 'main:upload' %}"
           method="post"
@@ -16,29 +30,21 @@
           data-subcatchments-url="{% url 'main:subcatchments' %}">
         {% csrf_token %}
         <div class="fallback">
-            <input name="file" type="file" multiple class="custom-file-input" />
-            <input type="submit" value="Upload" class="btn btn-primary mt-3" />
+            <label class="form-label" for="upload-fallback-file">SWMM model file (.inp)</label>
+            <input id="upload-fallback-file" name="file" type="file" accept=".inp" class="form-control">
+            <input type="submit" value="Upload" class="btn btn-primary mt-3">
         </div>
         <div class="dz-message" data-dz-message>
-            <div class="upload-icon-ring">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="17 8 12 3 7 8"/>
-                    <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-            </div>
-            <div class="upload-text-group">
-                <p class="upload-text-primary">Drag & drop your file or <strong>browse</strong></p>
-                <p class="upload-text-secondary">SWMM input file for catchment simulation</p>
-            </div>
-            <span class="upload-file-badge">.inp &mdash; max 10 MB</span>
+            <button type="button" class="upload-trigger" aria-describedby="upload-zone-hint">
+                <svg class="upload-trigger-icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span class="upload-trigger-text upload-trigger-text--empty">Drop an <code>.inp</code> file or <span class="upload-trigger-link">browse</span></span>
+                <span class="upload-trigger-text upload-trigger-text--replace">Replace model: drop an <code>.inp</code> or <span class="upload-trigger-link">browse</span></span>
+            </button>
+            <p class="upload-zone-hint" id="upload-zone-hint">SWMM input file, up to 10 MB</p>
         </div>
     </form>
-    <div id="upload-status" class="upload-status-bar" role="status" aria-live="polite" style="display: none;">
-        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-        <span id="upload-status-text"></span>
-    </div>
-    <button type="button" class="btn btn-primary upload-sample-button mt-3" id="load-sample-data-button">
+    {# Shown by upload_zone.js: loading the sample needs JavaScript. #}
+    <button type="button" class="btn btn-outline-primary upload-sample-button" id="load-sample-data-button" hidden>
         Try sample data
     </button>
 </div>

@@ -115,7 +115,7 @@ e2e = [
     { name = "pytest-playwright" },
 ]
 web = [
-    { name = "crispy-bootstrap4" },
+    { name = "crispy-bootstrap5" },
     { name = "dj-database-url" },
     { name = "django" },
     { name = "django-crispy-forms" },
@@ -133,7 +133,7 @@ web = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crispy-bootstrap4", marker = "extra == 'web'", specifier = "==2022.1" },
+    { name = "crispy-bootstrap5", marker = "extra == 'web'", specifier = "==2024.2" },
     { name = "dj-database-url", marker = "extra == 'web'", specifier = "==2.0.0" },
     { name = "django", marker = "extra == 'web'", specifier = ">=4.2,<5.0" },
     { name = "django-crispy-forms", marker = "extra == 'web'", specifier = "==2.0" },
@@ -401,16 +401,16 @@ toml = [
 ]
 
 [[package]]
-name = "crispy-bootstrap4"
-version = "2022.1"
+name = "crispy-bootstrap5"
+version = "2024.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "django" },
     { name = "django-crispy-forms" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/be/d8203e4dacbcee891875c741eb6f1d615da2f26a1367085adf278e2929d5/crispy-bootstrap4-2022.1.tar.gz", hash = "sha256:f18386c4d96180c1bb1212487d6e8f5a3dd1a9bb58d3032183973d4d130b55f9", size = 10941, upload-time = "2022-12-17T07:31:27.836Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/45/af5c7a13742650b1187a1a6db5197577b57f2b1ca3a042c3b386ddfbebfc/crispy-bootstrap5-2024.2.tar.gz", hash = "sha256:7d1fa40c6faf472e30e85c72551a3d2c9eedbf0abfff920683315e4e6f670f2b", size = 23411, upload-time = "2024-02-25T08:46:04.075Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/71/cbfa04246b137f69eefa58029e9247064284ea722ba140b07a4244cc8478/crispy_bootstrap4-2022.1-py3-none-any.whl", hash = "sha256:5241ab1dc2188c95560aa786439bcbedec7416e6b0f5a52dded82380810367ec", size = 22974, upload-time = "2022-12-17T07:31:26.408Z" },
+    { url = "https://files.pythonhosted.org/packages/13/11/a1c22b4c803125901af7d2fa683f4c6eb14d511644da5fc0b45a0cb44cae/crispy_bootstrap5-2024.2-py3-none-any.whl", hash = "sha256:3867e320920a6ef156e94f9e0f06a80344c453e1b3bd96cd9dc0522ae9e9afb8", size = 24351, upload-time = "2024-02-25T08:46:02.171Z" },
 ]
 
 [[package]]

@@ -46,7 +46,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "import_export",
     "crispy_forms",
-    "crispy_bootstrap4",
+    "crispy_bootstrap5",
     "storages",
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
@@ -94,6 +94,18 @@ DATABASES = {
     "default": dj_database_url.parse(db_url, conn_max_age=600),
 }
 
+# Analysis results are kept in the cache between page visits. The file backend survives
+# a server restart (runserver's autoreload, a deploy) and is shared by every worker
+# process on the host; the default in-memory cache is neither. A deployment running
+# several hosts needs a shared backend instead (Redis, database).
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": os.environ.get("DJANGO_CACHE_DIR", os.path.join(BASE_DIR, ".cache", "django")),
+        "OPTIONS": {"MAX_ENTRIES": 1000},
+    }
+}
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
@@ -109,6 +121,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+# Replaces ModelBackend (not alongside it): login() without backend= needs exactly one.
+AUTHENTICATION_BACKENDS = ["register.backends.UsernameOrEmailBackend"]
+
 LOGIN_URL = "/accounts/login/"
 
 LANGUAGE_CODE = "en-us"
@@ -121,7 +136,8 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CRISPY_TEMPLATE_PACK = "bootstrap4"
+CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
+CRISPY_TEMPLATE_PACK = "bootstrap5"
 
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"
@@ -148,8 +164,13 @@ STATIC_URL = "/static/"
 
 # Production Security Settings (Fail-Closed)
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
-SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "True").lower() == "true"
-CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "True").lower() == "true"
+# Secure cookies unless DEBUG: the dev server speaks plain HTTP, and browsers
+# that drop Secure cookies there (Safari) would reject every POST with a CSRF 403.
+_SECURE_COOKIES_DEFAULT = "False" if DEBUG else "True"
+SESSION_COOKIE_SECURE = (
+    os.environ.get("SESSION_COOKIE_SECURE", _SECURE_COOKIES_DEFAULT).lower() == "true"
+)
+CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", _SECURE_COOKIES_DEFAULT).lower() == "true"
 
 SECURE_REFERRER_POLICY = "same-origin"
 

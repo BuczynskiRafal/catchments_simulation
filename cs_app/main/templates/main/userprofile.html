@@ -1,6 +1,49 @@
 {% extends 'base.html' %}
-{% load crispy_forms_tags %}
-{% block title %}Kontakt{% endblock %}
+{% load crispy_forms_tags static %}
+
+{% block title %}Profile — Catchment Simulation{% endblock %}
+
+{% block style %}
+<link rel="stylesheet" href="{% static 'main/css/content.css' %}">
+{% endblock %}
+
 {% block content %}
-{% crispy form %}
+{% with owner=form.owner %}
+<div class="content-page content-page--form">
+    <header class="cs-page-header">
+        <p class="cs-eyebrow">{% if user == owner %}Your account{% else %}Member{% endif %}</p>
+        <h1 class="cs-page-header__title">Profile</h1>
+        <p class="cs-page-header__lead">
+            {% if user == owner %}Tell other engineers who you are. Your bio is public; your email stays private.{% else %}A Catchment Simulation member.{% endif %}
+        </p>
+    </header>
+
+    <section class="cs-card profile-card" aria-labelledby="profile-name">
+        <div class="profile-card__identity">
+            <span class="profile-card__avatar" aria-hidden="true">{{ owner.get_full_name|default:owner.get_username|first|upper }}</span>
+            <div>
+                <h2 class="profile-card__name" id="profile-name">{{ owner.get_full_name|default:owner.get_username }}</h2>
+                <p class="profile-card__meta">
+                    <span class="cs-mono">@{{ owner.get_username }}</span>
+                    <span>Member since {{ owner.date_joined|date:"F Y" }}</span>
+                    {% if user == owner and owner.email %}<span class="cs-mono">{{ owner.email }}</span>{% endif %}
+                </p>
+            </div>
+        </div>
+
+        {% if user == owner %}
+        {% crispy form %}
+        {% else %}
+        <h3 class="profile-card__section-title">Bio</h3>
+        {% with bio=form.bio.value %}
+        {% if bio %}
+        <p class="profile-card__bio">{{ bio|linebreaksbr }}</p>
+        {% else %}
+        <p class="profile-card__bio profile-card__bio--empty">No bio yet.</p>
+        {% endif %}
+        {% endwith %}
+        {% endif %}
+    </section>
+</div>
+{% endwith %}
 {% endblock %}

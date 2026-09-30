@@ -9,6 +9,7 @@ __pycache__/
 db.sqlite3
 cs_app/db.sqlite3
 cs_app/media/
+cs_app/.cache/
 cs_app/data/db/
 docs/_build/
 output_files/
