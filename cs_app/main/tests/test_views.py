@@ -23,8 +23,10 @@ from main.views import (
     TS_RESULT_TOKEN_SESSION_KEY,
     _get_catchment_choices,
     _get_subcatchment_ids,
+    _load_comparison,
     _result_cache_key,
     _safe_download_filename,
+    _summarise_comparison,
     _user_upload_dir,
     _validate_inp_file_stream,
     calculations,
@@ -560,6 +562,7 @@ def test_calculations_get(user):
     """
     factory = RequestFactory()
     request = factory.get("calculations")
+    SessionMiddleware(lambda req: None).process_request(request)
     request.user = user
 
     response = calculations(request)
@@ -593,6 +596,8 @@ def test_calculations_uses_model_after_simulation(monkeypatch, user):
             if state["report_ready"]:
                 base["TotalRunoffMG"] = [12.34]
             self.subcatchments = SimpleNamespace(dataframe=base)
+            options = pd.DataFrame(index=["FLOW_UNITS"], data={"Value": ["CMS"]})
+            self.inp = SimpleNamespace(options=options)
 
     monkeypatch.setattr("main.views.Simulation", FakeSimulation)
     monkeypatch.setattr("main.views.swmmio.Model", FakeModel)
@@ -606,7 +611,11 @@ def test_calculations_uses_model_after_simulation(monkeypatch, user):
     session_middleware.process_request(request)
 
     user_dir = _user_upload_dir(user.id)
-    request.session["uploaded_file_path"] = os.path.join(user_dir, "test.inp")
+    model_path = os.path.join(user_dir, "test.inp")
+    os.makedirs(user_dir, exist_ok=True)
+    with open(model_path, "w", encoding="utf-8") as model_file:
+        model_file.write("[TITLE]\n[OPTIONS]\n")
+    request.session["uploaded_file_path"] = model_path
     request.session.save()
 
     message_middleware = MessageMiddleware(lambda req: None)
@@ -614,11 +623,14 @@ def test_calculations_uses_model_after_simulation(monkeypatch, user):
 
     request.user = user
 
-    response = calculations(request)
+    try:
+        response = calculations(request)
+    finally:
+        os.remove(model_path)
 
-    assert response.status_code == 200
-    assert b"S1" in response.content
-    assert b"12.34" in response.content
+    assert response.status_code == 302
+    [row] = _load_comparison(request)["rows"]
+    assert (row["Name"], row["SWMM_Runoff"]) == ("S1", pytest.approx(12340.0))
 
 
 @pytest.mark.django_db
@@ -643,11 +655,94 @@ def test_calculations_anonymous_get_returns_200(client):
 
 
 @pytest.mark.django_db
-def test_calculations_anonymous_post_returns_200(client):
-    """Anonymous POST to /calculations returns 200 with 'upload a file' error (no redirect)."""
+def test_calculations_anonymous_post_redirects_to_login(client):
+    """Running calculations requires login server-side; only the GET page is public."""
     calc_url = reverse("main:calculations")
     response = client.post(calc_url)
-    assert response.status_code == 200
+    assert response.status_code == 302
+    assert response.url == f"{settings.LOGIN_URL}?next={calc_url}"
+
+
+def _comparison_frame(swmm, ann):
+    return pd.DataFrame(
+        {
+            "Name": [f"S{i + 1}" for i in range(len(swmm))],
+            "SWMM_Runoff": swmm,
+            "ANN_Runoff": np.array(ann, dtype=np.float32),
+        }
+    )
+
+
+def test_summarise_comparison_rows_and_metrics():
+    summary = _summarise_comparison(_comparison_frame([10.0, 20.0], [12.0, 17.0]), "m³")
+
+    assert summary["unit"] == "m³"
+    first, second = summary["rows"]
+    assert first == {
+        "Name": "S1",
+        "SWMM_Runoff": 10.0,
+        "ANN_Runoff": 12.0,
+        "Difference": 2.0,
+        "Difference_pct": 20.0,
+    }
+    assert second["Difference"] == -3.0
+    assert second["Difference_pct"] == -15.0
+    # Plain floats: json_script cannot serialise numpy scalars.
+    assert all(type(value) is float for value in first.values() if value != "S1")
+    metrics = summary["metrics"]
+    assert metrics["count"] == 2
+    assert metrics["mae"] == pytest.approx(2.5)
+    assert metrics["rmse"] == pytest.approx(np.sqrt((4 + 9) / 2))
+    assert metrics["mape"] == pytest.approx(17.5)
+    assert metrics["mape_excluded"] == 0
+
+
+def test_summarise_comparison_skips_zero_swmm_runoff_in_percentages():
+    summary = _summarise_comparison(_comparison_frame([0.0, 10.0], [1.0, 11.0]), "m³")
+
+    assert summary["rows"][0]["Difference_pct"] is None
+    assert summary["rows"][0]["Difference"] == 1.0
+    assert summary["metrics"]["mape"] == pytest.approx(10.0)
+    assert summary["metrics"]["mape_excluded"] == 1
+    assert summary["metrics"]["mae"] == pytest.approx(1.0)
+
+
+def test_summarise_comparison_without_nonzero_swmm_runoff_has_no_mape():
+    summary = _summarise_comparison(_comparison_frame([0.0], [0.5]), "m³")
+
+    assert summary["metrics"]["mape"] is None
+    assert summary["metrics"]["mape_excluded"] == 1
+
+
+def test_summarise_comparison_of_empty_frame_is_none():
+    assert _summarise_comparison(_comparison_frame([], []), "m³") is None
+
+
+@pytest.mark.django_db
+def test_calculations_results_render_metrics_and_differences(client, user, monkeypatch):
+    """Full-page (no-JS) POST shows the metric tiles, difference columns and chart rows."""
+    monkeypatch.setattr(
+        "main.views._compare_swmm_and_ann",
+        lambda _path: (_comparison_frame([0.0, 10.0], [1.0, 12.5]), "m³"),
+    )
+    monkeypatch.setattr("main.views._cleanup_swmm_side_files", lambda _path: None)
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = os.path.join(_user_upload_dir(user.id), "test.inp")
+    session.save()
+
+    response = client.post(reverse("main:calculations"), follow=True)
+
+    html = response.content.decode()
+    assert response.redirect_chain == [(reverse("main:calculations"), 302)]
+    assert "Mean absolute error" in html
+    assert "Excludes 1 subcatchment with zero SWMM runoff" in html
+    assert 'data-sort-value="25.0">25.0</td>' in html
+    assert "Difference [%]" in html
+    chart_rows = re.search(
+        r'<script id="calculations-chart-data" type="application/json">(.*?)</script>', html
+    )
+    assert json.loads(chart_rows.group(1))[0]["Difference_pct"] is None
 
 
 def _upload(request):
@@ -2358,6 +2453,26 @@ def test_timeseries_axis_labels_give_each_series_its_swmm_unit(
     }
     # The hydrograph picks axes by the unit in the label: a shared unit would share an axis.
     assert evaporation_rate != depth_rate
+
+
+@pytest.mark.parametrize(
+    ("flow_units", "factor", "unit"),
+    [
+        ("CMS", 1e3, "m³"),
+        ("lps", 1e3, "m³"),
+        ("CFS", 1e6 * 0.133680556, "ft³"),
+        ("MGD", 1e6 * 0.133680556, "ft³"),
+        (None, 1.0, "10⁶ L or gal"),
+    ],
+)
+def test_report_runoff_unit_converts_report_volumes(flow_units, factor, unit):
+    """The report's total runoff is 10^6 L (SI) or 10^6 US gal (US)."""
+    from main.views import _report_runoff_unit
+
+    actual_factor, actual_unit = _report_runoff_unit(flow_units)
+
+    assert actual_factor == pytest.approx(factor)
+    assert actual_unit == unit
 
 
 @pytest.mark.parametrize(

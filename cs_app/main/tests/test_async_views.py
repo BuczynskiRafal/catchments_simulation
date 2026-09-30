@@ -1,6 +1,6 @@
 """Tests for the async (fetch) contract of the run views.
 
-Run views (simulation, timeseries) answer requests sent with
+Run views (simulation, timeseries, calculations) answer requests sent with
 ``X-Requested-With: XMLHttpRequest`` with the results fragment on success and a
 ``{"message", "field_errors"}`` JSON body on failure, without flash messages.
 """
@@ -8,6 +8,7 @@ Run views (simulation, timeseries) answer requests sent with
 import json
 import os
 import re
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -17,16 +18,19 @@ from django.core.cache import cache
 from django.urls import reverse
 
 from main.views import (
+    CALC_RESULT_TOKEN_SESSION_KEY,
     FORM_INVALID_MESSAGE,
     NO_MODEL_MESSAGE,
     SIM_RESULT_TOKEN_SESSION_KEY,
     TS_RESULT_TOKEN_SESSION_KEY,
     _result_cache_key,
+    _user_upload_dir,
 )
 
 AJAX = {"HTTP_X_REQUESTED_WITH": "XMLHttpRequest"}
 SIMULATION_PARTIAL = "main/partials/_simulation_results.html"
 TIMESERIES_PARTIAL = "main/partials/_timeseries_results.html"
+CALCULATIONS_PARTIAL = "main/partials/_calculations_results.html"
 SIMULATION_POST = {
     "option": "simulate_percent_slope",
     "start": "1",
@@ -112,6 +116,59 @@ def run_client(client, user):
 @pytest.fixture
 def fake_simulation(monkeypatch):
     monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
+
+
+@pytest.fixture
+def fake_calculations(monkeypatch):
+    """Replace the SWMM run and ANN prediction with a one-subcatchment SI (CMS) result."""
+
+    class FakeSimulation:
+        def __init__(self, _path):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __iter__(self):
+            return iter(())
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeModel:
+        def __init__(self, _path):
+            dataframe = pd.DataFrame(index=["S1"], data={"TotalRunoffMG": [12.34]})
+            self.subcatchments = SimpleNamespace(dataframe=dataframe)
+            options = pd.DataFrame(index=["FLOW_UNITS"], data={"Value": ["CMS"]})
+            self.inp = SimpleNamespace(options=options)
+
+    monkeypatch.setattr("main.views.Simulation", FakeSimulation)
+    monkeypatch.setattr("main.views.swmmio.Model", FakeModel)
+    monkeypatch.setattr("main.views.predict_runoff", lambda _model: np.array([4.56]))
+    monkeypatch.setattr("main.views._cleanup_swmm_side_files", lambda _path: None)
+
+
+@pytest.fixture
+def calc_model_path(user):
+    """A stub model file in the user's upload directory (the SWMM run itself is faked)."""
+    user_dir = _user_upload_dir(user.id)
+    os.makedirs(user_dir, exist_ok=True)
+    path = os.path.join(user_dir, "test.inp")
+    with open(path, "w", encoding="utf-8") as model_file:
+        model_file.write("[TITLE]\n[OPTIONS]\n")
+    yield path
+    if os.path.exists(path):
+        os.remove(path)
+
+
+@pytest.fixture
+def calc_client(client, user, calc_model_path):
+    """Logged-in client whose session points at ``calc_model_path``."""
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = calc_model_path
+    session.save()
+    return client
 
 
 def _template_names(response) -> list[str]:
@@ -526,6 +583,174 @@ def test_timeseries_ajax_unexpected_error_returns_500(run_client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Calculations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_calculations_ajax_success_returns_results_fragment(calc_client, fake_calculations):
+    response = calc_client.post(reverse("main:calculations"), **AJAX)
+
+    _assert_fragment(response, CALCULATIONS_PARTIAL, "calculations-results")
+    content = response.content.decode()
+    assert 'id="calculations-results-heading"' in content
+    assert "Results comparison" in content
+    assert "S1" in content
+    # The report's 10^6 L become m³: 12.34 -> 12,340 and the ANN's 4.56 -> 4,560.
+    assert "12340.00" in content
+    assert "4560.00" in content
+    assert "SWMM Runoff [m³]" in content
+    assert 'data-calc-unit="m³"' in content
+    assert 'id="calculations-table"' in content
+    assert 'id="calculations-chart-data"' in content
+    assert "cs-empty-state" not in content
+
+
+@pytest.mark.django_db
+def test_calculations_non_ajax_success_redirects_to_results_page(calc_client, fake_calculations):
+    """Post/Redirect/Get: refreshing the results page does not run the comparison again."""
+    response = calc_client.post(reverse("main:calculations"), follow=True)
+
+    assert response.redirect_chain == [(reverse("main:calculations"), 302)]
+    names = _template_names(response)
+    assert "main/calculations.html" in names
+    assert CALCULATIONS_PARTIAL in names
+    assert b"12340.00" in response.content
+
+
+@pytest.mark.django_db
+def test_calculations_page_shows_last_async_comparison(calc_client, fake_calculations):
+    calc_client.post(reverse("main:calculations"), **AJAX)
+
+    response = calc_client.get(reverse("main:calculations"))
+
+    assert b'id="calculations-table"' in response.content
+    assert b"12340.00" in response.content
+
+
+@pytest.mark.django_db
+def test_calculations_page_drops_an_expired_comparison(calc_client, fake_calculations):
+    calc_client.post(reverse("main:calculations"), **AJAX)
+    cache.clear()
+
+    response = calc_client.get(reverse("main:calculations"))
+
+    assert b"No comparison yet" in response.content
+    assert CALC_RESULT_TOKEN_SESSION_KEY not in calc_client.session
+
+
+@pytest.mark.django_db
+def test_calculations_get_renders_empty_state(client):
+    response = client.get(reverse("main:calculations"))
+
+    assert response.status_code == 200
+    assert CALCULATIONS_PARTIAL in _template_names(response)
+    assert b'id="calculations-results-heading"' not in response.content
+    assert b'<h2 class="cs-empty-state__title">No comparison yet</h2>' in response.content
+    assert b'id="calculations-table"' not in response.content
+    assert b'id="calculations-chart-data"' not in response.content
+
+
+@pytest.mark.django_db
+def test_calculations_ajax_without_upload_returns_400_without_flash(client, user):
+    client.force_login(user)
+    message = "Please upload a file first."
+
+    response = client.post(reverse("main:calculations"), **AJAX)
+
+    _assert_json_error(response, 400, message)
+    _assert_no_flash_on_next_page(client, reverse("main:calculations"), message)
+
+
+@pytest.mark.django_db
+def test_calculations_with_deleted_model_returns_400(calc_client, calc_model_path):
+    os.remove(calc_model_path)
+    message = "Input file is missing. Please upload the model again."
+
+    ajax_response = calc_client.post(reverse("main:calculations"), **AJAX)
+    page_response = calc_client.post(reverse("main:calculations"))
+
+    _assert_json_error(ajax_response, 400, message)
+    assert b"alert-danger" in page_response.content
+    assert message.encode() in page_response.content
+
+
+@pytest.mark.django_db
+def test_calculations_model_without_subcatchments_returns_400(calc_client, calc_model_path):
+    """A real SWMM run of the example model with its subcatchment sections removed."""
+    with open(os.path.join(settings.BASE_DIR, "data", "example.inp"), encoding="utf-8") as src:
+        sections = re.split(r"(?m)^(?=\[)", src.read())
+    dropped = ("[SUBCATCHMENTS]", "[SUBAREAS]", "[INFILTRATION]", "[Polygons]")
+    with open(calc_model_path, "w", encoding="utf-8") as model_file:
+        model_file.writelines(s for s in sections if not s.startswith(dropped))
+
+    response = calc_client.post(reverse("main:calculations"), **AJAX)
+
+    _assert_json_error(response, 400, "The model has no subcatchments to compare.")
+
+
+@pytest.mark.django_db
+def test_calculations_ajax_rejects_out_of_bounds_path(client, user):
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = "/etc/passwd"
+    session.save()
+
+    response = client.post(reverse("main:calculations"), **AJAX)
+
+    _assert_json_error(response, 400, "Invalid file path detected.")
+    _assert_no_flash_on_next_page(
+        client, reverse("main:calculations"), "Invalid file path detected."
+    )
+
+
+@pytest.mark.django_db
+def test_calculations_ajax_oversized_result_returns_413(
+    calc_client, fake_calculations, monkeypatch
+):
+    monkeypatch.setattr("main.views.MAX_RESULT_CACHE_BYTES", 10)
+
+    response = calc_client.post(reverse("main:calculations"), **AJAX)
+
+    _assert_json_error(
+        response, 413, "The comparison is too large to keep. Use a model with fewer subcatchments."
+    )
+    assert CALC_RESULT_TOKEN_SESSION_KEY not in calc_client.session
+
+
+@pytest.mark.django_db
+def test_calculations_ajax_failure_returns_500(calc_client, monkeypatch):
+    def failing_simulation(_path):
+        raise RuntimeError("swmm crashed")
+
+    monkeypatch.setattr("main.views.Simulation", failing_simulation)
+    monkeypatch.setattr("main.views._cleanup_swmm_side_files", lambda _path: None)
+
+    response = calc_client.post(reverse("main:calculations"), **AJAX)
+
+    _assert_json_error(response, 500, "An error occurred while performing calculations.")
+
+
+@pytest.mark.django_db
+def test_calculations_anonymous_ajax_post_returns_401_json(client):
+    response = client.post(reverse("main:calculations"), **AJAX)
+
+    body = _assert_json_error(response, 401, "Authentication required.")
+    assert body["login_url"] == settings.LOGIN_URL
+    assert body["error"] == "Authentication required."
+
+
+@pytest.mark.django_db
+def test_calculations_anonymous_post_redirects_to_login(client):
+    calc_url = reverse("main:calculations")
+
+    response = client.post(calc_url)
+
+    assert response.status_code == 302
+    assert response.url == f"{settings.LOGIN_URL}?next={calc_url}"
+
+
+# ---------------------------------------------------------------------------
 # Failed no-JS runs keep the previous results on the page
 # ---------------------------------------------------------------------------
 
@@ -579,3 +804,21 @@ def test_non_ajax_crashed_run_keeps_previous_results(
     assert response.status_code == 200
     assert "An error occurred" in response.content.decode()
     assert f'id="{heading_id}"' in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_non_ajax_crashed_calculations_keep_previous_comparison(
+    calc_client, fake_calculations, monkeypatch
+):
+    calc_client.post(reverse("main:calculations"), **AJAX)
+
+    def crash(_path):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("main.views._compare_swmm_and_ann", crash)
+    response = calc_client.post(reverse("main:calculations"))
+
+    assert response.status_code == 200
+    assert b"An error occurred" in response.content
+    assert b'id="calculations-results-heading"' in response.content
+    assert b"12340.00" in response.content

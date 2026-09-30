@@ -1,0 +1,99 @@
+{% load l10n %}
+{# Numbers come from views._summarise_comparison; the charts read the same rows from #calculations-chart-data. #}
+<div id="calculations-results">
+    {% if comparison %}
+    <div class="calc-results cs-reveal" data-cs-results>
+        <h2 id="calculations-results-heading" class="calc-results__title" tabindex="-1">Results comparison</h2>
+
+        {% with metrics=comparison.metrics %}
+        <dl class="cs-metrics calc-metrics">
+            <div class="cs-metric">
+                <dt class="cs-metric__label">Mean absolute error</dt>
+                <dd class="cs-metric__value">{{ metrics.mae|floatformat:2|default:"—" }}<span class="cs-metric__unit">{{ comparison.unit }}</span></dd>
+            </div>
+            <div class="cs-metric">
+                <dt class="cs-metric__label">Root mean square error</dt>
+                <dd class="cs-metric__value">{{ metrics.rmse|floatformat:2|default:"—" }}<span class="cs-metric__unit">{{ comparison.unit }}</span></dd>
+            </div>
+            <div class="cs-metric">
+                <dt class="cs-metric__label">Mean absolute % error</dt>
+                <dd class="cs-metric__value">{{ metrics.mape|floatformat:1|default:"—" }}{% if metrics.mape is not None %}<span class="cs-metric__unit">%</span>{% endif %}</dd>
+                {% if metrics.mape_excluded %}
+                <dd class="calc-metric__note">Excludes {{ metrics.mape_excluded }} subcatchment{{ metrics.mape_excluded|pluralize }} with zero SWMM runoff</dd>
+                {% endif %}
+            </div>
+            <div class="cs-metric">
+                <dt class="cs-metric__label">Subcatchments</dt>
+                <dd class="cs-metric__value">{{ metrics.count }}</dd>
+            </div>
+        </dl>
+        {% endwith %}
+
+        {# Shown by calculations.js once the charts can be drawn; without JS the table carries the data. #}
+        <div class="calc-charts" data-calc-requires-js data-calc-unit="{{ comparison.unit }}" hidden>
+            <section class="cs-chart-card" aria-labelledby="calculations-parity-title">
+                <div class="cs-chart-card__toolbar">
+                    <h3 class="cs-chart-card__title" id="calculations-parity-title">SWMM vs ANN runoff</h3>
+                </div>
+                <div class="cs-chart-card__body">
+                    <div id="calculations-parity-chart" class="calc-chart calc-chart--parity" aria-describedby="calculations-parity-caption"></div>
+                    <p class="calc-chart__caption" id="calculations-parity-caption">
+                        One point per subcatchment. Points on the dashed 1:1 line match SWMM exactly; points above it mean the network predicts more runoff.
+                    </p>
+                </div>
+            </section>
+            <section class="cs-chart-card" aria-labelledby="calculations-bars-title">
+                <div class="cs-chart-card__toolbar">
+                    <h3 class="cs-chart-card__title" id="calculations-bars-title">Runoff per subcatchment</h3>
+                </div>
+                <div class="cs-chart-card__body">
+                    <div id="calculations-bars-chart" class="calc-chart calc-chart--bars" aria-describedby="calculations-bars-caption"></div>
+                    <p class="calc-chart__caption" id="calculations-bars-caption">
+                        SWMM and ANN runoff side by side; exact values are in the table below.
+                    </p>
+                </div>
+            </section>
+        </div>
+
+        <div class="calc-table">
+            <div class="calc-table__header">
+                <h3 class="calc-table__title" id="calculations-table-title">Per-subcatchment comparison</h3>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="copy-calculations-table-button" data-calc-requires-js hidden>Copy table</button>
+            </div>
+            <div class="cs-table-wrap" tabindex="0" role="region" aria-labelledby="calculations-table-title">
+                <table class="table cs-table" id="calculations-table" aria-describedby="calculations-table-note">
+                    <thead>
+                        <tr>
+                            <th scope="col">Name</th>
+                            <th scope="col" class="cs-num">SWMM Runoff [{{ comparison.unit }}]</th>
+                            <th scope="col" class="cs-num">ANN Runoff [{{ comparison.unit }}]</th>
+                            <th scope="col" class="cs-num">Difference [{{ comparison.unit }}]</th>
+                            <th scope="col" class="cs-num">Difference [%]</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in comparison.rows %}
+                        <tr>
+                            <th scope="row">{{ row.Name }}</th>
+                            <td class="cs-num" data-sort-value="{{ row.SWMM_Runoff|default_if_none:''|unlocalize }}">{{ row.SWMM_Runoff|floatformat:2|default:"—" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.ANN_Runoff|default_if_none:''|unlocalize }}">{{ row.ANN_Runoff|floatformat:2|default:"—" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.Difference|default_if_none:''|unlocalize }}">{{ row.Difference|floatformat:2|default:"—" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.Difference_pct|default_if_none:''|unlocalize }}">{{ row.Difference_pct|floatformat:1|default:"—" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {# Outside the scroll wrapper, so it wraps to the column width instead of the table's. #}
+            <p class="calc-table__note" id="calculations-table-note">Difference = ANN − SWMM: a positive value means the network predicts more runoff than SWMM.</p>
+        </div>
+        {{ comparison.rows|json_script:"calculations-chart-data" }}
+    </div>
+    {% else %}
+    <div class="cs-empty-state">
+        <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 17 19 5" stroke-dasharray="2 2.5"/><circle cx="9" cy="13" r="1.3"/><circle cx="13" cy="10.5" r="1.3"/><circle cx="16" cy="6" r="1.3"/><circle cx="11.5" cy="15" r="1.3"/></svg>
+        <h2 class="cs-empty-state__title">No comparison yet</h2>
+        <p class="cs-empty-state__text">Load a model and run the calculations to see error metrics, charts and a per-subcatchment table.</p>
+    </div>
+    {% endif %}
+</div>

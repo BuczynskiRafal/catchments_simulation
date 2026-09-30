@@ -1,0 +1,223 @@
+/*
+ * SWMM vs ANN comparison page. Builds on the shared components in app.css
+ * (.cs-workbench, .cs-step, .cs-metrics, .cs-chart-card, .cs-table, .cs-card).
+ */
+
+/* ── Control panel ─────────────────────────────────────────────────── */
+
+.calc-note {
+    display: flex;
+    gap: 0.625rem;
+    margin-top: 1.25rem;
+    padding: 0.75rem 0.875rem;
+    border-left: 3px solid var(--cs-ochre);
+    border-radius: var(--cs-radius-sm);
+    background-color: var(--cs-surface-sunken);
+    font-size: var(--cs-fs-small);
+}
+
+.calc-note__icon {
+    flex: none;
+    width: 1.125rem;
+    height: 1.125rem;
+    margin-top: 0.125rem;
+    color: var(--cs-ochre-text);
+}
+
+.calc-note__title {
+    margin-bottom: 0.125rem;
+    color: var(--cs-ochre-text);
+    font-weight: 600;
+}
+
+.calc-note__text {
+    margin: 0;
+    color: var(--cs-ink-muted);
+}
+
+/* ── Results ───────────────────────────────────────────────────────── */
+
+.calc-results {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.calc-results__title {
+    margin: 0;
+    font-size: var(--cs-fs-h3);
+}
+
+.calc-metrics {
+    margin: 0;
+}
+
+/* Labels may wrap to two lines; keep every value on the tile's bottom edge. */
+.calc-metrics .cs-metric {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.calc-metric__note {
+    margin: 0.375rem 0 0;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+.calc-charts {
+    display: grid;
+    gap: 1.5rem;
+}
+
+/* Side by side only when each card is wide enough for a readable parity square. */
+@media (min-width: 1400px) {
+    .calc-charts {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* Reserve the chart height (charts.js defaults) so the swap does not jump. */
+.calc-chart--parity {
+    min-height: 420px;
+}
+
+.calc-chart--bars {
+    min-height: 400px;
+}
+
+.calc-chart__caption {
+    margin: 0.5rem 0.5rem 0.25rem;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+.calc-table__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.calc-table__title {
+    margin: 0;
+    font-size: 1.0625rem;
+}
+
+.calc-table__note {
+    margin: 0.5rem 0 0;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+/* ── Model description ─────────────────────────────────────────────── */
+
+.calc-model__title {
+    margin-bottom: 0.5rem;
+}
+
+.calc-model__lead {
+    max-width: 68ch;
+    color: var(--cs-ink-muted);
+}
+
+.calc-details__item {
+    border-top: 1px solid var(--cs-line);
+}
+
+.calc-details__item:last-child {
+    border-bottom: 1px solid var(--cs-line);
+}
+
+.calc-details__item > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.875rem 0.25rem;
+    border-radius: var(--cs-radius-sm);
+    list-style: none;
+    cursor: pointer;
+}
+
+.calc-details__item > summary::-webkit-details-marker {
+    display: none;
+}
+
+.calc-details__item > summary::after {
+    content: "";
+    flex: none;
+    width: 0.75rem;
+    height: 0.75rem;
+    border-right: 2px solid var(--cs-ink-muted);
+    border-bottom: 2px solid var(--cs-ink-muted);
+    transform: translateY(-25%) rotate(45deg);
+    transition: transform var(--cs-transition);
+}
+
+.calc-details__item[open] > summary::after {
+    transform: translateY(25%) rotate(-135deg);
+}
+
+.calc-details__title {
+    font-weight: 600;
+    transition: color var(--cs-transition);
+}
+
+.calc-details__title:hover {
+    color: var(--cs-water);
+}
+
+.calc-details__body {
+    padding: 0 0.25rem 1.25rem;
+}
+
+.calc-details__body > :last-child {
+    margin-bottom: 0;
+}
+
+.calc-features {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 0.5rem 1.25rem;
+    margin: 0;
+}
+
+.calc-features dt {
+    font-family: var(--cs-font-mono);
+    font-size: var(--cs-fs-small);
+    font-weight: 500;
+}
+
+.calc-features dd {
+    margin: 0;
+    color: var(--cs-ink-muted);
+}
+
+@media (max-width: 575.98px) {
+    .calc-features {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0;
+    }
+
+    .calc-features dd {
+        margin-bottom: 0.625rem;
+    }
+}
+
+.calc-model__diagram {
+    max-width: 30rem;
+    margin: 0 auto 1.25rem;
+}
+
+.calc-model__diagram img {
+    width: 100%;
+    height: auto;
+}
+
+/* The diagram is black line art on a transparent background. */
+[data-bs-theme="dark"] .calc-model__diagram img {
+    filter: invert(0.9);
+}

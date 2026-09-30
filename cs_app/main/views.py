@@ -61,6 +61,7 @@ TS_FORM_STATE_FIELDS = ("mode", "feature", "start", "stop", "step", "catchment_n
 EXCEL_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SIM_RESULT_TOKEN_SESSION_KEY = "sim_result_token"
 TS_RESULT_TOKEN_SESSION_KEY = "ts_result_token"
+CALC_RESULT_TOKEN_SESSION_KEY = "calc_result_token"
 RESULT_CACHE_TTL_SECONDS = 30 * 60
 MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 UPLOAD_SUBDIR = "uploaded_files"
@@ -70,6 +71,8 @@ SIMULATION_TEMPLATE = "main/simulation.html"
 SIMULATION_RESULTS_TEMPLATE = "main/partials/_simulation_results.html"
 TIMESERIES_TEMPLATE = "main/timeseries.html"
 TIMESERIES_RESULTS_TEMPLATE = "main/partials/_timeseries_results.html"
+CALCULATIONS_TEMPLATE = "main/calculations.html"
+CALCULATIONS_RESULTS_TEMPLATE = "main/partials/_calculations_results.html"
 AUTH_REQUIRED_MESSAGE = "Authentication required."
 FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
@@ -1481,6 +1484,19 @@ RUNOFF_VOLUME_FACTORS = {
 }
 
 
+# SWMM reports a subcatchment's total runoff in 10^6 L (SI models) or 10^6 US gal
+# (US models); swmmio names that column TotalRunoffMG either way.
+REPORT_RUNOFF_FACTORS = {"SI": 1e3, "US": 1e6 * _US_GALLON_FT3}
+
+
+def _report_runoff_unit(flow_units: str | None) -> tuple[float, str]:
+    """Return the factor from the report's total runoff to the display volume unit, and that unit."""
+    system = _unit_system(flow_units)
+    if system in REPORT_RUNOFF_FACTORS:
+        return REPORT_RUNOFF_FACTORS[system], _unit_labels(flow_units)["volume"]
+    return 1.0, "10⁶ L or gal"
+
+
 def _runoff_volume_unit(flow_units: str | None) -> tuple[float, str]:
     """Return the factor from runoff_volume() to the display volume unit, and that unit."""
     normalized = _normalize_flow_units(flow_units)
@@ -1713,7 +1729,10 @@ def _cleanup_swmm_side_files(inp_path: str) -> None:
 
 def calculations(request: HttpRequest) -> HttpResponse:
     """
-    Perform calculations on the uploaded file.
+    Render the SWMM vs ANN comparison page and run the comparison on POST.
+
+    GET is public and shows the session's last comparison; POST requires
+    authentication (see ``_run_calculations``).
 
     Parameters
     ----------
@@ -1725,52 +1744,148 @@ def calculations(request: HttpRequest) -> HttpResponse:
     HttpResponse
         The HTTP response with the rendered calculations template.
     """
-    df = None
     if request.method == "POST":
-        uploaded_file_path = request.session.get("uploaded_file_path", None)
+        return _run_calculations(request)
+    return render(request, CALCULATIONS_TEMPLATE, {"comparison": _load_comparison(request)})
 
-        if not uploaded_file_path:
-            messages.error(request, "Please upload a file first.")
-        else:
-            user_dir = os.path.realpath(_user_upload_dir(request.user.id))
-            abs_uploaded_file = os.path.realpath(uploaded_file_path)
 
-            try:
-                common_path = os.path.commonpath([abs_uploaded_file, user_dir])
-            except ValueError:
-                common_path = None
+def _load_comparison(request: HttpRequest) -> dict | None:
+    """Return the comparison last run in this session, while it is still cached."""
+    if not request.user.is_authenticated:
+        return None
+    token = request.session.get(CALC_RESULT_TOKEN_SESSION_KEY)
+    comparison = _load_cached_result("calc", request.user.id, token)
+    if token and not comparison:
+        request.session.pop(CALC_RESULT_TOKEN_SESSION_KEY, None)
+    return comparison
 
-            if common_path != user_dir:
-                logger.warning(
-                    f"File path traversal attempt or cross-user access: {uploaded_file_path}"
-                )
-                messages.error(request, "Invalid file path detected.")
-            else:
-                try:
-                    with Simulation(uploaded_file_path) as sim:
-                        for _ in sim:
-                            pass
-                    # Build the model after SWMM run so report-derived columns are available.
-                    swmmio_model = swmmio.Model(uploaded_file_path)
-                    ann_predictions = predict_runoff(swmmio_model).transpose()
-                    df = pd.DataFrame(
-                        data={
-                            "Name": swmmio_model.subcatchments.dataframe.index,
-                            "SWMM_Runoff_m3": swmmio_model.subcatchments.dataframe[
-                                "TotalRunoffMG"
-                            ].values,
-                            "ANN_Runoff_m3": np.round(ann_predictions, 2),
-                        },
-                    )
-                except Exception:
-                    logger.exception("Error while performing calculations.")
-                    messages.error(
-                        request,
-                        "An error occurred while performing calculations.",
-                    )
-                finally:
-                    _cleanup_swmm_side_files(uploaded_file_path)
 
-    df_is_empty = df is None or df.empty
+def _check_in_user_upload_dir(path: str, user_id: int) -> None:
+    """Refuse a model path outside the user's upload directory."""
+    user_dir = os.path.realpath(_user_upload_dir(user_id))
+    try:
+        common_path = os.path.commonpath([os.path.realpath(path), user_dir])
+    except ValueError:
+        common_path = None
+    if common_path != user_dir:
+        logger.warning(f"File path traversal attempt or cross-user access: {path}")
+        raise InputValidationError("invalid_path")
 
-    return render(request, "main/calculations.html", {"df": df, "df_is_empty": df_is_empty})
+
+def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
+    """Run SWMM on the model and pair its runoff with the ANN prediction, in the model's volume unit."""
+    # pyswmm reports a missing file as a bare Exception, so check up front.
+    if not os.path.isfile(inp_path):
+        raise InputValidationError("missing_file")
+    try:
+        with Simulation(inp_path) as sim:
+            for _ in sim:
+                pass
+        # Build the model after SWMM run so report-derived columns are available.
+        swmmio_model = swmmio.Model(inp_path)
+        subcatchments = swmmio_model.subcatchments.dataframe
+        if subcatchments.empty:
+            raise InputValidationError("no_subcatchments")
+        ann_predictions = predict_runoff(swmmio_model)
+        factor, unit = _report_runoff_unit(_read_flow_units(inp_path))
+        comparison = pd.DataFrame(
+            data={
+                "Name": subcatchments.index,
+                "SWMM_Runoff": subcatchments["TotalRunoffMG"].to_numpy(dtype=float) * factor,
+                # The network was trained on the report's runoff, so it converts the same way.
+                "ANN_Runoff": np.round(ann_predictions.astype(float) * factor, 2),
+            },
+        )
+        return comparison, unit
+    finally:
+        _cleanup_swmm_side_files(inp_path)
+
+
+def _finite_or_none(value) -> float | None:
+    """Return ``value`` as a plain float, or None when it is missing, NaN or infinite."""
+    number = float(value)
+    return number if np.isfinite(number) else None
+
+
+def _summarise_comparison(df: pd.DataFrame, unit: str) -> dict | None:
+    """
+    Per-subcatchment differences and error metrics of a SWMM vs ANN comparison.
+
+    The single place these numbers are computed: the results partial renders them
+    and hands ``rows`` to the charts through ``json_script``. The difference is
+    ANN minus SWMM. Its percentage is None where SWMM runoff is 0, and the mean
+    absolute percentage error skips those rows (``mape_excluded`` counts them).
+    ``unit`` is the volume unit of every runoff value and is kept with the result.
+
+    Returns None for an empty comparison.
+    """
+    if df.empty:
+        return None
+    swmm = df["SWMM_Runoff"].astype(float)
+    ann = df["ANN_Runoff"].astype(float)
+    difference = ann - swmm
+    difference_pct = difference / swmm.where(swmm != 0) * 100
+    rows = [
+        {
+            "Name": str(name),
+            "SWMM_Runoff": _finite_or_none(swmm_value),
+            "ANN_Runoff": _finite_or_none(ann_value),
+            "Difference": _finite_or_none(diff),
+            "Difference_pct": _finite_or_none(pct),
+        }
+        for name, swmm_value, ann_value, diff, pct in zip(
+            df["Name"], swmm, ann, difference, difference_pct, strict=True
+        )
+    ]
+    return {
+        "unit": unit,
+        "rows": rows,
+        "metrics": {
+            "count": len(rows),
+            "mae": _finite_or_none(difference.abs().mean()),
+            "rmse": _finite_or_none(np.sqrt((difference**2).mean())),
+            "mape": _finite_or_none(difference_pct.abs().mean()),
+            "mape_excluded": int((swmm == 0).sum()),
+        },
+    }
+
+
+def _run_comparison(request: HttpRequest) -> None:
+    """Compare SWMM and ANN runoff on the session's model and store the result for the session."""
+    uploaded_file_path = _uploaded_model_path(request)
+    _check_in_user_upload_dir(uploaded_file_path, request.user.id)
+    comparison = _summarise_comparison(*_compare_swmm_and_ann(uploaded_file_path))
+    _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
+
+
+@ajax_login_required
+def _run_calculations(request: HttpRequest) -> HttpResponse:
+    """
+    Run the comparison on the user's uploaded model.
+
+    A regular POST redirects back to the page (PRG); an async one gets the
+    results fragment. Errors follow the ``_run_failed`` contract.
+    """
+    try:
+        _run_comparison(request)
+    except Exception as error:
+        message, status = _classify_run_error(
+            error,
+            "Calculations",
+            "The comparison is too large to keep. Use a model with fewer subcatchments.",
+            "An error occurred while performing calculations.",
+        )
+        # A failed run leaves the previous comparison in place, so the page keeps showing it.
+        return _run_failed(
+            request,
+            message,
+            status,
+            CALCULATIONS_TEMPLATE,
+            {"comparison": _load_comparison(request)},
+        )
+
+    if _is_ajax(request):
+        return render(
+            request, CALCULATIONS_RESULTS_TEMPLATE, {"comparison": _load_comparison(request)}
+        )
+    return redirect("main:calculations")
