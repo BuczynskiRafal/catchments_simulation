@@ -172,6 +172,10 @@ class TestUploadZoneKeyboard:
     @pytest.mark.parametrize("key", ["Enter", " "])
     def test_trigger_opens_file_dialog(self, auth_page: Page, live_server, key: str) -> None:
         sp = SimulationPage(auth_page, live_server.url)
+        # Listening for file choosers turns their interception on without waiting for it,
+        # so a key pressed right after expect_file_chooser() can reach the page first and
+        # open an unseen native dialog. Listen before the navigation instead.
+        auth_page.on("filechooser", lambda _chooser: None)
         sp.navigate_to()
         expect(sp.upload.trigger).to_have_attribute("aria-describedby", "upload-zone-hint")
 
