@@ -21,12 +21,20 @@ from uuid import uuid4
 import pandas as pd
 import swmmio
 from pyswmm import Simulation, Subcatchments
-from pyswmm.errors import MultiSimulationError
 from pyswmm.swmm5 import PySWMM
 from swmmio.utils.modify_model import replace_inp_section
 
 from .exceptions import InvalidParameterError, SimulationError, SubcatchmentNotFoundError
 from .features import FEATURES, Feature, build_range, validate_feature, validate_values
+
+try:
+    from pyswmm.errors import MultiSimulationError
+
+    _ENGINE_BUSY_ERRORS: tuple[type[Exception], ...] = (MultiSimulationError,)
+except ImportError:
+    # pyswmm < 2.0, which swmmio 0.8.x requires, has no MultiSimulationError: it never
+    # refuses to open a second simulation, which silently takes over the engine instead.
+    _ENGINE_BUSY_ERRORS = ()
 
 T = TypeVar("T")
 
@@ -49,7 +57,10 @@ class FeaturesSimulation:
     surfaces as :class:`SimulationError`.
 
     SWMM runs one simulation per process at a time: an instance is not
-    thread-safe, and parallel sweeps need separate processes.
+    thread-safe, and parallel sweeps need separate processes. pyswmm 2 refuses
+    to start a second simulation, which surfaces as :class:`SimulationError`;
+    pyswmm 1.5, which swmmio 0.8 requires, cannot detect one, and overlapping
+    runs then give undefined results.
 
     Units follow the model's ``FLOW_UNITS`` (see :attr:`flow_units`). With US
     units (CFS, GPM, MGD) areas are in acres, widths and curb lengths in feet,
@@ -763,7 +774,9 @@ def _surface_feature(prefix: Literal["N", "S"], param: str) -> Feature:
 def _open_simulation(inp: Path, report: Path) -> Simulation:
     try:
         return Simulation(str(inp), str(report), str(inp.with_suffix(".out")))
-    except MultiSimulationError:
+    except _ENGINE_BUSY_ERRORS:
+        # pyswmm >= 2.0 refused to open because another simulation is running; closing
+        # the engine would end that one.
         raise
     except Exception:
         # A failed swmm_open leaves the engine half-open with the report unflushed.

@@ -76,6 +76,10 @@ input, plus the result column names. Read **Changed** before upgrading.
   `close()` and the context manager remain.
 - Raised dependency floors to versions that install and pass the test suite:
   `pandas>=2.1.1`, `numpy>=1.26`, `pyswmm>=1.5.0`, `pydantic>=2.1`.
+- Works with pyswmm 1.5 and 2.x. A plain `pip install` gets pyswmm 1.5,
+  because swmmio 0.8 requires `pyswmm<2`. pyswmm 1.5 cannot detect a second
+  simulation running in the same process, so overlapping runs give undefined
+  results there; pyswmm 2 refuses them with an error.
 - The license is declared as the SPDX expression `MIT`.
 - Releases are published from GitHub Actions with PyPI Trusted Publishing;
   release candidates go to TestPyPI.

@@ -242,6 +242,29 @@ def test_ps6_swmm_failure_raises_simulation_error_with_report_errors(
     assert FeaturesSimulation("S1", model_path).calculate()["runoff"] > 0
 
 
+def test_ps6_refused_open_leaves_the_running_simulation_alone(model_path: Path) -> None:
+    # pyswmm >= 2.0 refuses a second simulation; pyswmm 1.x cannot detect one.
+    errors = pytest.importorskip("pyswmm.errors")
+    if not hasattr(errors, "MultiSimulationError"):
+        pytest.skip("pyswmm < 2.0 does not refuse a second simulation")
+    from pyswmm import Simulation, Subcatchments
+
+    expected = FeaturesSimulation("S1", model_path).calculate()["runoff"]
+    other = model_path.with_name("other.inp")
+    other.write_bytes(model_path.read_bytes())
+    try:
+        with Simulation(str(other)) as running:
+            with pytest.raises(SimulationError, match="Multi-Simulation"):
+                FeaturesSimulation("S1", model_path).calculate()
+            # The refused open did not close the engine under the running simulation.
+            for _ in running:
+                pass
+            assert Subcatchments(running)["S1"].statistics["runoff"] == expected
+    finally:
+        for suffix in (".rpt", ".out"):
+            other.with_suffix(suffix).unlink(missing_ok=True)
+
+
 def test_ps6_unknown_subcatchment_lists_available_ids(model_path: Path) -> None:
     with pytest.raises(SubcatchmentNotFoundError, match="Available subcatchments") as excinfo:
         FeaturesSimulation("NOPE", model_path)
