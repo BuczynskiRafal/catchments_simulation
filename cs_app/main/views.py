@@ -49,6 +49,7 @@ from pyswmm.swmm5 import PySWMM
 from catchment_simulation.analysis import runoff_volume, time_to_peak
 from catchment_simulation.catchment_features_simulation import (
     _ENGINE_BUSY_ERRORS,
+    US_FLOW_UNITS,
     FeaturesSimulation,
 )
 from catchment_simulation.exceptions import (
@@ -64,6 +65,7 @@ from main.forms import (
     SimulationForm,
     TimeseriesForm,
     UserProfileForm,
+    parameter_labels,
 )
 from main.predictor import predict_runoff
 from main.schemas import ContactMessage
@@ -91,7 +93,6 @@ UPLOAD_SUBDIR = "uploaded_files"
 # SHA-256 of the session model's content: loading the same model again keeps its results.
 MODEL_DIGEST_SESSION_KEY = "uploaded_file_sha256"
 SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
-US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
 SIMULATION_TEMPLATE = "main/simulation.html"
 SIMULATION_RESULTS_TEMPLATE = "main/partials/_simulation_results.html"
 TIMESERIES_TEMPLATE = "main/timeseries.html"
@@ -763,6 +764,8 @@ def _forget_model_state(request: HttpRequest) -> None:
         MODEL_DIGEST_SESSION_KEY,
         "_subcatchment_ids",
         "_subcatchment_ids_file",
+        "_flow_units",
+        "_flow_units_file",
     ):
         request.session.pop(key, None)
     for scope, session_key in RESULT_SESSION_KEYS:
@@ -987,7 +990,7 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
     _safe_remove_file(file_path)
     _forget_model_state(request)
 
-    return JsonResponse({"message": "Upload cleared."})
+    return JsonResponse({"message": "Upload cleared.", "option_labels": parameter_labels()})
 
 
 def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
@@ -1033,8 +1036,13 @@ def _get_catchment_choices(request: HttpRequest) -> list[tuple[str, str]]:
 @require_GET
 @ajax_login_required
 def subcatchments(request: HttpRequest) -> JsonResponse:
-    """AJAX endpoint returning subcatchment IDs from the uploaded INP."""
-    return JsonResponse({"subcatchments": _get_subcatchment_ids(request)})
+    """AJAX endpoint returning the uploaded INP's subcatchment IDs and parameter labels."""
+    return JsonResponse(
+        {
+            "subcatchments": _get_subcatchment_ids(request),
+            "option_labels": parameter_labels(_form_units(request)),
+        }
+    )
 
 
 def get_feature_name(method_name: str) -> str:
@@ -1048,7 +1056,11 @@ def _normalize_flow_units(flow_units: str | None) -> str:
 
 
 def _read_flow_units(inp_path: str) -> str | None:
-    """Read FLOW_UNITS from a SWMM input file."""
+    """
+    Read FLOW_UNITS from a SWMM input file as FeaturesSimulation does: the keyword
+    in any case, and SWMM's default CFS when it is not set. None when the file
+    cannot be read.
+    """
     if not inp_path or not os.path.exists(inp_path):
         return None
 
@@ -1058,19 +1070,37 @@ def _read_flow_units(inp_path: str) -> str | None:
         logger.warning("Failed to read FLOW_UNITS from %s", inp_path, exc_info=True)
         return None
 
-    flow_units: object | None = None
+    entries = ()
     if isinstance(options, pd.DataFrame):
-        if "FLOW_UNITS" in options.index and not options.columns.empty:
+        if not options.columns.empty:
             value_column = "Value" if "Value" in options.columns else options.columns[0]
-            flow_units = options.loc["FLOW_UNITS", value_column]
+            entries = options[value_column].items()
     elif isinstance(options, dict):
-        flow_units = options.get("FLOW_UNITS")
-
-    if isinstance(flow_units, pd.Series):
-        flow_units = flow_units.iloc[0] if not flow_units.empty else None
-
+        entries = options.items()
+    # SWMM keywords are case-insensitive.
+    flow_units = {str(key).strip().upper(): value for key, value in entries}.get("FLOW_UNITS")
     normalized = _normalize_flow_units(str(flow_units) if flow_units is not None else None)
-    return normalized or None
+    return normalized or "CFS"
+
+
+def _session_flow_units(request: HttpRequest) -> str | None:
+    """FLOW_UNITS of the session's model, cached with it like its subcatchment IDs."""
+    file_path = request.session.get("uploaded_file_path")
+    if not file_path:
+        return None
+    if request.session.get("_flow_units_file") == file_path:
+        return request.session.get("_flow_units")
+    flow_units = _read_flow_units(file_path)
+    if flow_units is not None:
+        request.session["_flow_units"] = flow_units
+        request.session["_flow_units_file"] = file_path
+    return flow_units
+
+
+def _form_units(request: HttpRequest) -> dict[str, str] | None:
+    """The units the sweep forms label their parameters in; None (SI) without a model."""
+    flow_units = _session_flow_units(request)
+    return _unit_labels(flow_units) if flow_units else None
 
 
 def _unit_system(flow_units: str | None) -> str:
@@ -1352,12 +1382,16 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             SimulationForm,
             SIM_FORM_STATE_FIELDS,
         )
-        form = SimulationForm(catchment_choices=catchment_choices, initial=initial)
+        form = SimulationForm(
+            catchment_choices=catchment_choices, units=_form_units(request), initial=initial
+        )
         return render(
             request, SIMULATION_TEMPLATE, {"form": form, **get_session_variables(request)}
         )
 
-    form = SimulationForm(request.POST, catchment_choices=catchment_choices)
+    form = SimulationForm(
+        request.POST, catchment_choices=catchment_choices, units=_form_units(request)
+    )
     if not form.is_valid():
         if _is_ajax(request):
             return _form_invalid_json(form)
@@ -1678,14 +1712,18 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
             TimeseriesForm,
             TS_FORM_STATE_FIELDS,
         )
-        form = TimeseriesForm(catchment_choices=catchment_choices, initial=initial)
+        form = TimeseriesForm(
+            catchment_choices=catchment_choices, units=_form_units(request), initial=initial
+        )
         return render(
             request,
             TIMESERIES_TEMPLATE,
             {"form": form, **_get_timeseries_session_variables(request)},
         )
 
-    form = TimeseriesForm(request.POST, catchment_choices=catchment_choices)
+    form = TimeseriesForm(
+        request.POST, catchment_choices=catchment_choices, units=_form_units(request)
+    )
     if not form.is_valid():
         if _is_ajax(request):
             return _form_invalid_json(form)

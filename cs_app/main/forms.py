@@ -45,6 +45,31 @@ METHOD_FEATURES = {
 }
 
 
+# Parameter labels name the unit of the swept value: "{area}" and "{length}" are filled in
+# with the session model's units (main.views._unit_labels), and with SI units when no
+# model is loaded.
+SI_UNITS = {"area": "ha", "length": "m"}
+
+
+def _unit_choices(choices, units):
+    """*choices*, flat or grouped, with their labels filled in for *units*."""
+    return [
+        (
+            value,
+            _unit_choices(label, units) if isinstance(label, tuple) else label.format_map(units),
+        )
+        for value, label in choices
+    ]
+
+
+def _flat_choices(choices):
+    for value, label in choices:
+        if isinstance(label, (list, tuple)):
+            yield from label
+        else:
+            yield value, label
+
+
 def _describe_bounds(spec: FeatureSpec) -> str:
     """The physical range of a feature in words, e.g. "greater than 0 and at most 100"."""
     lower = f"at least {spec.minimum:g}" if spec.min_inclusive else f"greater than {spec.minimum:g}"
@@ -172,11 +197,11 @@ class SimulationForm(forms.Form):
             "Range-based Parameters",
             (
                 ("simulate_percent_slope", "Slope (%)"),
-                ("simulate_area", "Area (ha)"),
-                ("simulate_width", "Width (m)"),
+                ("simulate_area", "Area ({area})"),
+                ("simulate_width", "Width ({length})"),
                 ("simulate_percent_impervious", "Impervious (%)"),
                 ("simulate_percent_zero_imperv", "Zero-Imperv (%)"),
-                ("simulate_curb_length", "Curb Length (m)"),
+                ("simulate_curb_length", "Curb Length ({length})"),
             ),
         ),
         (
@@ -240,10 +265,11 @@ class SimulationForm(forms.Form):
 
     RANGE_FIELDS = ("start", "stop", "step")
 
-    def __init__(self, *args, catchment_choices=None, **kwargs):
+    def __init__(self, *args, catchment_choices=None, units=None, **kwargs):
         super().__init__(*args, **kwargs)
         if catchment_choices is not None:
             self.fields["catchment_name"].widget.choices = catchment_choices
+        self.fields["option"].choices = _unit_choices(self.OPTIONS, units or SI_UNITS)
 
     def clean(self):
         cleaned_data = super().clean()
@@ -262,13 +288,9 @@ class SimulationForm(forms.Form):
             _clean_sweep_range(self, METHOD_FEATURES[option], self.option_label(option))
         return cleaned_data
 
-    @classmethod
-    def option_label(cls, option: str) -> str:
-        """The label the option list shows for a method, e.g. "Slope (%)"."""
-        return next(
-            (label for _, group in cls.OPTIONS for value, label in group if value == option),
-            option,
-        )
+    def option_label(self, option: str) -> str:
+        """The label the option list shows for a method, e.g. "Area (ha)"."""
+        return dict(_flat_choices(self.fields["option"].choices)).get(option, option)
 
 
 class TimeseriesForm(forms.Form):
@@ -291,10 +313,10 @@ class TimeseriesForm(forms.Form):
 
     FEATURE_CHOICES = (
         ("PercSlope", "Slope (%)"),
-        ("Area", "Area (ha)"),
-        ("Width", "Width (m)"),
+        ("Area", "Area ({area})"),
+        ("Width", "Width ({length})"),
         ("PercImperv", "Impervious (%)"),
-        ("CurbLength", "Curb Length (m)"),
+        ("CurbLength", "Curb Length ({length})"),
     )
 
     # Rendered as a segmented control (radios + button labels) by timeseries.html.
@@ -343,10 +365,11 @@ class TimeseriesForm(forms.Form):
         ),
     )
 
-    def __init__(self, *args, catchment_choices=None, **kwargs):
+    def __init__(self, *args, catchment_choices=None, units=None, **kwargs):
         super().__init__(*args, **kwargs)
         if catchment_choices is not None:
             self.fields["catchment_name"].widget.choices = catchment_choices
+        self.fields["feature"].choices = _unit_choices(self.FEATURE_CHOICES, units or SI_UNITS)
 
     MAX_SWEEP_RUNS = MAX_SWEEP_RUNS
     SWEEP_FIELDS = ("feature", "start", "stop", "step")
@@ -365,5 +388,18 @@ class TimeseriesForm(forms.Form):
                 self.add_error(field, "Required for parameter sweep mode.")
         feature = cleaned_data.get("feature")
         if feature:
-            _clean_sweep_range(self, feature, dict(self.FEATURE_CHOICES)[feature])
+            _clean_sweep_range(self, feature, dict(self.fields["feature"].choices)[feature])
         return cleaned_data
+
+
+def parameter_labels(units=None) -> dict[str, str]:
+    """
+    The labels of the parameters both tool pages sweep, by option value (a sweep
+    method or a feature name), for *units*; the upload zone relabels the options
+    with them when the model changes.
+    """
+    units = units or SI_UNITS
+    return {
+        **dict(_flat_choices(_unit_choices(SimulationForm.OPTIONS, units))),
+        **dict(_unit_choices(TimeseriesForm.FEATURE_CHOICES, units)),
+    }
