@@ -8,6 +8,18 @@ def _generate_password() -> str:
     return f"T!{uuid.uuid4().hex}"
 
 
+@pytest.fixture(autouse=True)
+def isolated_media_root(settings, tmp_path):
+    """Give every test its own MEDIA_ROOT.
+
+    Upload directories are named after the user id, and every xdist worker's
+    test database hands out the same ids. With the shared MEDIA_ROOT of the test
+    settings, one worker's teardown deleted the model that a test on another
+    worker was about to run.
+    """
+    settings.MEDIA_ROOT = str(tmp_path / "media")
+
+
 @pytest.fixture
 def db_access():
     from django.db import connection

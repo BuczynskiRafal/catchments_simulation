@@ -238,12 +238,11 @@ def test_model_swmm_cannot_run_shows_the_report_errors(client, user, broken_mode
 
 
 @pytest.mark.django_db
-def test_failed_comparison_does_not_block_the_next_one(client, user, settings, tmp_path):
+def test_failed_comparison_does_not_block_the_next_one(client, user):
     """
     A model SWMM cannot open must not leave the engine open: the report's errors reach
     the user, and the next comparison in the same process runs.
     """
-    settings.MEDIA_ROOT = str(tmp_path / "media")
     user_dir = _user_upload_dir(user.id)
     os.makedirs(user_dir)
     text = example_model_path().read_text()
