@@ -1,4 +1,11 @@
+import uuid
+
 import pytest
+
+
+def _generate_password() -> str:
+    """A random password per call, so no password is written in the source (as in e2e)."""
+    return f"T!{uuid.uuid4().hex}"
 
 
 @pytest.fixture
@@ -18,7 +25,7 @@ def client():
 
 @pytest.fixture
 def test_password():
-    return "strong-test-pass"
+    return _generate_password()
 
 
 @pytest.fixture
@@ -33,7 +40,7 @@ def test_user():
     from django.contrib.auth import get_user_model
 
     User = get_user_model()
-    return User.objects.create_user(username="test", password="testpassword")
+    return User.objects.create_user(username="test", password=_generate_password())
 
 
 @pytest.fixture
@@ -54,4 +61,4 @@ def wrong_extension_file():
 def user():
     from django.contrib.auth.models import User
 
-    return User.objects.create_user(username="test", password="test")
+    return User.objects.create_user(username="test", password=_generate_password())

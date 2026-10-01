@@ -165,7 +165,7 @@ def test_contact_page_heading_and_title(client):
 
 @pytest.mark.django_db
 def test_profile_form_never_lists_other_accounts(client, user):
-    User.objects.create_user(username="someone-else", password="x")
+    User.objects.create_user(username="someone-else", password=f"T!{uuid.uuid4().hex}")
     client.force_login(user)
 
     html = client.get(reverse("main:userprofile", args=[user.id])).content.decode()
@@ -178,7 +178,7 @@ def test_profile_form_never_lists_other_accounts(client, user):
 
 @pytest.mark.django_db
 def test_profile_post_cannot_reassign_the_account(client, user):
-    other = User.objects.create_user(username="other", password="x")
+    other = User.objects.create_user(username="other", password=f"T!{uuid.uuid4().hex}")
     client.force_login(user)
 
     client.post(
@@ -198,7 +198,9 @@ def test_profile_form_owner_comes_from_instance_or_initial(user):
 
 @pytest.mark.django_db
 def test_non_owner_sees_bio_as_text_without_email(client, user):
-    owner = User.objects.create_user(username="owner", email="owner@example.com", password="x")
+    owner = User.objects.create_user(
+        username="owner", email="owner@example.com", password=f"T!{uuid.uuid4().hex}"
+    )
     UserProfile.objects.create(user=owner, bio="Hydrologist.")
     client.force_login(user)
 
