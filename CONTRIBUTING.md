@@ -23,7 +23,7 @@ To start contributing to the project, follow these steps:
 
 1. Fork the repository on GitHub.
 2. Clone your fork to your local development environment.
-3. Set up the development environment with [uv](https://docs.astral.sh/uv/): `uv sync --frozen` installs the package and the `dev` group (see [Dependency Workflow](#dependency-workflow-uv)). To work on the Django app, follow [cs_app/README.md](cs_app/README.md).
+3. Set up the development environment with [uv](https://docs.astral.sh/uv/): `uv sync --frozen` installs the package and the `dev` group (see [Dependency Workflow](#dependency-workflow-uv)) on Python 3.12, which `.python-version` selects to match CI and Read the Docs; `UV_PYTHON=3.10 uv sync` picks another version. To work on the Django app, follow [cs_app/README.md](cs_app/README.md).
 4. Create a new branch for your changes, using a descriptive name.
 5. Implement your changes, following the guidelines outlined in this document.
 6. Ensure your changes pass all tests and comply with our code style guidelines.

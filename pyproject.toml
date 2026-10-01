@@ -27,7 +27,7 @@ classifiers = [
 ]
 keywords = ["swmm", "hydrology", "simulation", "catchment", "stormwater"]
 dependencies = [
-    "pandas>=2.1.1",
+    "pandas>=2.2.2",
     "numpy>=1.26",
     "swmmio>=0.6.0",
     "pyswmm>=1.5.0",
@@ -42,6 +42,7 @@ dev = [
     "ruff==0.16.9",
     "pytest-xdist>=3.6",
     "mypy>=1.0",
+    "pandas-stubs>=2.2",
     "hypothesis>=6.60",
     "pre-commit>=3.0",
 ]
@@ -99,11 +100,10 @@ python_version = "3.10"
 strict = true
 
 [[tool.mypy.overrides]]
+# swmmio and pyswmm ship no type information.
 module = [
     "swmmio.*",
     "pyswmm.*",
-    "pandas.*",
-    "numpy.*",
 ]
 ignore_missing_imports = true
 
@@ -115,4 +115,8 @@ markers = [
 filterwarnings = [
     "ignore:builtin type Swig.*:DeprecationWarning",
     "ignore:builtin type swigvarlink:DeprecationWarning",
+    # Upstream: swmmio's replace_inp_section passes copy= to DataFrame.infer_objects, which
+    # pandas 3 deprecates with a Pandas4Warning. Matching its DeprecationWarning base class
+    # keeps the filter importable on pandas 2, where the warning class does not exist.
+    "ignore:The copy keyword is deprecated:DeprecationWarning:swmmio",
 ]

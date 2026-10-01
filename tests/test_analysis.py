@@ -33,6 +33,8 @@ def test_time_to_peak_on_simulated_hydrograph(timeseries: pd.DataFrame) -> None:
 
 def test_time_to_peak_numerical_correctness() -> None:
     assert time_to_peak(hourly([0.0, 1.0, 3.0, 0.5])) == pd.Timedelta(hours=2)
+    # NaN is skipped and the first of equal peaks counts.
+    assert time_to_peak(hourly([np.nan, 1.0, 3.0, 3.0, np.nan])) == pd.Timedelta(hours=2)
 
 
 def test_time_to_peak_from_explicit_start() -> None:
@@ -55,6 +57,7 @@ def test_time_to_peak_rejects_start_after_first_timestamp() -> None:
         (hourly([1.0]), "nonexistent", "not found"),
         (hourly([0.0, 0.0, 0.0]), "runoff", "zero"),
         (hourly([np.nan, np.nan]), "runoff", "NaN"),
+        (pd.DataFrame({"runoff": [1.0, 3.0]}), "runoff", "DatetimeIndex"),
     ],
 )
 def test_time_to_peak_rejects_degenerate_input(

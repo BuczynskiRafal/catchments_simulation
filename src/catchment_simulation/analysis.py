@@ -43,12 +43,15 @@ def time_to_peak(
     Raises
     ------
     ValueError
-        If *timeseries* is empty, *column* is not present, the column is all
-        NaN or all zero (no meaningful peak), or *start* is later than the
-        first timestamp.
+        If *timeseries* is empty or has no ``DatetimeIndex``, *column* is not
+        present, the column is all NaN or all zero (no meaningful peak), or
+        *start* is later than the first timestamp.
     """
     if timeseries.empty:
         raise ValueError("Cannot compute time to peak on an empty timeseries.")
+    index = timeseries.index
+    if not isinstance(index, pd.DatetimeIndex):
+        raise ValueError(f"The timeseries needs a DatetimeIndex, not {type(index).__name__}.")
     if column not in timeseries.columns:
         raise ValueError(
             f"Column '{column}' not found. Available columns: {list(timeseries.columns)}"
@@ -58,13 +61,12 @@ def time_to_peak(
         raise ValueError(f"All values in column '{column}' are NaN — no meaningful peak exists.")
     if values.max() == 0:
         raise ValueError(f"All values in column '{column}' are zero — no meaningful peak exists.")
-    reference = timeseries.index[0] if start is None else pd.Timestamp(start)
-    if reference > timeseries.index[0]:
-        raise ValueError(
-            f"start ({reference}) is later than the first timestamp ({timeseries.index[0]})."
-        )
-    peak_time = values.idxmax()
-    return pd.Timedelta(peak_time - reference)
+    reference = index[0] if start is None else pd.Timestamp(start)
+    if reference > index[0]:
+        raise ValueError(f"start ({reference}) is later than the first timestamp ({index[0]}).")
+    # argmax skips NaN and returns the position of the first maximum.
+    peak_time = index[int(values.argmax())]
+    return peak_time - reference
 
 
 def runoff_volume(
@@ -120,9 +122,12 @@ def runoff_volume(
         )
     ts = timeseries[column]
     if start is not None or end is not None:
-        ts = ts.loc[start:end]  # type: ignore[misc]
+        ts = ts.loc[slice(start, end)]
     if len(ts) < 2:
         raise ValueError("At least 2 data points are required for volume integration.")
-    dt_seconds = (ts.index[1:] - ts.index[:-1]).total_seconds().values
-    avg_flow = (ts.values[:-1] + ts.values[1:]) / 2
+    # The slice keeps the DatetimeIndex; the stubs only know it as an Index.
+    times = pd.DatetimeIndex(ts.index)
+    dt_seconds = (times[1:] - times[:-1]).total_seconds().to_numpy()
+    flow = ts.to_numpy(dtype=float)
+    avg_flow = (flow[:-1] + flow[1:]) / 2
     return float(np.sum(avg_flow * dt_seconds))

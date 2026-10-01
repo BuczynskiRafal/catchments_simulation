@@ -23,6 +23,8 @@ jobs:
   test:
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      # uv would otherwise use the 3.12 pinned in .python-version for every matrix entry.
+      UV_PYTHON: ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

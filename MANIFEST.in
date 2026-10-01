@@ -1,7 +1,7 @@
 # The sdist carries the library, its tests (with their fixtures) and the
 # project metadata, so downstream packagers can run the test suite from it.
 # The Django app, the docs and the CI configuration stay out.
-include LICENSE README.md CHANGELOG.md pyproject.toml
+include LICENSE README.md CHANGELOG.md CITATION.cff pyproject.toml
 graft src
 graft tests
 

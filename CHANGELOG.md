@@ -55,9 +55,9 @@ input, plus the result column names. Read **Changed** before upgrading.
 - `DEPRESSION_STORAGE_VALUES` held the millimetre conversion with
   floating-point noise (`7.619999999999999`); the values are rounded to
   0.01 mm now: 1.27, 2.54, 5.08 and 7.62. Results are unchanged.
-- `time_to_peak` did not reject an all-NaN column, and `runoff_volume`
-  integrated data with an unsorted or non-datetime index. Both raise
-  `ValueError` now.
+- `time_to_peak` did not reject an all-NaN column or a non-datetime index,
+  and `runoff_volume` integrated data with an unsorted or non-datetime index.
+  Both raise `ValueError` now.
 
 ### Changed
 
@@ -83,7 +83,8 @@ input, plus the result column names. Read **Changed** before upgrading.
 - A `with` block is no longer needed: no working file outlives a call.
   `close()` and the context manager remain.
 - Raised dependency floors to versions that install and pass the test suite:
-  `pandas>=2.1.1`, `numpy>=1.26`, `pyswmm>=1.5.0`, `pydantic>=2.1`.
+  `pandas>=2.2.2` (the first pandas built for NumPy 2; pandas 2.1 crashes on
+  import next to NumPy 2), `numpy>=1.26`, `pyswmm>=1.5.0`, `pydantic>=2.1`.
 - Works with pyswmm 1.5 and 2.x. A plain `pip install` gets pyswmm 1.5,
   because swmmio 0.8 requires `pyswmm<2`. pyswmm 1.5 cannot detect a second
   simulation running in the same process, so overlapping runs give undefined
