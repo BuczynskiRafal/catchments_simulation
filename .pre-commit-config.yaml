@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
+    rev: v0.16.9
     hooks:
       - id: ruff
         args: [--fix]
@@ -16,11 +16,3 @@ repos:
         pass_filenames: false
         always_run: true
         types: [python]
-
-      - id: pytest
-        name: pytest
-        entry: uv run pytest
-        args: [tests/test_catchment_features_simulation.py, --tb=short]
-        language: system
-        pass_filenames: false
-        always_run: true

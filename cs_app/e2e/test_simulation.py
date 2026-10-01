@@ -232,9 +232,9 @@ class TestSimulationProgress:
         held: list[Route] = []
         auth_page.route(
             SIMULATION_ROUTE,
-            lambda route: held.append(route)
-            if route.request.method == "POST"
-            else route.continue_(),
+            lambda route: (
+                held.append(route) if route.request.method == "POST" else route.continue_()
+            ),
         )
 
         sp.run_simulation()

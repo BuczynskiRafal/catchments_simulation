@@ -42,7 +42,7 @@ def time_to_peak(
         raise ValueError("Cannot compute time to peak on an empty timeseries.")
     if column not in timeseries.columns:
         raise ValueError(
-            f"Column '{column}' not found. " f"Available columns: {list(timeseries.columns)}"
+            f"Column '{column}' not found. Available columns: {list(timeseries.columns)}"
         )
     if timeseries[column].max() == 0:
         raise ValueError(f"All values in column '{column}' are zero — no meaningful peak exists.")
@@ -92,7 +92,7 @@ def runoff_volume(
     """
     if column not in timeseries.columns:
         raise ValueError(
-            f"Column '{column}' not found. " f"Available columns: {list(timeseries.columns)}"
+            f"Column '{column}' not found. Available columns: {list(timeseries.columns)}"
         )
     ts = timeseries[column]
     if start is not None or end is not None:

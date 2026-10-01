@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Union
+from typing import Any
 
 from django.conf import settings
 from django.core.mail import send_mail
@@ -9,7 +9,7 @@ from main.schemas import ContactMessage
 logger = logging.getLogger(__name__)
 
 
-def send_message(data: Union[ContactMessage, dict[str, Any]]) -> bool:
+def send_message(data: ContactMessage | dict[str, Any]) -> bool:
     """
     Send a contact form message via email.
 

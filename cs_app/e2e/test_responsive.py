@@ -76,9 +76,9 @@ class TestResponsiveHome:
         body_width = page.evaluate("document.body.scrollWidth")
         viewport_width = page.evaluate("window.innerWidth")
         # Allow a small tolerance (5px) for scrollbar or rounding
-        assert (
-            body_width <= viewport_width + 5
-        ), f"Horizontal overflow detected: body={body_width}px > viewport={viewport_width}px"
+        assert body_width <= viewport_width + 5, (
+            f"Horizontal overflow detected: body={body_width}px > viewport={viewport_width}px"
+        )
 
     def test_mobile_menu_navigates_and_closes(self, page: Page, live_server) -> None:
         page.set_viewport_size(VIEWPORTS["mobile"])

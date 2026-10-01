@@ -38,7 +38,8 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-django>=4.5",
-    "ruff>=0.1.0",
+    "ruff==0.16.9",
+    "pytest-xdist>=3.6",
     "mypy>=1.0",
     "hypothesis>=6.60",
     "pre-commit>=3.0",
@@ -80,7 +81,7 @@ where = ["src"]
 include = ["catchment_simulation*"]
 
 [tool.setuptools.package-data]
-catchment_simulation = ["py.typed"]
+catchment_simulation = ["py.typed", "data/*.inp"]
 
 [tool.ruff]
 target-version = "py310"

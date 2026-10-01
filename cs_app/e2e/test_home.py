@@ -174,9 +174,9 @@ class TestHomeLayoutAndA11y:
         home = HomePage(page, live_server.url)
         home.navigate_to()
         home.wait_for_chart(home.hydrograph)
-        assert page.evaluate(
-            "document.documentElement.scrollWidth <= window.innerWidth"
-        ), "home page scrolls horizontally at 360px"
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), (
+            "home page scrolls horizontally at 360px"
+        )
 
     @pytest.mark.parametrize("scheme", ["light", "dark"])
     def test_no_serious_axe_violations(self, page: Page, live_server, scheme: str) -> None:

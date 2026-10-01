@@ -37,7 +37,7 @@ class TestRegressionArea:
     ) -> None:
         ref = reference_data["area"]
         df = simulation_instance.simulate_area(**ref["params"])
-        for actual, expected in zip(df["runoff"], ref["expected"]["runoff"]):
+        for actual, expected in zip(df["runoff"], ref["expected"]["runoff"], strict=True):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
 
     def test_area_peak_runoff_matches_reference(
@@ -45,7 +45,9 @@ class TestRegressionArea:
     ) -> None:
         ref = reference_data["area"]
         df = simulation_instance.simulate_area(**ref["params"])
-        for actual, expected in zip(df["peak_runoff_rate"], ref["expected"]["peak_runoff_rate"]):
+        for actual, expected in zip(
+            df["peak_runoff_rate"], ref["expected"]["peak_runoff_rate"], strict=True
+        ):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
 
     def test_area_infiltration_matches_reference(
@@ -53,7 +55,9 @@ class TestRegressionArea:
     ) -> None:
         ref = reference_data["area"]
         df = simulation_instance.simulate_area(**ref["params"])
-        for actual, expected in zip(df["infiltration"], ref["expected"]["infiltration"]):
+        for actual, expected in zip(
+            df["infiltration"], ref["expected"]["infiltration"], strict=True
+        ):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
 
 
@@ -65,7 +69,7 @@ class TestRegressionPercentImpervious:
     ) -> None:
         ref = reference_data["percent_impervious"]
         df = simulation_instance.simulate_percent_impervious(**ref["params"])
-        for actual, expected in zip(df["runoff"], ref["expected"]["runoff"]):
+        for actual, expected in zip(df["runoff"], ref["expected"]["runoff"], strict=True):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
 
     def test_imperv_peak_runoff_matches_reference(
@@ -73,7 +77,9 @@ class TestRegressionPercentImpervious:
     ) -> None:
         ref = reference_data["percent_impervious"]
         df = simulation_instance.simulate_percent_impervious(**ref["params"])
-        for actual, expected in zip(df["peak_runoff_rate"], ref["expected"]["peak_runoff_rate"]):
+        for actual, expected in zip(
+            df["peak_runoff_rate"], ref["expected"]["peak_runoff_rate"], strict=True
+        ):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
 
     def test_imperv_infiltration_matches_reference(
@@ -81,7 +87,9 @@ class TestRegressionPercentImpervious:
     ) -> None:
         ref = reference_data["percent_impervious"]
         df = simulation_instance.simulate_percent_impervious(**ref["params"])
-        for actual, expected in zip(df["infiltration"], ref["expected"]["infiltration"]):
+        for actual, expected in zip(
+            df["infiltration"], ref["expected"]["infiltration"], strict=True
+        ):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
 
 
@@ -93,7 +101,7 @@ class TestRegressionManningN:
     ) -> None:
         ref = reference_data["n_imperv"]
         df = simulation_instance.simulate_n_imperv()
-        for actual, expected in zip(df["runoff"], ref["expected"]["runoff"]):
+        for actual, expected in zip(df["runoff"], ref["expected"]["runoff"], strict=True):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
 
     def test_n_imperv_peak_runoff_matches_reference(
@@ -101,7 +109,9 @@ class TestRegressionManningN:
     ) -> None:
         ref = reference_data["n_imperv"]
         df = simulation_instance.simulate_n_imperv()
-        for actual, expected in zip(df["peak_runoff_rate"], ref["expected"]["peak_runoff_rate"]):
+        for actual, expected in zip(
+            df["peak_runoff_rate"], ref["expected"]["peak_runoff_rate"], strict=True
+        ):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
 
     def test_n_imperv_infiltration_constant(
@@ -109,5 +119,7 @@ class TestRegressionManningN:
     ) -> None:
         ref = reference_data["n_imperv"]
         df = simulation_instance.simulate_n_imperv()
-        for actual, expected in zip(df["infiltration"], ref["expected"]["infiltration"]):
+        for actual, expected in zip(
+            df["infiltration"], ref["expected"]["infiltration"], strict=True
+        ):
             assert actual == pytest.approx(expected, abs=TOLERANCE)
