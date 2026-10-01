@@ -101,6 +101,10 @@ FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
 SUBCATCHMENT_NOT_FOUND_MESSAGE = "Selected catchment was not found in the uploaded model."
 SWMM_FAILED_MESSAGE = "SWMM could not run the model"
+NO_RUNOFF_SUMMARY_MESSAGE = (
+    "SWMM computed no subcatchment runoff for this model: its report has no Subcatchment "
+    "Runoff Summary. Check that IGNORE_RAINFALL is not set to YES."
+)
 # SWMM can report an error for every bad line of the model; the page shows the first few.
 MAX_REPORTED_SWMM_ERRORS = 5
 # The sweep outputs the simulation page charts, tabulates and exports, in this order: the
@@ -539,6 +543,8 @@ def _format_input_error_message(error: InputValidationError) -> str:
         return "Invalid file path detected."
     if code == "no_subcatchments":
         return "The model has no subcatchments to compare."
+    if code == "no_runoff_summary":
+        return NO_RUNOFF_SUMMARY_MESSAGE
     if code == "missing_file":
         return "Input file is missing. Please upload the model again."
     if code == "encoding":
@@ -549,10 +555,16 @@ def _format_input_error_message(error: InputValidationError) -> str:
 
 
 def _uploaded_model_path(request: HttpRequest) -> str:
-    """Return the path of the model loaded in this session; there is no default model."""
+    """
+    Return the path of the model loaded in this session; there is no default model.
+
+    Only the upload views store the path, always inside the user's upload directory;
+    checking it again keeps every run on the user's own files, whatever the session holds.
+    """
     path = request.session.get("uploaded_file_path")
     if not path:
         raise InputValidationError("no_model")
+    _check_in_user_upload_dir(path, request.user.id)
     return path
 
 
@@ -1796,6 +1808,9 @@ def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
         subcatchments = swmmio_model.subcatchments.dataframe
         if subcatchments.empty:
             raise InputValidationError("no_subcatchments")
+        # swmmio reads TotalRunoffMG from the report, which lacks it when SWMM skipped runoff.
+        if "TotalRunoffMG" not in subcatchments.columns:
+            raise InputValidationError("no_runoff_summary")
         ann_predictions = predict_runoff(swmmio_model)
         factor, unit = _report_runoff_unit(_read_flow_units(inp_path))
         comparison = pd.DataFrame(
@@ -1863,7 +1878,6 @@ def _summarise_comparison(df: pd.DataFrame, unit: str) -> dict | None:
 def _run_comparison(request: HttpRequest) -> None:
     """Compare SWMM and ANN runoff on the session's model and store the result for the session."""
     uploaded_file_path = _uploaded_model_path(request)
-    _check_in_user_upload_dir(uploaded_file_path, request.user.id)
     comparison = _summarise_comparison(*_compare_swmm_and_ann(uploaded_file_path))
     _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
 

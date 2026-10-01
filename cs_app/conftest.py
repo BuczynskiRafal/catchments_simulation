@@ -21,6 +21,21 @@ def isolated_media_root(settings, tmp_path):
 
 
 @pytest.fixture
+def user_model(user):
+    """A copy of the sample model in ``user``'s upload directory, where an upload puts it."""
+    import shutil
+    from pathlib import Path
+
+    from django.conf import settings
+    from main.views import _user_upload_dir
+
+    path = Path(_user_upload_dir(user.id)) / "example.inp"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(Path(settings.BASE_DIR) / "data" / "example.inp", path)
+    return str(path)
+
+
+@pytest.fixture
 def db_access():
     from django.db import connection
 

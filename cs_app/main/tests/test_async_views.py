@@ -8,6 +8,7 @@ Run views (simulation, timeseries, calculations) answer requests sent with
 import json
 import os
 import re
+import uuid
 from types import SimpleNamespace
 
 import numpy as np
@@ -102,13 +103,12 @@ class CrashingFeaturesSimulation(DummyFeaturesSimulation):
 
 
 @pytest.fixture
-def run_client(client, user):
-    """Logged-in client whose session points at the bundled example model."""
+def run_client(client, user, user_model):
+    """Logged-in client whose session points at a copy of the sample model."""
     client.force_login(user)
-    uploaded_file_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
     session = client.session
-    session["uploaded_file_path"] = uploaded_file_path
-    session["_subcatchment_ids_file"] = uploaded_file_path
+    session["uploaded_file_path"] = user_model
+    session["_subcatchment_ids_file"] = user_model
     session["_subcatchment_ids"] = ["S1"]
     session.save()
     return client
@@ -703,6 +703,43 @@ def test_calculations_ajax_rejects_out_of_bounds_path(client, user):
     _assert_no_flash_on_next_page(
         client, reverse("main:calculations"), "Invalid file path detected."
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "post"),
+    [
+        ("main:simulation", SIMULATION_POST),
+        ("main:timeseries", TIMESERIES_SINGLE_POST),
+        ("main:calculations", {}),
+    ],
+)
+def test_every_run_refuses_a_model_outside_the_users_upload_dir(
+    client, user, monkeypatch, url_name, post
+):
+    """Each run checks the session's model path, so none runs another user's model."""
+    other_user = type(user).objects.create_user(username="other", password=uuid.uuid4().hex)
+    other_dir = _user_upload_dir(other_user.id)
+    os.makedirs(other_dir)
+    other_model = os.path.join(other_dir, "example.inp")
+    with open(other_model, "w", encoding="utf-8") as model_file:
+        model_file.write("[TITLE]\n[OPTIONS]\n")
+
+    def must_not_run(*_args, **_kwargs):
+        raise AssertionError("the model must not run")
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", must_not_run)
+    monkeypatch.setattr("main.views._compare_swmm_and_ann", must_not_run)
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = other_model
+    session["_subcatchment_ids_file"] = other_model
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    response = client.post(reverse(url_name), post, **AJAX)
+
+    _assert_json_error(response, 400, "Invalid file path detected.")
 
 
 @pytest.mark.django_db

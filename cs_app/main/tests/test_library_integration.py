@@ -2,13 +2,15 @@
 
 Stubs elsewhere keep the view tests fast; these run SWMM through the views, so a
 change in the package's result layout (column names, order) fails here instead of
-in production. Every model is a copy in ``tmp_path``: SWMM writes its report and
-output next to the model.
+in production. Every model is a copy in the user's upload directory, which the
+autouse ``isolated_media_root`` fixture puts in ``tmp_path``: the views run only
+models from there, and SWMM writes its report and output next to the model.
 """
 
 import json
 import os
 from io import BytesIO
+from pathlib import Path
 from typing import get_args
 
 import pandas as pd
@@ -27,6 +29,7 @@ from catchment_simulation import (
 from catchment_simulation.features import FEATURES
 from catchment_simulation.schemas import SimulationMethodParams, SimulationParams
 from main.views import (
+    NO_RUNOFF_SUMMARY_MESSAGE,
     SIM_RESULT_TOKEN_SESSION_KEY,
     SIMULATION_OUTPUT_COLUMNS,
     SUBCATCHMENT_NOT_FOUND_MESSAGE,
@@ -42,16 +45,22 @@ SAMPLE_MODEL = os.path.join(os.path.dirname(__file__), "..", "..", "data", "exam
 BROKEN_GAGE_LINE = ("S1               1                J1", "S1               RGX              J1")
 
 
+def _user_model_file(user, name: str) -> Path:
+    path = Path(_user_upload_dir(user.id)) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 @pytest.fixture
-def example_model(tmp_path):
-    path = tmp_path / "example.inp"
+def example_model(user):
+    path = _user_model_file(user, "example.inp")
     path.write_bytes(example_model_path().read_bytes())
     return path
 
 
 @pytest.fixture
-def broken_model(tmp_path):
-    path = tmp_path / "broken.inp"
+def broken_model(user):
+    path = _user_model_file(user, "broken.inp")
     text = example_model_path().read_text()
     assert BROKEN_GAGE_LINE[0] in text
     path.write_text(text.replace(*BROKEN_GAGE_LINE))
@@ -265,6 +274,29 @@ def test_failed_comparison_does_not_block_the_next_one(client, user):
     assert succeeded.status_code == 200
     assert "calculations-chart-data" in succeeded.content.decode()
     assert sorted(os.listdir(user_dir)) == ["broken.inp", "example.inp"]
+
+
+@pytest.mark.django_db
+def test_comparison_of_a_model_without_runoff_is_a_user_error(client, user):
+    """
+    With IGNORE_RAINFALL the model runs, but SWMM computes no runoff and its report has
+    no Subcatchment Runoff Summary: that is the model's problem (400), not a crash.
+    """
+    user_dir = _user_upload_dir(user.id)
+    os.makedirs(user_dir)
+    text = example_model_path().read_text()
+    ponding = "ALLOW_PONDING        NO\n"
+    assert ponding in text
+    model = os.path.join(user_dir, "no_rain.inp")
+    with open(model, "w") as model_file:
+        model_file.write(text.replace(ponding, ponding + "IGNORE_RAINFALL      YES\n"))
+
+    _login_with_model(client, user, model)
+    response = client.post(reverse("main:calculations"), **AJAX)
+
+    assert response.status_code == 400
+    assert response.json()["message"] == NO_RUNOFF_SUMMARY_MESSAGE
+    assert os.listdir(user_dir) == ["no_rain.inp"]
 
 
 # ---------------------------------------------------------------------------

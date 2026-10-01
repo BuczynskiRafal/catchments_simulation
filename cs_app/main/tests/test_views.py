@@ -286,10 +286,10 @@ def test_simulation_view_ignores_none_numeric_values_in_saved_state(client, user
 
 
 @pytest.mark.django_db
-def test_simulation_view_post_range_persists_form_state(client, user, monkeypatch):
+def test_simulation_view_post_range_persists_form_state(client, user, user_model, monkeypatch):
     """Successful simulation POST stores selections for subsequent GET requests."""
     client.force_login(user)
-    uploaded_file_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
+    uploaded_file_path = user_model
     session = client.session
     session["uploaded_file_path"] = uploaded_file_path
     session["_subcatchment_ids_file"] = uploaded_file_path
@@ -364,8 +364,9 @@ def test_simulation_view_post_uses_fallback_labels_when_flow_units_missing(
     """Missing FLOW_UNITS source should still produce readable fallback labels."""
     client.force_login(user)
     session = client.session
-    session["uploaded_file_path"] = "uploaded_files/missing_flow_units.inp"
-    session["_subcatchment_ids_file"] = "uploaded_files/missing_flow_units.inp"
+    model_path = os.path.join(_user_upload_dir(user.id), "missing_flow_units.inp")
+    session["uploaded_file_path"] = model_path
+    session["_subcatchment_ids_file"] = model_path
     session["_subcatchment_ids"] = ["S1"]
     session.save()
 
@@ -435,8 +436,9 @@ def test_simulation_view_validation_error_shows_human_message(client, user, monk
     """Input-related ValueError should be shown as friendly flash message."""
     client.force_login(user)
     session = client.session
-    session["uploaded_file_path"] = "uploaded_files/test.inp"
-    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    model_path = os.path.join(_user_upload_dir(user.id), "test.inp")
+    session["uploaded_file_path"] = model_path
+    session["_subcatchment_ids_file"] = model_path
     session["_subcatchment_ids"] = ["S1"]
     session.save()
 
@@ -466,8 +468,9 @@ def test_simulation_view_rejects_oversized_cached_payload(client, user, monkeypa
     """Oversized simulation payload should not be stored in cache/session token."""
     client.force_login(user)
     session = client.session
-    session["uploaded_file_path"] = "uploaded_files/test.inp"
-    session["_subcatchment_ids_file"] = "uploaded_files/test.inp"
+    model_path = os.path.join(_user_upload_dir(user.id), "test.inp")
+    session["uploaded_file_path"] = model_path
+    session["_subcatchment_ids_file"] = model_path
     session["_subcatchment_ids"] = ["S1"]
     session.save()
 
@@ -1625,10 +1628,10 @@ def test_timeseries_view_clears_unavailable_catchment_in_saved_state(client, use
 
 
 @pytest.mark.django_db
-def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatch):
+def test_timeseries_view_post_sweep_persists_form_state(client, user, user_model, monkeypatch):
     """Successful sweep POST stores form selections for subsequent GET requests."""
     client.force_login(user)
-    uploaded_file_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
+    uploaded_file_path = user_model
     session = client.session
     session["uploaded_file_path"] = uploaded_file_path
     session["_subcatchment_ids_file"] = uploaded_file_path
@@ -1707,10 +1710,10 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
 
 
 @pytest.mark.django_db
-def test_timeseries_view_post_single_adds_axis_labels(client, user, monkeypatch):
+def test_timeseries_view_post_single_adds_axis_labels(client, user, user_model, monkeypatch):
     """Single-mode timeseries payload should include chart axis labels and units."""
     client.force_login(user)
-    uploaded_file_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
+    uploaded_file_path = user_model
     session = client.session
     session["uploaded_file_path"] = uploaded_file_path
     session["_subcatchment_ids_file"] = uploaded_file_path
