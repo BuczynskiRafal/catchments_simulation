@@ -88,10 +88,12 @@ statistics.
 | `simulate_n_perv()`, `simulate_manning_n("Perv")`      | `N-Perv`                 | Manning's n     | 15 values, 0.011 to 0.8 ¹            |
 | `simulate_s_imperv()`, `simulate_destore("Imperv")`    | `S-Imperv`               | mm / in         | 1.27, 2.54, 5.08, 7.62 mm ²          |
 | `simulate_s_perv()`, `simulate_destore("Perv")`        | `S-Perv`                 | mm / in         | 1.27, 2.54, 5.08, 7.62 mm ²          |
-| `simulate_subcatchment(feature, start, stop, step)`    | any of the above         | as above        | 0 to 100, step 10                    |
+| `simulate_subcatchment(feature, start, stop, step)`    | any of the above         | as above        | 0 to 100, step 10 ³                  |
 
 ¹ `FeaturesSimulation.MANNING_N` maps each value to its surface, from
 McCuen et al. (1996). ² 0.05, 0.1, 0.2 and 0.3 in for US models (ASCE, 1992).
+³ Pass a `start` inside the feature's physical range: 0 is rejected for
+`Area`, `Width`, `PercSlope`, `N-Imperv` and `N-Perv`.
 
 A range is `start, start + step, ...` and never goes past `stop`; `stop` is
 included when it falls on the step grid. Every value is checked against the
