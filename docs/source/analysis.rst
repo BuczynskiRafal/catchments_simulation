@@ -1,6 +1,5 @@
-Analysis Module
-================
+Hydrograph analysis
+===================
+
 .. automodule:: catchment_simulation.analysis
    :members:
-   :undoc-members:
-   :show-inheritance:
