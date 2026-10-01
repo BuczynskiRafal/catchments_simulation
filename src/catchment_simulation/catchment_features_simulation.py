@@ -1,41 +1,103 @@
-"""Package include method for simulate subcatchment with different
-features values from Storm Water Management Model"""
+"""Sensitivity sweeps of SWMM subcatchment features.
+
+:class:`FeaturesSimulation` runs a SWMM model repeatedly, each time with one
+feature of one subcatchment set to a different value, and collects that
+subcatchment's runoff statistics or hydrographs.
+"""
 
 from __future__ import annotations
 
 import os
-from typing import Any
+import shutil
+import tempfile
+import warnings
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from types import TracebackType
+from typing import Any, Literal, TypeVar
+from uuid import uuid4
 
-import numpy as np
 import pandas as pd
 import swmmio
 from pyswmm import Simulation, Subcatchments
+from pyswmm.errors import MultiSimulationError
+from pyswmm.swmm5 import PySWMM
+from swmmio.utils.modify_model import replace_inp_section
 
-from .schemas import SimulationParams
+from .exceptions import InvalidParameterError, SimulationError, SubcatchmentNotFoundError
+from .features import FEATURES, Feature, build_range, validate_feature, validate_values
+
+T = TypeVar("T")
+
+Surface = Literal["Imperv", "Perv"]
+_SURFACES: tuple[Surface, ...] = ("Imperv", "Perv")
+
+US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
+"""``FLOW_UNITS`` values for which SWMM uses US customary units."""
 
 
 class FeaturesSimulation:
-    """
-    A class to simulate subcatchments with different features using the Storm Water Management Model (SWMM).
+    """Sweep the features of one subcatchment of a SWMM model.
+
+    Every public call copies the model to a uniquely named working file next to
+    the source, so relative ``FILE`` references in the model keep resolving,
+    runs SWMM on the copy and deletes the copy, its report and its output
+    before returning. The source file is never modified and every call starts
+    from it, so a result never depends on earlier calls. If the source
+    directory is not writable, the copy goes to the system temp directory,
+    where relative ``FILE`` references cannot resolve; SWMM's error then
+    surfaces as :class:`SimulationError`.
+
+    SWMM runs one simulation per process at a time: an instance is not
+    thread-safe, and parallel sweeps need separate processes.
+
+    Units follow the model's ``FLOW_UNITS`` (see :attr:`flow_units`). With US
+    units (CFS, GPM, MGD) areas are in acres, widths and curb lengths in feet,
+    depths in inches and volumes in cubic feet; with SI units (CMS, LPS, MLD)
+    they are in hectares, metres, millimetres and cubic metres.
 
     Parameters
     ----------
     subcatchment_id : str
-        The identifier of the subcatchment being simulated.
+        ID of the subcatchment to vary and report on.
+    raw_file : str or os.PathLike
+        Path of the SWMM input (``.inp``) file.
+
+    Attributes
+    ----------
+    subcatchment_id : str
+        The subcatchment ID.
     raw_file : str
-        The path to the raw SWMM input file.
+        The model path as given.
+    flow_units : str
+        The model's ``FLOW_UNITS``; ``"CFS"``, SWMM's default, when unset.
 
     Raises
     ------
     FileNotFoundError
-        If the raw_file does not exist.
-    ValueError
-        If the subcatchment_id does not exist in the SWMM model.
+        If *raw_file* does not exist.
+    SubcatchmentNotFoundError
+        If the model has no subcatchment *subcatchment_id*.
+
+    Examples
+    --------
+    >>> from catchment_simulation import FeaturesSimulation, example_model_path
+    >>> sim = FeaturesSimulation("S1", example_model_path())
+    >>> sim.simulate_percent_impervious(0, 100, 25).columns.tolist()[:3]
+    ['PercImperv', 'runoff', 'peak_runoff_rate']
     """
 
     SWMM_SIDE_EXTENSIONS: tuple[str, ...] = (".inp", ".rpt", ".out")
 
-    RESULT_KEYS: tuple[str, ...] = ("runoff", "peak_runoff_rate", "infiltration", "evaporation")
+    RESULT_KEYS: tuple[str, ...] = (
+        "runoff",
+        "peak_runoff_rate",
+        "infiltration",
+        "evaporation",
+        "precipitation",
+        "runon",
+    )
     TIMESERIES_KEYS: tuple[str, ...] = (
         "rainfall",
         "runoff",
@@ -45,55 +107,47 @@ class FeaturesSimulation:
     )
 
     # Source: McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC.
-    MANNING_N_VALUES: tuple[float, ...] = tuple(
-        sorted(
-            [
-                0.011,
-                0.012,
-                0.013,
-                0.014,
-                0.015,
-                0.024,
-                0.05,
-                0.06,
-                0.17,
-                0.13,
-                0.15,
-                0.24,
-                0.41,
-                0.4,
-                0.8,
-            ]
-        )
-    )
+    MANNING_N: dict[str, float] = {
+        "smooth asphalt": 0.011,
+        "smooth concrete": 0.012,
+        "ordinary concrete lining": 0.013,
+        "good wood, brick with cement mortar": 0.014,
+        "vitrified clay, cast iron": 0.015,
+        "corrugated metal pipe, cement rubble surface": 0.024,
+        "fallow soil (no residue)": 0.05,
+        "cultivated soil, residue cover <= 20%": 0.06,
+        "natural range": 0.13,
+        "short prairie grass": 0.15,
+        "cultivated soil, residue cover > 20%": 0.17,
+        "dense grass": 0.24,
+        "woods, light underbrush": 0.4,
+        "Bermuda grass": 0.41,
+        "woods, dense underbrush": 0.8,
+    }
+    MANNING_N_VALUES: tuple[float, ...] = tuple(MANNING_N.values())
 
     # Source: ASCE (1992), Design & Construction of Urban Stormwater Management Systems, New York, NY.
-    # Values in mm (converted from inches: 0.05, 0.1, 0.2, 0.3)
+    DEPRESSION_STORAGE_VALUES_IN: tuple[float, ...] = (0.05, 0.1, 0.2, 0.3)
     DEPRESSION_STORAGE_VALUES: tuple[float, ...] = tuple(
-        val * 25.4 for val in [0.05, 0.1, 0.2, 0.3]
+        val * 25.4 for val in DEPRESSION_STORAGE_VALUES_IN
     )
+    """Depression storage depths in mm, converted from :attr:`DEPRESSION_STORAGE_VALUES_IN`."""
 
-    @staticmethod
-    def _create_result_dict() -> dict[str, list[Any]]:
-        """Create an empty result dictionary with standard keys."""
-        return {key: [] for key in FeaturesSimulation.RESULT_KEYS}
-
-    def __init__(self, subcatchment_id: str, raw_file: str) -> None:
-        self.raw_file = raw_file
+    def __init__(self, subcatchment_id: str, raw_file: str | os.PathLike[str]) -> None:
         self.subcatchment_id = subcatchment_id
-        self._temp_files: list[str] = []
-        try:
-            self.file = self.copy_file(copy=self.raw_file)
-            self.model = swmmio.Model(self.file)
-            available_ids = list(self.model.inp.subcatchments.index)
-            if subcatchment_id not in available_ids:
-                raise ValueError(
-                    f"Subcatchment '{subcatchment_id}' not found in model. "
-                    f"Available subcatchments: {available_ids}"
-                )
-        except Exception:
-            self._cleanup_temp_files()
-            raise
+        self.raw_file = os.fspath(raw_file)
+        self._source = Path(raw_file).resolve(strict=True)
+        self._copies: list[Path] = []
+        inp = swmmio.Model(str(self._source)).inp
+        self._pristine: dict[str, pd.DataFrame] = {
+            attribute: getattr(inp, attribute).copy()
+            for attribute in {spec.attribute for spec in FEATURES.values()}
+        }
+        options = inp.options["Value"]
+        self.flow_units = str(options.get("FLOW_UNITS", "CFS")).upper()
+        available = [str(name) for name in self._pristine["subcatchments"].index]
+        if subcatchment_id not in available:
+            raise SubcatchmentNotFoundError(subcatchment_id, available)
 
     def __enter__(self) -> FeaturesSimulation:
         return self
@@ -102,445 +156,630 @@ class FeaturesSimulation:
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: Any,
+        exc_tb: TracebackType | None,
     ) -> None:
-        self._cleanup_temp_files()
+        self.close()
 
-    def _cleanup_temp_files(self) -> None:
-        """Remove all temporary files created during simulation."""
-        for temp_file in self._temp_files:
-            base = os.path.splitext(temp_file)[0]
-            for ext in self.SWMM_SIDE_EXTENSIONS:
-                try:
-                    os.remove(base + ext)
-                except OSError:
-                    pass
-        self._temp_files.clear()
+    def close(self) -> None:
+        """Delete the files made by the deprecated :meth:`copy_file`.
 
-    @staticmethod
-    def _validate_simulation_params(start: float, stop: float, step: float) -> SimulationParams:
-        """Validate simulation parameters using Pydantic schema.
+        Working files never outlive a call, so neither ``close()`` nor a
+        ``with`` block is required. Calling it again does nothing, and the
+        instance stays usable.
+        """
+        for copy in self._copies:
+            _remove_swmm_files(copy)
+        self._copies.clear()
 
-        Returns the validated ``SimulationParams`` instance so callers can
-        use the coerced values if needed.
+    # --- running SWMM -----------------------------------------------------------------------
+
+    @contextmanager
+    def _working_copy(self) -> Iterator[Path]:
+        """Yield a fresh copy of the source model; delete it and its SWMM outputs afterwards."""
+        work = self._source.with_name(f"{self._source.stem}.cs-{uuid4().hex[:8]}.inp")
+        try:
+            shutil.copyfile(self._source, work)
+        except OSError:
+            _remove_swmm_files(work)
+            work = Path(tempfile.gettempdir()) / work.name
+            shutil.copyfile(self._source, work)
+        try:
+            yield work
+        finally:
+            _remove_swmm_files(work)
+
+    def _run(
+        self, inp: Path, on_step: Callable[[Any, Any], None] | None = None
+    ) -> dict[str, float]:
+        """Run SWMM on *inp* and return the subcatchment's statistics.
+
+        *on_step* is called with the simulation and the subcatchment after
+        every routing step.
+        """
+        report = inp.with_suffix(".rpt")
+        try:
+            with _open_simulation(inp, report) as sim:
+                subcatchment = Subcatchments(sim)[self.subcatchment_id]
+                for _ in sim:
+                    if on_step is not None:
+                        on_step(sim, subcatchment)
+                statistics: dict[str, float] = subcatchment.statistics
+        except Exception as exc:
+            errors = _report_errors(report)
+            message = f"SWMM failed to run {self._source.name}"
+            if not errors:
+                message += f": {str(exc).strip() or type(exc).__name__}"
+            raise SimulationError(message, errors) from exc
+        return statistics
+
+    def _timeseries(self, inp: Path) -> pd.DataFrame:
+        times: list[Any] = []
+        rows: list[list[float]] = []
+
+        def record(sim: Any, subcatchment: Any) -> None:
+            times.append(sim.current_time)
+            rows.append([getattr(subcatchment, key) for key in self.TIMESERIES_KEYS])
+
+        self._run(inp, record)
+        return pd.DataFrame(
+            rows,
+            columns=list(self.TIMESERIES_KEYS),
+            index=pd.DatetimeIndex(times, name="datetime"),
+        )
+
+    def _sweep(
+        self, feature: str, values: Iterable[float], run: Callable[[Path], T]
+    ) -> tuple[Feature, list[float], list[T]]:
+        """Run *run* once per value with *feature* of the subcatchment set to that value.
+
+        Every value is validated before the first run, and every sweep starts
+        from the source model.
+        """
+        name = validate_feature(feature)
+        checked = validate_values(name, values)
+        spec = FEATURES[name]
+        section = self._pristine[spec.attribute].copy()
+        section[name] = section[name].astype(float)
+        results = []
+        with self._working_copy() as work:
+            for value in checked:
+                section.loc[self.subcatchment_id, name] = value
+                replace_inp_section(str(work), spec.section, section)
+                results.append(run(work))
+        return name, checked, results
+
+    # --- single runs ------------------------------------------------------------------------
+
+    def calculate(self) -> dict[str, float]:
+        """Run the unmodified model and return the subcatchment's statistics.
+
+        Before 0.1.0 a call after a sweep ran the last swept value; it now
+        always runs the model as it is on disk.
+
+        Returns
+        -------
+        dict of str to float
+            ``runoff``, ``infiltration``, ``evaporation`` and ``runon`` are
+            total volumes (m³ or ft³), ``peak_runoff_rate`` is in the model's
+            flow units and ``precipitation`` is the total depth (mm or in).
 
         Raises
         ------
-        pydantic.ValidationError
-            If any parameter violates its constraints.
+        SimulationError
+            If SWMM fails to run the model.
         """
-        return SimulationParams(start=start, stop=stop, step=step)
-
-    def copy_file(self, copy: str | None = None, suffix: str = "copy") -> str:
-        """
-        Create a copy of a SWMM input file with a suffix added to the end of the file name.
-
-        Parameters
-        ----------
-        copy : str, optional
-            The path to the file you want to copy. If not specified, it will use the raw_file.
-        suffix : str, optional
-            The suffix to add to the end of the file name, defaults to 'copy'.
-
-        Returns
-        -------
-        str
-            The new path of the copied file.
-        """
-        if copy is None:
-            copy = self.raw_file
-        baseline = swmmio.Model(copy)
-        new_path: str = os.path.join(baseline.inp.name + "_" + suffix + ".inp")
-        baseline.inp.save(new_path)
-        self._temp_files.append(new_path)
-        return new_path
-
-    def get_section(self, section: str = "subcatchments") -> pd.DataFrame:
-        """
-        Get a specified section from a SWMM input file as a pandas DataFrame.
-
-        Parameters
-        ----------
-        section : str, optional
-            The name of the section you want to get, defaults to 'subcatchments'.
-
-        Returns
-        -------
-        pd.DataFrame
-            The section of the inp file as a pandas DataFrame.
-        """
-        return getattr(swmmio.Model(self.file).inp, section)
-
-    def calculate(self) -> dict[str, Any]:
-        """
-        Run a simulation using the SWMM model and return the statistics of the subcatchment with the
-        ID `self.subcatchment_id`.
-
-        Returns
-        -------
-        dict
-            The statistics of the subcatchment.
-        """
-        with Simulation(self.file) as sim:
-            subcatchment = Subcatchments(sim)[self.subcatchment_id]
-            for _ in sim:
-                pass
-            result: dict[str, Any] = subcatchment.statistics
-            return result
+        with self._working_copy() as work:
+            return self._run(work)
 
     def calculate_timeseries(self) -> pd.DataFrame:
-        """Run a simulation and collect per-timestep data for the subcatchment.
+        """Run the unmodified model and return the subcatchment's hydrograph.
 
         Returns
         -------
-        pd.DataFrame
-            DataFrame with a ``DatetimeIndex`` (name ``"datetime"``) and columns
-            corresponding to ``TIMESERIES_KEYS``, in SWMM's reporting units:
-            ``rainfall`` and ``infiltration_loss`` in mm/h (in/h for US-unit
-            models), ``evaporation_loss`` in mm/day (in/day), ``runoff`` and
-            ``runon`` in the model's ``FLOW_UNITS``.
+        pandas.DataFrame
+            One row per routing step, indexed by a ``DatetimeIndex`` named
+            ``"datetime"`` (the end of each step), with the columns of
+            :attr:`TIMESERIES_KEYS`: ``rainfall`` and ``infiltration_loss`` in
+            mm/h (in/h), ``evaporation_loss`` in mm/day (in/day), ``runoff``
+            and ``runon`` in the model's flow units.
+
+        Raises
+        ------
+        SimulationError
+            If SWMM fails to run the model.
         """
-        records: list[dict[str, Any]] = []
-        with Simulation(self.file) as sim:
-            subcatchment = Subcatchments(sim)[self.subcatchment_id]
-            for step in sim:  # noqa: B007
-                records.append(
-                    {
-                        "datetime": sim.current_time,
-                        **{key: getattr(subcatchment, key) for key in self.TIMESERIES_KEYS},
-                    }
-                )
-        if not records:
-            df = pd.DataFrame(columns=list(self.TIMESERIES_KEYS))
-            df.index.name = "datetime"
-            return df
-        df = pd.DataFrame(records)
-        df = df.set_index("datetime")
-        return df
+        with self._working_copy() as work:
+            return self._timeseries(work)
+
+    # --- sweeps -----------------------------------------------------------------------------
+
+    def simulate(self, feature: Feature, values: Iterable[float]) -> pd.DataFrame:
+        """Run the model once per value of *feature* and collect the statistics.
+
+        Parameters
+        ----------
+        feature : Feature
+            The SWMM column to vary, e.g. ``"Width"`` or ``"N-Imperv"``.
+        values : iterable of float
+            The values to run, in the model's units (see the class docstring).
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per value, with the *feature* column first and then the
+            :attr:`RESULT_KEYS` columns, in the units of :meth:`calculate`.
+
+        Raises
+        ------
+        UnknownFeatureError
+            If *feature* is not a sweepable feature.
+        InvalidParameterError
+            If *values* is empty or a value is outside the feature's physical
+            range; raised before any run.
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        name, checked, statistics = self._sweep(feature, values, self._run)
+        frame = pd.DataFrame(
+            [[stats[key] for key in self.RESULT_KEYS] for stats in statistics],
+            columns=list(self.RESULT_KEYS),
+        )
+        frame.insert(0, name, checked)
+        return frame
+
+    def simulate_timeseries(
+        self, feature: Feature, values: Iterable[float]
+    ) -> dict[float, pd.DataFrame]:
+        """Run the model once per value of *feature* and collect the hydrographs.
+
+        Parameters
+        ----------
+        feature : Feature
+            The SWMM column to vary.
+        values : iterable of float
+            The values to run, in the model's units.
+
+        Returns
+        -------
+        dict of float to pandas.DataFrame
+            Each value mapped to its hydrograph, shaped as in
+            :meth:`calculate_timeseries`.
+
+        Raises
+        ------
+        UnknownFeatureError
+            If *feature* is not a sweepable feature.
+        InvalidParameterError
+            If *values* is empty or a value is outside the feature's physical
+            range; raised before any run.
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        _, checked, series = self._sweep(feature, values, self._timeseries)
+        return dict(zip(checked, series, strict=True))
 
     def simulate_subcatchment(
-        self, feature: str, start: float = 0, stop: float = 100, step: float = 10
+        self, feature: Feature, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
-        """
-        Simulate a subcatchment with varying feature values using the SWMM model.
+        """Sweep *feature* over ``start, start + step, ...`` up to *stop*.
 
         Parameters
         ----------
-        feature : str
-            The name of the parameter to be varied in the simulation.
+        feature : Feature
+            The SWMM column to vary.
         start : float, optional
-            The starting value of the parameter, defaults to 0.
+            First value, defaults to 0.
         stop : float, optional
-            The maximum value of the parameter to be simulated, defaults to 100.
+            Largest value; included when it lies on the step grid. Defaults to 100.
         step : float, optional
-            The step size for the simulation, defaults to 10.
+            Spacing, defaults to 10.
 
         Returns
         -------
-        pd.DataFrame
-            A DataFrame containing the results of the simulation.
-        """
-        self._validate_simulation_params(start, stop, step)
-        self.file = self.copy_file(self.raw_file)
-        catchment_data = self._create_result_dict()
-        scope = np.arange(start, stop + step / 2, step)
+        pandas.DataFrame
+            As :meth:`simulate`.
 
-        for percent in scope:
-            subcatchment = self.model.inp.subcatchments
-            subcatchment[feature] = subcatchment[feature].astype(float)
-            subcatchment.loc[self.subcatchment_id, feature] = percent
-            swmmio.utils.modify_model.replace_inp_section(
-                self.file, "[SUBCATCHMENTS]", subcatchment
-            )
-            subcatchment_stats = self.calculate()
-            for key in catchment_data:
-                catchment_data[key].append(subcatchment_stats[key])
-        catchment_data[feature] = scope.tolist()
-        return pd.DataFrame(data=catchment_data)
+        Raises
+        ------
+        InvalidParameterError
+            If the range is invalid (see :func:`~catchment_simulation.build_range`)
+            or leaves the feature's physical range.
+        UnknownFeatureError
+            If *feature* is not a sweepable feature.
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        return self.simulate(feature, build_range(start, stop, step))
 
     def simulate_subcatchment_timeseries(
-        self, feature: str, start: float = 0, stop: float = 100, step: float = 10
+        self, feature: Feature, start: float = 0, stop: float = 100, step: float = 10
     ) -> dict[float, pd.DataFrame]:
-        """Simulate a subcatchment with varying feature values, collecting timeseries.
-
-        Works like :meth:`simulate_subcatchment` but returns per-timestep data
-        instead of summary statistics.
+        """Sweep *feature* over ``start, start + step, ...`` up to *stop*, collecting hydrographs.
 
         Parameters
         ----------
-        feature : str
-            The name of the parameter to be varied in the simulation.
-        start : float, optional
-            The starting value of the parameter, defaults to 0.
-        stop : float, optional
-            The maximum value of the parameter to be simulated, defaults to 100.
-        step : float, optional
-            The step size for the simulation, defaults to 10.
+        feature : Feature
+            The SWMM column to vary.
+        start, stop, step : float, optional
+            The range, in the feature's units, defaults 0, 100, 10; see
+            :meth:`simulate_subcatchment`.
 
         Returns
         -------
-        dict[float, pd.DataFrame]
-            Mapping of parameter values to DataFrames with timeseries data, shaped
-            and in the units described in ``calculate_timeseries``.
-        """
-        self._validate_simulation_params(start, stop, step)
-        self.file = self.copy_file(self.raw_file)
-        scope = np.arange(start, stop + step / 2, step)
-        results: dict[float, pd.DataFrame] = {}
+        dict of float to pandas.DataFrame
+            Each range value mapped to its hydrograph, shaped as in
+            :meth:`calculate_timeseries`. The keys are rounded to 10 decimal
+            places, so ``results[0.3]`` works.
 
-        for percent in scope:
-            subcatchment = self.model.inp.subcatchments
-            subcatchment[feature] = subcatchment[feature].astype(float)
-            subcatchment.loc[self.subcatchment_id, feature] = percent
-            swmmio.utils.modify_model.replace_inp_section(
-                self.file, "[SUBCATCHMENTS]", subcatchment
-            )
-            results[float(percent)] = self.calculate_timeseries()
-        return results
+        Raises
+        ------
+        InvalidParameterError
+            If the range is invalid or leaves the feature's physical range.
+        UnknownFeatureError
+            If *feature* is not a sweepable feature.
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        return self.simulate_timeseries(feature, build_range(start, stop, step))
 
     def simulate_area(self, start: float = 1, stop: float = 10, step: float = 1) -> pd.DataFrame:
-        """
-        Simulate the area of the subcatchment within a specified range of values.
+        """Sweep the subcatchment area.
 
         Parameters
         ----------
-        start : float, optional
-            The starting value of the area to be varied, defaults to 1.
-        stop : float, optional
-            The maximum value of the area to be simulated, defaults to 10.
-        step : float, optional
-            The step size for the simulation, defaults to 1.
+        start, stop, step : float, optional
+            Range of areas in hectares (acres for US units), defaults 1, 10, 1. *stop* is
+            included when it lies on the step grid.
 
         Returns
         -------
-        pd.DataFrame
-            A DataFrame containing the results of the simulation.
+        pandas.DataFrame
+            The ``"Area"`` column, then :attr:`RESULT_KEYS`; see :meth:`simulate`.
+
+        Raises
+        ------
+        InvalidParameterError
+            If the range is invalid or includes an area <= 0; raised before any run.
+        SimulationError
+            If SWMM fails to run the model.
         """
-        return self.simulate_subcatchment(feature="Area", start=start, stop=stop, step=step)
+        return self.simulate_subcatchment("Area", start, stop, step)
 
     def simulate_percent_impervious(
         self, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
-        """
-        Simulate the percent impervious of a subcatchment within a specified range of values.
+        """Sweep the percentage of the subcatchment that is impervious.
 
         Parameters
         ----------
-        start : float, optional
-            The starting value of the percent impervious to be varied, defaults to 0.
-        stop : float, optional
-            The maximum value of the percent impervious to be simulated, defaults to 100.
-        step : float, optional
-            The step size for the simulation, defaults to 10.
+        start, stop, step : float, optional
+            Range of percentages in [0, 100], defaults 0, 100, 10. *stop* is
+            included when it lies on the step grid.
 
         Returns
         -------
-        pd.DataFrame
-            A DataFrame containing the results of the simulation.
+        pandas.DataFrame
+            The ``"PercImperv"`` column, then :attr:`RESULT_KEYS`; see :meth:`simulate`.
+
+        Raises
+        ------
+        InvalidParameterError
+            If the range is invalid or includes a value outside [0, 100]; raised before any run.
+        SimulationError
+            If SWMM fails to run the model.
         """
-        return self.simulate_subcatchment(feature="PercImperv", start=start, stop=stop, step=step)
+        return self.simulate_subcatchment("PercImperv", start, stop, step)
 
     def simulate_percent_slope(
-        self, start: float = 0, stop: float = 100, step: float = 10
+        self, start: float = 10, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
-        """
-        Simulate the percent slope of a subcatchment within a specified range of values.
+        """Sweep the average surface slope.
 
         Parameters
         ----------
-        start : float, optional
-            The starting value of the percent slope to be varied, defaults to 0.
-        stop : float, optional
-            The maximum value of the percent slope to be simulated, defaults to 100.
-        step : float, optional
-            The step size for the simulation, defaults to 10.
+        start, stop, step : float, optional
+            Range of slopes in percent, in (0, 100], defaults 10, 100, 10. *stop* is
+            included when it lies on the step grid.
 
         Returns
         -------
-        pd.DataFrame
-            A DataFrame containing the results of the simulation.
-        """
-        return self.simulate_subcatchment(feature="PercSlope", start=start, stop=stop, step=step)
+        pandas.DataFrame
+            The ``"PercSlope"`` column, then :attr:`RESULT_KEYS`; see :meth:`simulate`.
 
-    def simulate_width(self, start: float = 0, stop: float = 100, step: float = 10) -> pd.DataFrame:
+        Raises
+        ------
+        InvalidParameterError
+            If the range is invalid or includes a value outside (0, 100]; raised before any run.
+        SimulationError
+            If SWMM fails to run the model.
         """
-        Simulate the width of a subcatchment within a specified range of values.
+        return self.simulate_subcatchment("PercSlope", start, stop, step)
+
+    def simulate_width(
+        self, start: float = 10, stop: float = 100, step: float = 10
+    ) -> pd.DataFrame:
+        """Sweep the characteristic width of the overland flow path.
 
         Parameters
         ----------
-        start : float, optional
-            The starting value of the width to be varied, defaults to 0.
-        stop : float, optional
-            The maximum value of the width to be simulated, defaults to 100.
-        step : float, optional
-            The step size for the simulation, defaults to 10.
+        start, stop, step : float, optional
+            Range of widths in metres (feet for US units), defaults 10, 100, 10. *stop* is
+            included when it lies on the step grid.
 
         Returns
         -------
-        pd.DataFrame
-            A DataFrame containing the results of the simulation.
+        pandas.DataFrame
+            The ``"Width"`` column, then :attr:`RESULT_KEYS`; see :meth:`simulate`.
+
+        Raises
+        ------
+        InvalidParameterError
+            If the range is invalid or includes a width <= 0; raised before any run.
+        SimulationError
+            If SWMM fails to run the model.
         """
-        return self.simulate_subcatchment(feature="Width", start=start, stop=stop, step=step)
+        return self.simulate_subcatchment("Width", start, stop, step)
 
     def simulate_curb_length(
         self, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
-        """
-        Simulate the curb length of a subcatchment within a specified range of values.
+        """Sweep the total curb length, which only affects pollutant build-up.
 
         Parameters
         ----------
-        start : float, optional
-            The starting value of the curb length to be varied, defaults to 0.
-        stop : float, optional
-            The maximum value of the curb length to be simulated, defaults to 100.
-        step : float, optional
-            The step size for the simulation, defaults to 10.
+        start, stop, step : float, optional
+            Range of lengths in metres (feet for US units), defaults 0, 100, 10. *stop* is
+            included when it lies on the step grid.
 
         Returns
         -------
-        pd.DataFrame
-            A DataFrame containing the results of the simulation.
+        pandas.DataFrame
+            The ``"CurbLength"`` column, then :attr:`RESULT_KEYS`; see :meth:`simulate`.
+
+        Raises
+        ------
+        InvalidParameterError
+            If the range is invalid or includes a negative length; raised before any run.
+        SimulationError
+            If SWMM fails to run the model.
         """
-        return self.simulate_subcatchment(feature="CurbLength", start=start, stop=stop, step=step)
-
-    def simulate_manning_n(self, param: str) -> pd.DataFrame:
-        """
-        Simulate a subcatchment using various Manning's n values.
-
-        Parameters
-        ----------
-        param : str
-            The name of the feature for which Manning's n values should be varied.
-
-        Returns
-        -------
-        pd.DataFrame
-            A DataFrame containing the results of the simulation.
-        """
-        self.file = self.copy_file(self.raw_file)
-        catchment_data = self._create_result_dict()
-        for n in self.MANNING_N_VALUES:
-            subareas = self.model.inp.subareas
-            col = "N-" + param
-            subareas[col] = subareas[col].astype(float)
-            subareas.loc[self.subcatchment_id, col] = n
-            self.model.inp.subareas = subareas
-            swmmio.utils.modify_model.replace_inp_section(self.file, "[SUBAREAS]", subareas)
-            catchment_stats = self.calculate()
-            for key in catchment_data:
-                catchment_data[key].append(catchment_stats[key])
-        catchment_data["N-" + param] = list(self.MANNING_N_VALUES)
-        return pd.DataFrame(data=catchment_data)
-
-    def simulate_n_imperv(self) -> pd.DataFrame:
-        """
-        Simulate Manning's n for impervious area.
-
-        Returns
-        -------
-        pd.DataFrame
-            A DataFrame with the simulated values of Manning's n for the impervious area.
-        """
-        return self.simulate_manning_n(param="Imperv")
-
-    def simulate_n_perv(self) -> pd.DataFrame:
-        """
-        Simulate Manning's n for pervious area.
-
-        Returns
-        -------
-        pd.DataFrame
-            A DataFrame with the simulated values of Manning's n for the pervious area.
-        """
-        return self.simulate_manning_n(param="Perv")
-
-    def simulate_destore(self, param: str) -> pd.DataFrame:
-        """
-        Simulate the model for various depths of depression storage on the given area.
-
-        Parameters
-        ----------
-        param : str
-            The name of the feature for which the depth of depression storage should be varied.
-
-        Returns
-        -------
-        pd.DataFrame
-            A DataFrame with the following columns:
-            - runoff
-            - peak_runoff_rate
-            - infiltration
-            - evaporation
-            - Destore-param
-        """
-        self.file = self.copy_file(self.raw_file)
-        catchment_data = self._create_result_dict()
-        for n in self.DEPRESSION_STORAGE_VALUES:
-            subareas = self.model.inp.subareas
-            subareas.loc[self.subcatchment_id, "S-" + param] = n
-            self.model.inp.subareas = subareas
-            swmmio.utils.modify_model.replace_inp_section(self.file, "[SUBAREAS]", subareas)
-            catchment_stats = self.calculate()
-            for key in catchment_data:
-                catchment_data[key].append(catchment_stats[key])
-        df = pd.DataFrame(data=catchment_data)
-        df["Destore-" + param] = self.DEPRESSION_STORAGE_VALUES
-        return df
-
-    def simulate_s_imperv(self) -> pd.DataFrame:
-        """
-        Simulate the impervious depth of depression storage on area.
-
-        Returns
-        -------
-        pd.DataFrame
-            A DataFrame with the simulated values of the impervious surface area.
-        """
-        return self.simulate_destore(param="Imperv")
-
-    def simulate_s_perv(self) -> pd.DataFrame:
-        """
-        Simulate the pervious depth of depression storage on area.
-
-        Returns
-        -------
-        pd.DataFrame
-            A DataFrame with the simulated values of the S_perv variable.
-        """
-        return self.simulate_destore(param="Perv")
+        return self.simulate_subcatchment("CurbLength", start, stop, step)
 
     def simulate_percent_zero_imperv(
         self, start: float = 0, stop: float = 100, step: float = 10
     ) -> pd.DataFrame:
-        """
-        Run a series of simulations with different percentages of impervious area with no depression storage.
+        """Sweep the percentage of impervious area without depression storage.
 
         Parameters
         ----------
-        start : float, optional
-            The starting value for the percent impervious, defaults to 0.
-        stop : float, optional
-            The maximum percent impervious to test, defaults to 100.
-        step : float, optional
-            The step size for the percent impervious, defaults to 10.
+        start, stop, step : float, optional
+            Range of percentages in [0, 100], defaults 0, 100, 10. *stop* is
+            included when it lies on the step grid.
 
         Returns
         -------
-        pd.DataFrame
-            A DataFrame with the results of the simulation.
+        pandas.DataFrame
+            The ``"PctZero"`` column, then :attr:`RESULT_KEYS`; see :meth:`simulate`.
+
+        Raises
+        ------
+        InvalidParameterError
+            If the range is invalid or includes a value outside [0, 100]; raised before any run.
+        SimulationError
+            If SWMM fails to run the model.
         """
-        self._validate_simulation_params(start, stop, step)
-        self.file = self.copy_file(self.raw_file)
-        percent_impervious = np.arange(start, stop + step / 2, step)
-        catchment_data = self._create_result_dict()
-        for percent in percent_impervious:
-            subareas = self.model.inp.subareas
-            subareas.loc[self.subcatchment_id, "PctZero"] = percent
-            self.model.inp.subareas = subareas
-            swmmio.utils.modify_model.replace_inp_section(self.file, "[SUBAREAS]", subareas)
-            catchment_stats = self.calculate()
-            for key in catchment_data:
-                catchment_data[key].append(catchment_stats[key])
-        catchment_data["Zero-Imperv"] = percent_impervious.tolist()
-        return pd.DataFrame(data=catchment_data)
+        return self.simulate_subcatchment("PctZero", start, stop, step)
+
+    def simulate_manning_n(self, param: Surface) -> pd.DataFrame:
+        """Sweep Manning's n of one surface over :attr:`MANNING_N_VALUES`.
+
+        Parameters
+        ----------
+        param : {"Imperv", "Perv"}
+            The surface whose roughness to vary.
+
+        Returns
+        -------
+        pandas.DataFrame
+            As :meth:`simulate`, with the feature column ``"N-Imperv"`` or
+            ``"N-Perv"`` (dimensionless n).
+
+        Raises
+        ------
+        InvalidParameterError
+            If *param* is not ``"Imperv"`` or ``"Perv"``.
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        return self.simulate(_surface_feature("N", param), self.MANNING_N_VALUES)
+
+    def simulate_n_imperv(self) -> pd.DataFrame:
+        """Sweep Manning's n of the impervious surface.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``"N-Imperv"`` column (:attr:`MANNING_N_VALUES`), then :attr:`RESULT_KEYS`;
+            see :meth:`simulate_manning_n`.
+
+        Raises
+        ------
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        return self.simulate_manning_n("Imperv")
+
+    def simulate_n_perv(self) -> pd.DataFrame:
+        """Sweep Manning's n of the pervious surface.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``"N-Perv"`` column (:attr:`MANNING_N_VALUES`), then :attr:`RESULT_KEYS`;
+            see :meth:`simulate_manning_n`.
+
+        Raises
+        ------
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        return self.simulate_manning_n("Perv")
+
+    def simulate_destore(self, param: Surface) -> pd.DataFrame:
+        """Sweep the depression storage depth of one surface.
+
+        The depths are :attr:`DEPRESSION_STORAGE_VALUES` (mm) for SI models and
+        :attr:`DEPRESSION_STORAGE_VALUES_IN` (inches) for US models.
+
+        Parameters
+        ----------
+        param : {"Imperv", "Perv"}
+            The surface whose depression storage to vary.
+
+        Returns
+        -------
+        pandas.DataFrame
+            As :meth:`simulate`, with the feature column ``"S-Imperv"`` or
+            ``"S-Perv"``.
+
+        Raises
+        ------
+        InvalidParameterError
+            If *param* is not ``"Imperv"`` or ``"Perv"``.
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        feature = _surface_feature("S", param)
+        if self.flow_units in US_FLOW_UNITS:
+            return self.simulate(feature, self.DEPRESSION_STORAGE_VALUES_IN)
+        return self.simulate(feature, self.DEPRESSION_STORAGE_VALUES)
+
+    def simulate_s_imperv(self) -> pd.DataFrame:
+        """Sweep the depression storage depth of the impervious surface.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``"S-Imperv"`` column (mm, or inches for US units), then :attr:`RESULT_KEYS`;
+            see :meth:`simulate_destore`.
+
+        Raises
+        ------
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        return self.simulate_destore("Imperv")
+
+    def simulate_s_perv(self) -> pd.DataFrame:
+        """Sweep the depression storage depth of the pervious surface.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``"S-Perv"`` column (mm, or inches for US units), then :attr:`RESULT_KEYS`;
+            see :meth:`simulate_destore`.
+
+        Raises
+        ------
+        SimulationError
+            If SWMM fails to run the model.
+        """
+        return self.simulate_destore("Perv")
+
+    # --- deprecated -------------------------------------------------------------------------
+
+    def copy_file(self, copy: str | os.PathLike[str] | None = None, suffix: str = "copy") -> str:
+        """Copy a model to ``<name>_<suffix>.inp`` next to it.
+
+        .. deprecated:: 0.1.0
+            Working copies are managed internally; this will be removed in 0.2.0.
+
+        Parameters
+        ----------
+        copy : str or os.PathLike, optional
+            The model to copy, defaults to the instance's model.
+        suffix : str, optional
+            Suffix of the copy's name, defaults to ``"copy"``.
+
+        Returns
+        -------
+        str
+            Path of the copy, which :meth:`close` deletes.
+        """
+        _deprecated("copy_file()", "every call now makes and removes its own working copy")
+        source = Path(copy) if copy is not None else self._source
+        target = source.with_name(f"{source.stem}_{suffix}.inp")
+        shutil.copyfile(source, target)
+        self._copies.append(target)
+        return str(target)
+
+    def get_section(self, section: str = "subcatchments") -> pd.DataFrame:
+        """Return a section of the model parsed by swmmio.
+
+        .. deprecated:: 0.1.0
+            Use ``swmmio.Model(path).inp`` directly; this will be removed in 0.2.0.
+
+        Parameters
+        ----------
+        section : str, optional
+            Name of a ``swmmio`` ``inp`` attribute, defaults to ``"subcatchments"``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The section, parsed from the source file.
+        """
+        _deprecated("get_section()", "use swmmio.Model(path).inp instead")
+        section_frame: pd.DataFrame = getattr(swmmio.Model(str(self._source)).inp, section)
+        return section_frame
+
+    @property
+    def model(self) -> swmmio.Model:
+        """A freshly parsed ``swmmio.Model`` of the source file.
+
+        .. deprecated:: 0.1.0
+            Use ``swmmio.Model(path)`` directly; this will be removed in 0.2.0.
+        """
+        _deprecated("model", "use swmmio.Model(path) instead")
+        return swmmio.Model(str(self._source))
+
+
+def _deprecated(name: str, instead: str) -> None:
+    warnings.warn(
+        f"FeaturesSimulation.{name} is deprecated and will be removed in 0.2.0; {instead}.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
+def _surface_feature(prefix: Literal["N", "S"], param: str) -> Feature:
+    if param not in _SURFACES:
+        raise InvalidParameterError(
+            f"Unknown surface {param!r}. Allowed values: {', '.join(_SURFACES)}"
+        )
+    return validate_feature(f"{prefix}-{param}")
+
+
+def _open_simulation(inp: Path, report: Path) -> Simulation:
+    try:
+        return Simulation(str(inp), str(report), str(inp.with_suffix(".out")))
+    except MultiSimulationError:
+        raise
+    except Exception:
+        # A failed swmm_open leaves the engine half-open with the report unflushed.
+        # Closing it writes the report and frees its files.
+        PySWMM().swmm_close()
+        raise
+
+
+def _report_errors(report: Path) -> list[str]:
+    try:
+        lines = report.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    return [line.strip() for line in lines if line.strip().startswith("ERROR")]
+
+
+def _remove_swmm_files(inp: Path) -> None:
+    for extension in FeaturesSimulation.SWMM_SIDE_EXTENSIONS:
+        inp.with_suffix(extension).unlink(missing_ok=True)

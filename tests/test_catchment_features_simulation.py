@@ -1,799 +1,277 @@
-import glob
-import os
+"""Tests for the public contract of FeaturesSimulation."""
+
+from __future__ import annotations
+
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
-import swmmio
-from pydantic import ValidationError
 
-from catchment_simulation import FeaturesSimulation
-from catchment_simulation.analysis import runoff_volume, time_to_peak
+from catchment_simulation import (
+    Feature,
+    FeaturesSimulation,
+    InvalidParameterError,
+    SubcatchmentNotFoundError,
+    UnknownFeatureError,
+    build_range,
+)
+from catchment_simulation.features import FEATURES
+
+RESULT_COLUMNS = list(FeaturesSimulation.RESULT_KEYS)
 
 
 @pytest.fixture
-def simulation_instance():
-    """
-    Returns a FeaturesSimulation instance with cleanup.
-    """
-    subcatchment_id = "S1"
-    raw_file = "tests/fixtures/example.inp"
-    instance = FeaturesSimulation(subcatchment_id, raw_file)
-    yield instance
-    instance._cleanup_temp_files()
+def sim(model_path: Path) -> FeaturesSimulation:
+    return FeaturesSimulation("S1", model_path)
 
 
-def test_init(simulation_instance):
-    """
-    Test the initialization of the simulation instance.
-    """
-    assert simulation_instance.subcatchment_id == "S1"
-    assert simulation_instance.raw_file == "tests/fixtures/example.inp"
-    assert simulation_instance.file.endswith("_copy.inp")
-    assert isinstance(simulation_instance.model, swmmio.Model)
+# --- construction --------------------------------------------------------------------------
 
 
-def test_copy_file(simulation_instance):
-    """
-    Test the copy_file method.
-    """
-    new_path = simulation_instance.copy_file(suffix="test")
-    assert os.path.exists(new_path)
-    assert new_path.endswith("_test.inp")
-    os.remove(new_path)
+def test_init_keeps_arguments_and_reads_flow_units(model_path: Path) -> None:
+    sim = FeaturesSimulation("S1", str(model_path))
+    assert sim.subcatchment_id == "S1"
+    assert sim.raw_file == str(model_path)
+    assert sim.flow_units == "CMS"
 
 
-def test_get_section(simulation_instance):
-    """
-    Test the get_section method.
-    """
-    section_df = simulation_instance.get_section(section="subcatchments")
-    assert isinstance(section_df, pd.DataFrame)
-    assert not section_df.empty
+def test_init_missing_file_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        FeaturesSimulation("S1", tmp_path / "missing.inp")
 
-    with pytest.raises(AttributeError):
-        simulation_instance.get_section(section="non_existing_section")
 
+@pytest.mark.parametrize("subcatchment_id", ["NONEXISTENT", ""])
+def test_init_unknown_subcatchment_raises(model_path: Path, subcatchment_id: str) -> None:
+    with pytest.raises(SubcatchmentNotFoundError, match=r"Available subcatchments: \['S1'\]"):
+        FeaturesSimulation(subcatchment_id, model_path)
 
-def test_calculate(simulation_instance):
-    """
-    Test the calculate method.
-    """
-    subcatchment_stats = simulation_instance.calculate()
-    assert isinstance(subcatchment_stats, dict)
-    assert "runoff" in subcatchment_stats
-    assert "peak_runoff_rate" in subcatchment_stats
-    assert "infiltration" in subcatchment_stats
-    assert "evaporation" in subcatchment_stats
 
+def test_flow_units_default_to_cfs_when_unset(model_path: Path) -> None:
+    text = model_path.read_text().replace("FLOW_UNITS           CMS\n", "")
+    model_path.write_text(text)
+    assert FeaturesSimulation("S1", model_path).flow_units == "CFS"
 
-def test_simulate_subcatchment(simulation_instance):
-    """
-    Test the simulate_subcatchment method.
-    """
-    feature = "Area"
-    df = simulation_instance.simulate_subcatchment(feature=feature, start=1, stop=10, step=1)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 10
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", feature]
-    )
 
+def test_context_manager_and_close(model_path: Path) -> None:
+    with FeaturesSimulation("S1", model_path) as sim:
+        assert isinstance(sim, FeaturesSimulation)
+    sim.close()
+    assert sim.calculate()["runoff"] > 0
 
-def test_simulate_area(simulation_instance):
-    """
-    Test the simulate_area method.
-    """
-    df = simulation_instance.simulate_area(start=1, stop=10, step=1)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 10
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Area"]
-    )
 
+# --- single runs ---------------------------------------------------------------------------
 
-def test_simulate_percent_impervious(simulation_instance):
-    """
-    Test the simulate_percent_impervious method.
-    """
-    df = simulation_instance.simulate_percent_impervious(start=0, stop=100, step=10)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 11
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "PercImperv"]
-    )
 
+def test_calculate_returns_all_statistics(sim: FeaturesSimulation) -> None:
+    stats = sim.calculate()
+    assert set(stats) == set(FeaturesSimulation.RESULT_KEYS)
+    assert all(value >= 0 for value in stats.values())
+    assert stats["runoff"] > 0
+    assert stats["precipitation"] == pytest.approx(97.0)
 
-def test_simulate_percent_slope(simulation_instance):
-    """
-    Test the simulate_percent_slope method.
-    """
-    df = simulation_instance.simulate_percent_slope(start=0, stop=100, step=10)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 11
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "PercSlope"]
-    )
 
-
-def test_simulate_width(simulation_instance):
-    """
-    Test the simulate_width method.
-    """
-    df = simulation_instance.simulate_width(start=0, stop=100, step=10)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 11
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Width"]
-    )
-
-
-def test_simulate_curb_length(simulation_instance):
-    """
-    Test the simulate_curb_length method.
-    """
-    df = simulation_instance.simulate_curb_length(start=0, stop=100, step=10)
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 11
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "CurbLength"]
-    )
-
-
-def test_simulate_n_imperv(simulation_instance):
-    """
-    Test the simulate_n_imperv method.
-    """
-    df = simulation_instance.simulate_n_imperv()
-    assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "N-Imperv"]
-    )
-
-
-def test_simulate_n_perv(simulation_instance):
-    """
-    Test the simulate_n_perv method.
-    """
-    df = simulation_instance.simulate_n_perv()
-    assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "N-Perv"]
-    )
-
-
-def test_simulate_destore_imperv(simulation_instance):
-    """
-    Test the simulate_destore_imperv method.
-    """
-    df = simulation_instance.simulate_destore(param="Imperv")
-    assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Imperv"]
-    )
-
-
-def test_simulate_destore_perv(simulation_instance):
-    """
-    Test the simulate_destore_perv method.
-    """
-    df = simulation_instance.simulate_destore(param="Perv")
-    assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Perv"]
-    )
-
-
-def test_simulate_s_imperv(simulation_instance):
-    """
-    Test the simulate_s_imperv method.
-    """
-    df = simulation_instance.simulate_s_imperv()
-    assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Imperv"]
-    )
-
-
-def test_simulate_s_perv(simulation_instance):
-    """
-    Test the simulate_s_perv method.
-    """
-    df = simulation_instance.simulate_s_perv()
-    assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Destore-Perv"]
-    )
-
-
-def test_simulate_percent_zero_imperv(simulation_instance):
-    """
-    Test the simulate_percent_zero_imperv method.
-    """
-    df = simulation_instance.simulate_percent_zero_imperv(start=0, stop=100, step=10)
-    assert isinstance(df, pd.DataFrame)
-    assert set(df.columns) == set(
-        ["runoff", "peak_runoff_rate", "infiltration", "evaporation", "Zero-Imperv"]
-    )
-
-
-class TestContextManager:
-    """Tests for context manager functionality."""
-
-    def test_context_manager_cleanup(self):
-        """Test that context manager cleans up temp files."""
-        subcatchment_id = "S1"
-        raw_file = "tests/fixtures/example.inp"
-
-        with FeaturesSimulation(subcatchment_id, raw_file) as sim:
-            temp_files = sim._temp_files.copy()
-            assert len(temp_files) > 0
-            for f in temp_files:
-                assert os.path.exists(f)
-
-        for f in temp_files:
-            assert not os.path.exists(f)
-
-
-class TestParameterValidation:
-    """Tests for parameter validation (now powered by Pydantic schemas)."""
-
-    def test_negative_start_raises_error(self, simulation_instance):
-        """Test that negative start value raises ValidationError."""
-        with pytest.raises(ValidationError):
-            simulation_instance.simulate_subcatchment("Area", start=-1, stop=10, step=1)
-
-    def test_zero_step_raises_error(self, simulation_instance):
-        """Test that zero step value raises ValidationError."""
-        with pytest.raises(ValidationError):
-            simulation_instance.simulate_subcatchment("Area", start=0, stop=10, step=0)
-
-    def test_negative_step_raises_error(self, simulation_instance):
-        """Test that negative step value raises ValidationError."""
-        with pytest.raises(ValidationError):
-            simulation_instance.simulate_subcatchment("Area", start=0, stop=10, step=-1)
-
-    def test_start_greater_than_stop_raises_error(self, simulation_instance):
-        """Test that start > stop raises ValidationError."""
-        with pytest.raises(ValidationError, match="start .* must be <= stop"):
-            simulation_instance.simulate_subcatchment("Area", start=100, stop=10, step=1)
-
-
-class TestClassConstants:
-    """Tests for class constants."""
-
-    def test_result_keys(self):
-        """Test that RESULT_KEYS contains expected keys."""
-        assert FeaturesSimulation.RESULT_KEYS == (
-            "runoff",
-            "peak_runoff_rate",
-            "infiltration",
-            "evaporation",
-        )
-
-    def test_manning_n_values_sorted(self):
-        """Test that MANNING_N_VALUES is sorted."""
-        values = FeaturesSimulation.MANNING_N_VALUES
-        assert list(values) == sorted(values)
-        assert len(values) == 15
-
-    def test_depression_storage_values(self):
-        """Test that DEPRESSION_STORAGE_VALUES are in mm."""
-        values = FeaturesSimulation.DEPRESSION_STORAGE_VALUES
-        assert len(values) == 4
-        assert values[0] == pytest.approx(0.05 * 25.4)
-
-    def test_create_result_dict(self):
-        """Test that _create_result_dict returns correct structure."""
-        result = FeaturesSimulation._create_result_dict()
-        assert set(result.keys()) == set(FeaturesSimulation.RESULT_KEYS)
-        for key in result:
-            assert result[key] == []
-
-
-class TestCleanup:
-    """Tests for file cleanup logic."""
-
-    def test_fixture_safety_net_cleanup(self):
-        """Test the safety net cleanup for files not tracked by instance."""
-
-        extra_file = "tests/fixtures/example_untracked.inp"
-        with open(extra_file, "w") as f:
-            f.write("test")
-
-        def safety_cleanup():
-            for f in glob.glob("tests/fixtures/example_*.inp"):
-                if os.path.exists(f):
-                    os.remove(f)
-
-        assert os.path.exists(extra_file)
-        safety_cleanup()
-        assert not os.path.exists(extra_file)
-
-
-class TestDefaultParameters:
-    """Tests for default parameter values."""
-
-    def test_simulate_area_defaults(self, simulation_instance):
-        """Test simulate_area with default parameters."""
-        df = simulation_instance.simulate_area()
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 10
-        assert "Area" in df.columns
-
-    def test_simulate_percent_impervious_defaults(self, simulation_instance):
-        """Test simulate_percent_impervious with default parameters."""
-        df = simulation_instance.simulate_percent_impervious()
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 11
-        assert "PercImperv" in df.columns
-
-    def test_simulate_percent_slope_defaults(self, simulation_instance):
-        """Test simulate_percent_slope with default parameters."""
-        df = simulation_instance.simulate_percent_slope()
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 11
-        assert "PercSlope" in df.columns
-
-    def test_simulate_width_defaults(self, simulation_instance):
-        """Test simulate_width with default parameters."""
-        df = simulation_instance.simulate_width()
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 11
-        assert "Width" in df.columns
-
-    def test_simulate_curb_length_defaults(self, simulation_instance):
-        """Test simulate_curb_length with default parameters."""
-        df = simulation_instance.simulate_curb_length()
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 11
-        assert "CurbLength" in df.columns
-
-    def test_simulate_percent_zero_imperv_defaults(self, simulation_instance):
-        """Test simulate_percent_zero_imperv with default parameters."""
-        df = simulation_instance.simulate_percent_zero_imperv()
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 11
-        assert "Zero-Imperv" in df.columns
-
-    def test_copy_file_default_suffix(self, simulation_instance):
-        """Test copy_file with default suffix."""
-        new_path = simulation_instance.copy_file()
-        assert new_path.endswith("_copy.inp")
-        assert os.path.exists(new_path)
-
-    def test_get_section_default_subcatchments(self, simulation_instance):
-        """Test get_section with default section (subcatchments)."""
-        section_df = simulation_instance.get_section()
-        assert isinstance(section_df, pd.DataFrame)
-        assert not section_df.empty
-
-
-class TestBoundaryConditions:
-    """Tests for boundary conditions."""
-
-    def test_simulate_single_step(self, simulation_instance):
-        """Test simulation with start == stop (single iteration)."""
-        df = simulation_instance.simulate_subcatchment("Area", start=5, stop=5, step=1)
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 1
-        assert df["Area"].iloc[0] == pytest.approx(5.0)
-
-    def test_simulate_very_small_step(self, simulation_instance):
-        """Test simulation with very small step."""
-        df = simulation_instance.simulate_subcatchment("Area", start=1, stop=1.01, step=0.005)
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 3
-
-    def test_simulate_float_precision(self, simulation_instance):
-        """Test that float precision is maintained in range values."""
-        df = simulation_instance.simulate_subcatchment("Area", start=0.1, stop=0.3, step=0.1)
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 3
-
-    def test_copy_file_multiple_copies(self, simulation_instance):
-        """Test creating multiple copies with different suffixes."""
-        path1 = simulation_instance.copy_file(suffix="first")
-        path2 = simulation_instance.copy_file(suffix="second")
-        assert path1 != path2
-        assert os.path.exists(path1)
-        assert os.path.exists(path2)
-        assert path1.endswith("_first.inp")
-        assert path2.endswith("_second.inp")
-
-    def test_simulate_with_zero_start(self, simulation_instance):
-        """Test simulation with start=0."""
-        df = simulation_instance.simulate_subcatchment("Width", start=0, stop=10, step=5)
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 3
-        assert df["Width"].iloc[0] == pytest.approx(0.0)
-
-
-class TestDataFrameValidation:
-    """Tests for DataFrame output validation."""
-
-    def test_simulate_returns_correct_columns(self, simulation_instance):
-        """Test that simulation returns DataFrame with correct columns."""
-        df = simulation_instance.simulate_area(start=1, stop=3, step=1)
-        expected_columns = {"runoff", "peak_runoff_rate", "infiltration", "evaporation", "Area"}
-        assert set(df.columns) == expected_columns
-
-    def test_simulate_returns_correct_dtypes(self, simulation_instance):
-        """Test that DataFrame columns have correct data types."""
-        df = simulation_instance.simulate_area(start=1, stop=3, step=1)
-        for col in ["runoff", "peak_runoff_rate", "infiltration", "evaporation"]:
-            assert df[col].dtype in [float, "float64"]
-
-    def test_simulate_feature_column_matches_range(self, simulation_instance):
-        """Test that feature column contains values from the specified range."""
-        import numpy as np
-
-        df = simulation_instance.simulate_subcatchment("Area", start=1, stop=5, step=2)
-        expected = np.arange(1, 5 + 0.001, 2)
-        assert len(df["Area"]) == len(expected)
-        for actual, exp in zip(df["Area"], expected, strict=False):
-            assert actual == pytest.approx(exp)
-
-    def test_result_values_non_negative(self, simulation_instance):
-        """Test that simulation results are non-negative."""
-        df = simulation_instance.simulate_area(start=1, stop=3, step=1)
-        for col in ["runoff", "peak_runoff_rate", "infiltration", "evaporation"]:
-            assert (df[col] >= 0).all(), f"Column {col} contains negative values"
-
-    def test_manning_n_result_has_correct_length(self, simulation_instance):
-        """Test that Manning's n simulation returns correct number of rows."""
-        df = simulation_instance.simulate_n_imperv()
-        assert len(df) == len(FeaturesSimulation.MANNING_N_VALUES)
-
-    def test_destore_result_has_correct_length(self, simulation_instance):
-        """Test that depression storage simulation returns correct number of rows."""
-        df = simulation_instance.simulate_s_imperv()
-        assert len(df) == len(FeaturesSimulation.DEPRESSION_STORAGE_VALUES)
-
-
-class TestErrorHandling:
-    """Tests for error handling."""
-
-    def test_init_invalid_file_path(self):
-        """Test that invalid file path raises an error."""
-        with pytest.raises(FileNotFoundError):
-            FeaturesSimulation("S1", "non_existent_file.inp")
-
-    def test_get_section_invalid_section(self, simulation_instance):
-        """Test that invalid section name raises AttributeError."""
-        with pytest.raises(AttributeError):
-            simulation_instance.get_section(section="invalid_section_name")
-
-    def test_simulate_subcatchment_invalid_feature(self, simulation_instance):
-        """Test simulation with invalid feature name raises an error."""
-        with pytest.raises((KeyError, Exception)):
-            simulation_instance.simulate_subcatchment("InvalidFeature", start=0, stop=10, step=1)
-
-    def test_init_invalid_subcatchment_id(self):
-        """Test that invalid subcatchment_id raises ValueError."""
-        with pytest.raises(ValueError, match="NONEXISTENT"):
-            FeaturesSimulation("NONEXISTENT", "tests/fixtures/example.inp")
-
-    def test_init_invalid_subcatchment_id_shows_available(self):
-        """Test that ValueError message includes available subcatchment IDs."""
-        with pytest.raises(ValueError, match="S1"):
-            FeaturesSimulation("WRONG_ID", "tests/fixtures/example.inp")
-
-    def test_init_empty_subcatchment_id(self):
-        """Test that empty subcatchment_id raises ValueError."""
-        with pytest.raises(ValueError, match="Available subcatchments"):
-            FeaturesSimulation("", "tests/fixtures/example.inp")
-
-
-class TestStateManagement:
-    """Tests for state management across simulations."""
-
-    def test_consecutive_simulations(self, simulation_instance):
-        """Test running consecutive simulations on the same instance."""
-        df1 = simulation_instance.simulate_area(start=1, stop=3, step=1)
-        df2 = simulation_instance.simulate_percent_impervious(start=0, stop=20, step=10)
-        assert isinstance(df1, pd.DataFrame)
-        assert isinstance(df2, pd.DataFrame)
-        assert "Area" in df1.columns
-        assert "PercImperv" in df2.columns
-
-    def test_mixed_simulation_types(self, simulation_instance):
-        """Test mixing different simulation types."""
-        df1 = simulation_instance.simulate_n_imperv()
-        df2 = simulation_instance.simulate_s_perv()
-        df3 = simulation_instance.simulate_width(start=10, stop=20, step=5)
-        assert len(df1) == len(FeaturesSimulation.MANNING_N_VALUES)
-        assert len(df2) == len(FeaturesSimulation.DEPRESSION_STORAGE_VALUES)
-        assert len(df3) == 3
-
-    def test_temp_files_tracking(self, simulation_instance):
-        """Test that temp files are properly tracked."""
-        initial_count = len(simulation_instance._temp_files)
-        simulation_instance.copy_file(suffix="track_test")
-        assert len(simulation_instance._temp_files) == initial_count + 1
-
-
-class TestContextManagerExceptions:
-    """Tests for context manager behavior with exceptions."""
-
-    def test_context_manager_cleanup_on_exception(self):
-        """Test that temp files are cleaned up even when exception occurs."""
-        temp_files = []
-        try:
-            with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
-                temp_files = sim._temp_files.copy()
-                assert len(temp_files) > 0
-                raise ValueError("Test exception")
-        except ValueError:
-            pass
-
-        for f in temp_files:
-            assert not os.path.exists(f), f"File {f} was not cleaned up after exception"
-
-    def test_cleanup_after_multiple_simulations(self):
-        """Test cleanup after running multiple simulations."""
-        with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
-            sim.simulate_area(start=1, stop=2, step=1)
-            sim.simulate_width(start=10, stop=20, step=10)
-            temp_files = sim._temp_files.copy()
-
-        for f in temp_files:
-            assert not os.path.exists(f)
-
-
-class TestNumericalCorrectness:
-    """Tests for numerical correctness."""
-
-    def test_manning_n_values_unique(self):
-        """Test that MANNING_N_VALUES contains unique values."""
-        values = FeaturesSimulation.MANNING_N_VALUES
-        assert len(values) == len(set(values))
-
-    def test_depression_storage_conversion_correctness(self):
-        """Test depression storage conversion from inches to mm."""
-        values = FeaturesSimulation.DEPRESSION_STORAGE_VALUES
-        expected_inches = [0.05, 0.1, 0.2, 0.3]
-        for actual, inches in zip(values, expected_inches, strict=False):
-            assert actual == pytest.approx(inches * 25.4)
-
-    def test_simulate_row_count_matches_range(self, simulation_instance):
-        """Test that number of rows matches expected range count."""
-        import numpy as np
-
-        start, stop, step = 0, 50, 10
-        df = simulation_instance.simulate_percent_impervious(start=start, stop=stop, step=step)
-        expected_count = len(np.arange(start, stop + 0.001, step))
-        assert len(df) == expected_count
-
-    def test_manning_n_column_values_match_constant(self, simulation_instance):
-        """Test that N-Imperv column contains MANNING_N_VALUES."""
-        df = simulation_instance.simulate_n_imperv()
-        for actual, expected in zip(
-            df["N-Imperv"], FeaturesSimulation.MANNING_N_VALUES, strict=False
-        ):
-            assert actual == pytest.approx(expected)
-
-    def test_destore_column_values_match_constant(self, simulation_instance):
-        """Test that Destore column contains DEPRESSION_STORAGE_VALUES."""
-        df = simulation_instance.simulate_s_imperv()
-        for actual, expected in zip(
-            df["Destore-Imperv"], FeaturesSimulation.DEPRESSION_STORAGE_VALUES, strict=False
-        ):
-            assert actual == pytest.approx(expected)
+def test_sweeping_to_the_model_value_reproduces_calculate(sim: FeaturesSimulation) -> None:
+    row = sim.simulate("Area", [5]).iloc[0]
+    stats = sim.calculate()
+    assert row[RESULT_COLUMNS].tolist() == [stats[key] for key in RESULT_COLUMNS]
 
 
 class TestCalculateTimeseries:
-    """Tests for calculate_timeseries method."""
+    @pytest.fixture
+    def timeseries(self, sim: FeaturesSimulation) -> pd.DataFrame:
+        return sim.calculate_timeseries()
 
-    def test_returns_dataframe(self, simulation_instance):
-        """Test that calculate_timeseries returns a DataFrame."""
-        df = simulation_instance.calculate_timeseries()
-        assert isinstance(df, pd.DataFrame)
+    def test_shape(self, timeseries: pd.DataFrame) -> None:
+        assert isinstance(timeseries.index, pd.DatetimeIndex)
+        assert timeseries.index.name == "datetime"
+        assert list(timeseries.columns) == list(FeaturesSimulation.TIMESERIES_KEYS)
+        assert not timeseries.empty
+        assert timeseries.index.is_monotonic_increasing
 
-    def test_has_datetime_index(self, simulation_instance):
-        """Test that the result has a DatetimeIndex named 'datetime'."""
-        df = simulation_instance.calculate_timeseries()
-        assert df.index.name == "datetime"
-        assert isinstance(df.index, pd.DatetimeIndex)
+    def test_values(self, timeseries: pd.DataFrame) -> None:
+        assert (timeseries >= 0).all().all()
+        assert (timeseries["runoff"] > 0).any()
 
-    def test_columns_match_timeseries_keys(self, simulation_instance):
-        """Test that columns match TIMESERIES_KEYS."""
-        df = simulation_instance.calculate_timeseries()
-        assert list(df.columns) == list(FeaturesSimulation.TIMESERIES_KEYS)
-
-    def test_not_empty(self, simulation_instance):
-        """Test that the result is not empty."""
-        df = simulation_instance.calculate_timeseries()
-        assert not df.empty
-
-    def test_values_non_negative(self, simulation_instance):
-        """Test that all values are >= 0."""
-        df = simulation_instance.calculate_timeseries()
-        assert (df >= 0).all().all()
-
-    def test_index_monotonically_increasing(self, simulation_instance):
-        """Test that the datetime index is monotonically increasing."""
-        df = simulation_instance.calculate_timeseries()
-        assert df.index.is_monotonic_increasing
-
-    def test_timestamps_within_simulation_period(self, simulation_instance):
-        """Test that timestamps fall within the simulation period."""
-        df = simulation_instance.calculate_timeseries()
-        sim_start = datetime(2022, 6, 17, 0, 0)
-        sim_end = datetime(2022, 6, 17, 12, 0)
-        assert df.index.min() >= sim_start
-        assert df.index.max() <= sim_end
-
-    def test_runoff_positive(self, simulation_instance):
-        """Test that runoff has positive values (model has rainfall)."""
-        df = simulation_instance.calculate_timeseries()
-        assert (df["runoff"] > 0).any()
+    def test_timestamps_within_simulation_period(self, timeseries: pd.DataFrame) -> None:
+        assert timeseries.index.min() > datetime(2022, 6, 17, 0, 0)
+        assert timeseries.index.max() <= datetime(2022, 6, 17, 12, 0)
 
 
-class TestHydrogramAnalytics:
-    """Tests for time_to_peak and runoff_volume functions from analysis module."""
-
-    def test_time_to_peak_returns_timedelta(self, simulation_instance):
-        """Test that time_to_peak returns a pd.Timedelta."""
-        ts = simulation_instance.calculate_timeseries()
-        result = time_to_peak(ts)
-        assert isinstance(result, pd.Timedelta)
-
-    def test_time_to_peak_is_non_negative(self, simulation_instance):
-        """Test that time to peak is >= 0."""
-        ts = simulation_instance.calculate_timeseries()
-        result = time_to_peak(ts)
-        assert result >= pd.Timedelta(0)
-
-    def test_time_to_peak_within_simulation_period(self, simulation_instance):
-        """Test that time to peak does not exceed simulation duration."""
-        ts = simulation_instance.calculate_timeseries()
-        result = time_to_peak(ts)
-        duration = ts.index[-1] - ts.index[0]
-        assert result <= duration
-
-    def test_time_to_peak_custom_column(self, simulation_instance):
-        """Test time_to_peak with a different column."""
-        ts = simulation_instance.calculate_timeseries()
-        result = time_to_peak(ts, column="rainfall")
-        assert isinstance(result, pd.Timedelta)
-
-    def test_time_to_peak_empty_raises(self):
-        """Test that empty timeseries raises ValueError."""
-        empty_df = pd.DataFrame(columns=["runoff"])
-        empty_df.index.name = "datetime"
-        with pytest.raises(ValueError, match="empty"):
-            time_to_peak(empty_df)
-
-    def test_time_to_peak_invalid_column_raises(self, simulation_instance):
-        """Test that invalid column name raises ValueError."""
-        ts = simulation_instance.calculate_timeseries()
-        with pytest.raises(ValueError, match="not found"):
-            time_to_peak(ts, column="nonexistent")
-
-    def test_time_to_peak_all_zeros_raises(self):
-        """Test that all-zero values raise ValueError (no meaningful peak)."""
-        idx = pd.DatetimeIndex(
-            ["2022-01-01 00:00", "2022-01-01 01:00", "2022-01-01 02:00"],
-            name="datetime",
-        )
-        df = pd.DataFrame({"runoff": [0.0, 0.0, 0.0]}, index=idx)
-        with pytest.raises(ValueError, match="zero"):
-            time_to_peak(df)
-
-    def test_runoff_volume_returns_float(self, simulation_instance):
-        """Test that runoff_volume returns a float."""
-        ts = simulation_instance.calculate_timeseries()
-        result = runoff_volume(ts)
-        assert isinstance(result, float)
-
-    def test_runoff_volume_is_non_negative(self, simulation_instance):
-        """Test that runoff volume is >= 0."""
-        ts = simulation_instance.calculate_timeseries()
-        result = runoff_volume(ts)
-        assert result >= 0
-
-    def test_runoff_volume_partial_interval(self, simulation_instance):
-        """Test runoff_volume with a restricted time interval."""
-        ts = simulation_instance.calculate_timeseries()
-        mid = ts.index[len(ts) // 2]
-        partial = runoff_volume(ts, end=mid)
-        total = runoff_volume(ts)
-        assert partial <= total + 1e-9
-
-    def test_runoff_volume_both_start_and_end(self, simulation_instance):
-        """Test runoff_volume with both start and end specified."""
-        ts = simulation_instance.calculate_timeseries()
-        q1 = ts.index[len(ts) // 4]
-        q3 = ts.index[3 * len(ts) // 4]
-        partial = runoff_volume(ts, start=q1, end=q3)
-        total = runoff_volume(ts)
-        assert partial <= total + 1e-9
-        assert isinstance(partial, float)
-
-    def test_runoff_volume_too_few_points_raises(self):
-        """Test that fewer than 2 points raises ValueError."""
-        idx = pd.DatetimeIndex(["2022-01-01"], name="datetime")
-        single = pd.DataFrame({"runoff": [1.0]}, index=idx)
-        with pytest.raises(ValueError, match="2 data points"):
-            runoff_volume(single)
-
-    def test_runoff_volume_invalid_column_raises(self, simulation_instance):
-        """Test that missing column raises ValueError."""
-        ts = simulation_instance.calculate_timeseries()
-        with pytest.raises(ValueError, match="not found"):
-            runoff_volume(ts, column="nonexistent")
-
-    def test_runoff_volume_custom_column(self, simulation_instance):
-        """Test runoff_volume with a different column."""
-        ts = simulation_instance.calculate_timeseries()
-        result = runoff_volume(ts, column="infiltration_loss")
-        assert isinstance(result, float)
-        assert result >= 0
-
-    def test_runoff_volume_numerical_correctness(self):
-        """Test trapezoidal integration with known values."""
-        idx = pd.date_range("2022-01-01", periods=3, freq="50s", name="datetime")
-        df = pd.DataFrame({"runoff": [2.0, 2.0, 2.0]}, index=idx)
-        assert runoff_volume(df) == pytest.approx(200.0)
-
-    def test_time_to_peak_numerical_correctness(self):
-        """Test time_to_peak with known peak position."""
-        idx = pd.date_range("2022-01-01", periods=4, freq="1h", name="datetime")
-        df = pd.DataFrame({"runoff": [0.0, 1.0, 3.0, 0.5]}, index=idx)
-        result = time_to_peak(df)
-        assert result == pd.Timedelta(hours=2)
+# --- sweeps --------------------------------------------------------------------------------
 
 
-class TestSimulateSubcatchmentTimeseries:
-    """Tests for simulate_subcatchment_timeseries method."""
+@pytest.mark.parametrize(
+    ("method", "feature", "defaults"),
+    [
+        ("simulate_area", "Area", (1, 10, 1)),
+        ("simulate_percent_impervious", "PercImperv", (0, 100, 10)),
+        ("simulate_percent_slope", "PercSlope", (10, 100, 10)),
+        ("simulate_width", "Width", (10, 100, 10)),
+        ("simulate_curb_length", "CurbLength", (0, 100, 10)),
+        ("simulate_percent_zero_imperv", "PctZero", (0, 100, 10)),
+    ],
+)
+def test_range_methods_default_sweep(
+    sim: FeaturesSimulation, method: str, feature: str, defaults: tuple[float, float, float]
+) -> None:
+    frame = getattr(sim, method)()
 
-    def test_returns_dict(self, simulation_instance):
-        """Test that simulate_subcatchment_timeseries returns a dict."""
-        result = simulation_instance.simulate_subcatchment_timeseries(
-            "Area", start=1, stop=3, step=1
-        )
-        assert isinstance(result, dict)
+    assert list(frame.columns) == [feature, *RESULT_COLUMNS]
+    assert frame[feature].tolist() == build_range(*defaults)
+    assert all(frame[column].dtype == np.float64 for column in frame.columns)
+    assert (frame[RESULT_COLUMNS] >= 0).all().all()
 
-    def test_keys_match_range(self, simulation_instance):
-        """Test that dict keys correspond to the parameter range."""
-        result = simulation_instance.simulate_subcatchment_timeseries(
-            "Area", start=1, stop=3, step=1
-        )
-        expected_keys = np.arange(1, 3 + 0.001, 1)
-        assert len(result) == len(expected_keys)
-        for key, exp in zip(sorted(result.keys()), expected_keys, strict=False):
-            assert key == pytest.approx(float(exp))
 
-    def test_values_are_valid_dataframes(self, simulation_instance):
-        """Test that values are DataFrames with DatetimeIndex and TIMESERIES_KEYS."""
-        result = simulation_instance.simulate_subcatchment_timeseries(
-            "Area", start=1, stop=3, step=1
-        )
-        for _, df in result.items():
-            assert isinstance(df, pd.DataFrame)
-            assert isinstance(df.index, pd.DatetimeIndex)
-            assert df.index.name == "datetime"
-            assert list(df.columns) == list(FeaturesSimulation.TIMESERIES_KEYS)
+@pytest.mark.parametrize(
+    ("method", "feature", "values"),
+    [
+        ("simulate_n_imperv", "N-Imperv", FeaturesSimulation.MANNING_N_VALUES),
+        ("simulate_n_perv", "N-Perv", FeaturesSimulation.MANNING_N_VALUES),
+        ("simulate_s_imperv", "S-Imperv", FeaturesSimulation.DEPRESSION_STORAGE_VALUES),
+        ("simulate_s_perv", "S-Perv", FeaturesSimulation.DEPRESSION_STORAGE_VALUES),
+    ],
+)
+def test_literature_value_methods(
+    sim: FeaturesSimulation, method: str, feature: str, values: tuple[float, ...]
+) -> None:
+    frame = getattr(sim, method)()
+    assert list(frame.columns) == [feature, *RESULT_COLUMNS]
+    assert frame[feature].tolist() == list(values)
 
-    def test_all_series_same_length(self, simulation_instance):
-        """Test that all timeseries have the same length."""
-        result = simulation_instance.simulate_subcatchment_timeseries(
-            "Area", start=1, stop=3, step=1
-        )
-        lengths = [len(df) for df in result.values()]
-        assert len(set(lengths)) == 1
 
-    def test_validation_error_for_negative_start(self, simulation_instance):
-        """Test that negative start raises ValidationError."""
-        with pytest.raises(ValidationError):
-            simulation_instance.simulate_subcatchment_timeseries("Area", start=-1, stop=10, step=1)
+def test_surface_methods_match_their_shortcuts(sim: FeaturesSimulation) -> None:
+    pd.testing.assert_frame_equal(sim.simulate_manning_n("Perv"), sim.simulate_n_perv())
+    pd.testing.assert_frame_equal(sim.simulate_destore("Imperv"), sim.simulate_s_imperv())
 
-    def test_single_step(self, simulation_instance):
-        """Test with start == stop (single step)."""
-        result = simulation_instance.simulate_subcatchment_timeseries(
-            "Area", start=5, stop=5, step=1
-        )
-        assert len(result) == 1
-        assert 5.0 in result
+
+# One low and one high physically valid value per feature.
+SWEEP_VALUES: dict[Feature, tuple[float, float]] = {
+    "Area": (2, 8),
+    "PercImperv": (10, 90),
+    "Width": (20, 400),
+    "PercSlope": (0.5, 30),
+    "CurbLength": (0, 500),
+    "N-Imperv": (0.011, 0.4),
+    "N-Perv": (0.05, 0.8),
+    "S-Imperv": (0, 7.62),
+    "S-Perv": (0, 7.62),
+    "PctZero": (0, 100),
+}
+
+
+@pytest.mark.parametrize("feature", list(FEATURES))
+def test_every_feature_reaches_swmm(sim: FeaturesSimulation, feature: Feature) -> None:
+    frame = sim.simulate(feature, SWEEP_VALUES[feature])
+    assert frame[feature].tolist() == list(SWEEP_VALUES[feature])
+    if feature == "CurbLength":
+        # Curb length only drives pollutant build-up, so runoff must not change.
+        assert frame["runoff"].iloc[0] == frame["runoff"].iloc[1]
+    else:
+        assert frame["runoff"].iloc[0] != pytest.approx(frame["runoff"].iloc[1])
+
+
+def test_simulate_subcatchment_accepts_subarea_features(sim: FeaturesSimulation) -> None:
+    frame = sim.simulate_subcatchment("N-Perv", 0.1, 0.3, 0.1)
+    assert frame["N-Perv"].tolist() == [0.1, 0.2, 0.3]
+
+
+def test_simulate_accepts_any_iterable_in_given_order(sim: FeaturesSimulation) -> None:
+    from_generator = sim.simulate("Width", (w for w in (300.0, 30.0)))
+    from_array = sim.simulate("Width", np.array([300, 30]))
+    assert from_generator["Width"].tolist() == [300.0, 30.0]
+    pd.testing.assert_frame_equal(from_generator, from_array)
+    assert from_generator["runoff"].iloc[0] > from_generator["runoff"].iloc[1]
+
+
+@pytest.mark.parametrize("values", [[], [float("nan")], [-1.0]])
+def test_simulate_rejects_bad_values(sim: FeaturesSimulation, values: list[float]) -> None:
+    with pytest.raises(InvalidParameterError, match="Area"):
+        sim.simulate("Area", values)
+
+
+@pytest.mark.parametrize(
+    ("start", "stop", "step", "match"),
+    [
+        (-1, 10, 1, "start"),
+        (0, 10, 0, "step"),
+        (0, 10, -1, "step"),
+        (100, 10, 1, "start .* must be <= stop"),
+        (1, 5000, 1, "max_runs"),
+    ],
+)
+def test_range_methods_reject_invalid_ranges(
+    sim: FeaturesSimulation, start: float, stop: float, step: float, match: str
+) -> None:
+    with pytest.raises(InvalidParameterError, match=match):
+        sim.simulate_area(start, stop, step)
+    with pytest.raises(InvalidParameterError, match=match):
+        sim.simulate_subcatchment_timeseries("Area", start, stop, step)
+
+
+def test_unknown_feature_in_timeseries_sweep(sim: FeaturesSimulation) -> None:
+    with pytest.raises(UnknownFeatureError):
+        sim.simulate_timeseries("Outlet", [1])  # type: ignore[arg-type]
+
+
+class TestTimeseriesSweeps:
+    def test_simulate_subcatchment_timeseries(self, sim: FeaturesSimulation) -> None:
+        results = sim.simulate_subcatchment_timeseries(feature="Area", start=1, stop=3, step=1)
+
+        assert list(results) == [1.0, 2.0, 3.0]
+        assert len({len(frame) for frame in results.values()}) == 1
+        for frame in results.values():
+            assert isinstance(frame.index, pd.DatetimeIndex)
+            assert frame.index.name == "datetime"
+            assert list(frame.columns) == list(FeaturesSimulation.TIMESERIES_KEYS)
+        assert results[3.0]["runoff"].sum() > results[1.0]["runoff"].sum()
+
+    def test_single_value(self, sim: FeaturesSimulation) -> None:
+        results = sim.simulate_subcatchment_timeseries("Area", start=5, stop=5, step=1)
+        assert list(results) == [5.0]
+        pd.testing.assert_frame_equal(results[5.0], sim.calculate_timeseries())
+
+    def test_simulate_timeseries_with_values(self, sim: FeaturesSimulation) -> None:
+        results = sim.simulate_timeseries("PctZero", [100, 0])
+        assert list(results) == [100.0, 0.0]
+
+
+# --- class constants -----------------------------------------------------------------------
+
+
+def test_result_and_timeseries_keys() -> None:
+    assert FeaturesSimulation.RESULT_KEYS == (
+        "runoff",
+        "peak_runoff_rate",
+        "infiltration",
+        "evaporation",
+        "precipitation",
+        "runon",
+    )
+    assert FeaturesSimulation.TIMESERIES_KEYS == (
+        "rainfall",
+        "runoff",
+        "infiltration_loss",
+        "evaporation_loss",
+        "runon",
+    )
+    assert FeaturesSimulation.SWMM_SIDE_EXTENSIONS == (".inp", ".rpt", ".out")
+
+
+def test_manning_n_values() -> None:
+    labelled = FeaturesSimulation.MANNING_N
+    values = FeaturesSimulation.MANNING_N_VALUES
+    assert len(labelled) == 15
+    assert values == tuple(labelled.values())
+    assert list(values) == sorted(set(values))
+    assert labelled["smooth asphalt"] == 0.011
+    assert labelled["woods, dense underbrush"] == 0.8
+
+
+def test_depression_storage_values() -> None:
+    inches = FeaturesSimulation.DEPRESSION_STORAGE_VALUES_IN
+    assert inches == (0.05, 0.1, 0.2, 0.3)
+    assert FeaturesSimulation.DEPRESSION_STORAGE_VALUES == pytest.approx(
+        [value * 25.4 for value in inches]
+    )
