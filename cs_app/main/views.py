@@ -46,12 +46,15 @@ from pydantic import ValidationError as PydanticValidationError
 from pyswmm import Simulation
 from pyswmm.swmm5 import PySWMM
 
+try:
+    from pyswmm.errors import MultiSimulationError
+
+    _ENGINE_BUSY_ERRORS: tuple[type[Exception], ...] = (MultiSimulationError,)
+except ImportError:  # pyswmm 1.5, which a plain install of swmmio 0.8 gets, lacks it
+    _ENGINE_BUSY_ERRORS = ()
+
 from catchment_simulation.analysis import runoff_volume, time_to_peak
-from catchment_simulation.catchment_features_simulation import (
-    _ENGINE_BUSY_ERRORS,
-    US_FLOW_UNITS,
-    FeaturesSimulation,
-)
+from catchment_simulation.catchment_features_simulation import US_FLOW_UNITS, FeaturesSimulation
 from catchment_simulation.exceptions import (
     InvalidParameterError,
     SimulationError,
@@ -1825,8 +1828,7 @@ def _run_swmm_in_place(inp_path: str) -> None:
         simulation = Simulation(inp_path)
     except _ENGINE_BUSY_ERRORS:
         # pyswmm >= 2.0 refused to open because another simulation is running; closing
-        # the engine would end that one. pyswmm 1.5, which a plain install of swmmio 0.8
-        # gets, has no MultiSimulationError, and the package's tuple is then empty.
+        # the engine would end that one. On pyswmm 1.5 the tuple is empty.
         raise
     except Exception as exc:
         PySWMM().swmm_close()
