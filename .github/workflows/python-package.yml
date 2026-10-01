@@ -7,6 +7,15 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseded PR runs are cancelled; pushes to main and tag runs (which may
+  # publish) always run to completion.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
@@ -19,7 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
     steps:
     - uses: actions/checkout@v6
@@ -33,16 +42,21 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
-      run: uv sync --frozen --extra dev
+      run: uv sync --frozen
 
     - name: Lint with ruff
-      run: uv run ruff check src/
+      run: uv run --frozen ruff check .
+
+    - name: Check formatting with ruff
+      run: uv run --frozen ruff format --check .
 
     - name: Type check with mypy
-      run: uv run mypy src/
+      run: uv run --frozen mypy src/
 
+    # The whole suite (slow tests included) runs in seconds, so nothing is
+    # deselected. xdist doubles as a guard against tests sharing files.
     - name: Test with pytest
-      run: uv run pytest tests/ --cov=catchment_simulation --cov-report=xml -m "not slow"
+      run: uv run --frozen pytest -n auto --cov=catchment_simulation --cov-report=xml
 
     - name: Upload coverage reports to Codecov
       if: ${{ github.actor != 'dependabot[bot]' && env.CODECOV_TOKEN != '' }}
@@ -55,9 +69,40 @@ jobs:
     - name: Minimize uv cache
       run: uv cache prune --ci
 
-  build:
-    needs: test
+  lowest-direct:
+    # Resolves every direct dependency to its declared lower bound, so the
+    # floors in pyproject.toml stay honest.
     runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.10'
+
+    - name: Install lowest direct dependencies
+      run: uv sync --python 3.10 --resolution lowest-direct
+
+    - name: Show resolved versions
+      run: uv pip list
+
+    - name: Test with pytest
+      run: uv run --no-sync pytest -n auto
+
+    - name: Minimize uv cache
+      run: uv cache prune --ci
+
+  build:
+    needs: [test, lowest-direct]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
 
     steps:
     - uses: actions/checkout@v6
@@ -73,8 +118,53 @@ jobs:
     - name: Build package
       run: uv build
 
-    - name: Check package
-      run: uvx twine check dist/*
+    - name: Check package metadata
+      run: uvx twine check --strict dist/*
+
+    - name: List sdist contents
+      run: tar -tzvf dist/*.tar.gz
+
+    - name: List wheel contents
+      run: unzip -l dist/*.whl
+
+    # The version is static in pyproject.toml. On a tag build the tag (without
+    # the leading "v") must equal the version inside the built wheel, which is
+    # what gets uploaded. The prerelease flag routes the upload to TestPyPI.
+    - name: Read version and check it against the tag
+      id: version
+      env:
+        REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+      run: |
+        uv run --no-project --with packaging python - <<'EOF'
+        import glob
+        import os
+        import sys
+        import zipfile
+        from email.parser import Parser
+
+        from packaging.version import Version
+
+        (wheel,) = glob.glob("dist/*.whl")
+        with zipfile.ZipFile(wheel) as zf:
+            (name,) = [n for n in zf.namelist() if n.endswith(".dist-info/METADATA")]
+            version = Parser().parsestr(zf.read(name).decode())["Version"]
+        print(f"Built version: {version}")
+
+        if os.environ["REF_TYPE"] == "tag":
+            tag = os.environ["REF_NAME"].removeprefix("v")
+            if tag != version:
+                print(
+                    f"::error::Tag {os.environ['REF_NAME']} does not match the package "
+                    f"version {version} in pyproject.toml"
+                )
+                sys.exit(1)
+
+        prerelease = str(Version(version).is_prerelease).lower()
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            out.write(f"version={version}\n")
+            out.write(f"prerelease={prerelease}\n")
+        EOF
 
     - name: Store distribution packages
       uses: actions/upload-artifact@v6
@@ -82,10 +172,15 @@ jobs:
         name: python-package-distributions
         path: dist/
 
-  publish:
+  smoke-test:
+    # Installs the built wheel into a clean virtual environment, outside any
+    # checkout, and imports it.
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.14']
 
     steps:
     - name: Install uv
@@ -97,8 +192,68 @@ jobs:
         name: python-package-distributions
         path: dist/
 
-    - name: Publish to PyPI
+    - name: Install the wheel into a clean venv
+      run: |
+        uv venv --python ${{ matrix.python-version }} "$RUNNER_TEMP/smoke"
+        uv pip install --python "$RUNNER_TEMP/smoke" dist/*.whl
+
+    - name: Import the package
+      working-directory: ${{ runner.temp }}
       env:
-        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-      run: uvx twine upload dist/*
+        EXPECTED_VERSION: ${{ needs.build.outputs.version }}
+      run: |
+        "$RUNNER_TEMP/smoke/bin/python" - <<'EOF'
+        import os
+
+        import catchment_simulation
+
+        print(catchment_simulation.__file__)
+        print(catchment_simulation.__version__)
+        assert catchment_simulation.__version__ == os.environ["EXPECTED_VERSION"], (
+            catchment_simulation.__version__
+        )
+        EOF
+
+  publish-pypi:
+    # Final releases only (v0.1.0, v1.2.3, ...).
+    needs: [build, smoke-test]
+    if: github.ref_type == 'tag' && needs.build.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/catchment_simulation
+    permissions:
+      id-token: write
+
+    steps:
+    - name: Download distribution packages
+      uses: actions/download-artifact@v7
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    # Pre-releases only (v0.1.0rc1, v0.2.0b1, ...).
+    needs: [build, smoke-test]
+    if: github.ref_type == 'tag' && needs.build.outputs.prerelease == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/catchment_simulation
+    permissions:
+      id-token: write
+
+    steps:
+    - name: Download distribution packages
+      uses: actions/download-artifact@v7
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Publish to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        repository-url: https://test.pypi.org/legacy/

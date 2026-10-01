@@ -32,7 +32,12 @@ To start contributing to the project, follow these steps:
 - Manage dependencies in `pyproject.toml` only.
 - Regenerate `uv.lock` after dependency changes using `uv lock`.
 - Commit `pyproject.toml` and `uv.lock` in the same pull request.
-- Install local environments with `uv sync --frozen --extra dev --extra web`.
+- Development tools live in PEP 735 dependency groups, not in package extras.
+  `uv sync` installs the `dev` group by default; add `--group web` for the Django app,
+  `--group docs` for Sphinx and `--group e2e` for the Playwright tests, e.g.
+  `uv sync --frozen --group web`.
+- Before pushing, run the same checks as CI: `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run mypy src/` and `uv run pytest -n auto`.
 
 ## Submitting a Pull Request
 
