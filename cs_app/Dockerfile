@@ -4,15 +4,16 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /code
 
-# Copy dependency metadata and package sources so uv can resolve local project deps
-COPY pyproject.toml uv.lock README.md ./
+# Copy dependency metadata and package sources so uv can resolve local project deps.
+# LICENSE is required: pyproject.toml lists it in license-files.
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src src
 
 # Copy static files needed by collectstatic
 COPY cs_app/static static
 
 # Install dependencies (frozen from lock file)
-RUN uv sync --frozen --no-dev --extra web
+RUN uv sync --frozen --no-dev --group web
 
 # Copy the rest of the application code
 COPY cs_app .
