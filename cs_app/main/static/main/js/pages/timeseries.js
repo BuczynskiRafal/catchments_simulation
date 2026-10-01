@@ -28,7 +28,7 @@
     function initRunForm(form) {
         var sweepFields = form.querySelector("#ts-sweep-fields");
         var hint = form.querySelector("#ts-runs-hint");
-        var maxSteps = Number(form.dataset.maxSteps);
+        var maxRuns = Number(form.dataset.maxRuns);
 
         function numberValue(name) {
             var value = form.elements.namedItem(name).value;
@@ -37,7 +37,7 @@
 
         function updateHint() {
             var result = CS.format.sweepRange(
-                numberValue("start"), numberValue("stop"), numberValue("step"), maxSteps
+                numberValue("start"), numberValue("stop"), numberValue("step"), maxRuns
             );
             hint.textContent = result.text;
             hint.classList.toggle("is-warning", result.warning);

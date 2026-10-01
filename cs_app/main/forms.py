@@ -9,14 +9,77 @@ Each form class is built with the help of the Django Forms library and the
 Crispy Forms package.
 """
 
+import math
+
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Submit
 from django import forms
+
+from catchment_simulation.exceptions import InvalidParameterError
+from catchment_simulation.features import FEATURES, MAX_RUNS, FeatureSpec, build_range
 
 from .models import UserProfile
 
 # Same wording as the live range hint on the simulation and timeseries pages.
 STOP_BEFORE_START_MESSAGE = "Stop must be greater than or equal to start."
+
+# A page request runs every value of a sweep in turn, so the site allows far fewer
+# runs than the package does; the run count itself comes from build_range.
+MAX_SWEEP_RUNS = min(100, MAX_RUNS)
+TOO_MANY_RUNS_MESSAGE = (
+    f"Too many runs (max {MAX_SWEEP_RUNS}). Increase the step or narrow the range."
+)
+
+# FeaturesSimulation sweep method -> the SWMM column it varies (and names its result after).
+METHOD_FEATURES = {
+    "simulate_percent_slope": "PercSlope",
+    "simulate_area": "Area",
+    "simulate_width": "Width",
+    "simulate_percent_impervious": "PercImperv",
+    "simulate_percent_zero_imperv": "PctZero",
+    "simulate_curb_length": "CurbLength",
+    "simulate_n_imperv": "N-Imperv",
+    "simulate_n_perv": "N-Perv",
+    "simulate_s_imperv": "S-Imperv",
+    "simulate_s_perv": "S-Perv",
+}
+
+
+def _describe_bounds(spec: FeatureSpec) -> str:
+    """The physical range of a feature in words, e.g. "greater than 0 and at most 100"."""
+    lower = f"at least {spec.minimum:g}" if spec.min_inclusive else f"greater than {spec.minimum:g}"
+    if math.isinf(spec.maximum):
+        return lower
+    if spec.min_inclusive:
+        return f"between {spec.minimum:g} and {spec.maximum:g}"
+    return f"{lower} and at most {spec.maximum:g}"
+
+
+def _clean_sweep_range(form: forms.Form, feature: str, label: str) -> None:
+    """
+    Check start/stop/step the way catchment_simulation will: the values come from
+    build_range, their count must stay within MAX_SWEEP_RUNS and the first and last
+    value must lie in the feature's physical range (FEATURES), so every value does.
+    """
+    start, stop, step = (form.cleaned_data.get(field) for field in ("start", "stop", "step"))
+    if start is None or stop is None or step is None:
+        return  # reported by the field itself
+    if start > stop:
+        form.add_error("stop", STOP_BEFORE_START_MESSAGE)
+        return
+    try:
+        values = build_range(start, stop, step, max_runs=MAX_SWEEP_RUNS)
+    except InvalidParameterError:
+        # The fields guarantee finite values, 0 <= start <= stop and step > 0 (at least
+        # 0.1), so the run count is all that build_range can still reject.
+        form.add_error("step", TOO_MANY_RUNS_MESSAGE)
+        return
+    spec = FEATURES[feature]
+    message = f"{label} must be {_describe_bounds(spec)}."
+    if not spec.contains(values[0]):
+        form.add_error("start", message)
+    if not spec.contains(values[-1]):
+        form.add_error("stop", message)
 
 
 class ContactForm(forms.Form):
@@ -98,6 +161,8 @@ class SimulationForm(forms.Form):
         start: An integer field for the starting value of the parameter range.
         stop: An integer field for the ending value of the parameter range.
         step: An integer field for the step size in the parameter range.
+            The range must give at most MAX_SWEEP_RUNS values, each within the
+            physical range of the swept feature.
         catchment_name: A field for the name of the catchment.
     """
 
@@ -133,7 +198,7 @@ class SimulationForm(forms.Form):
         }
     )
 
-    MAX_SWEEP_STEPS = 100
+    MAX_SWEEP_RUNS = MAX_SWEEP_RUNS
 
     option = forms.ChoiceField(
         label="Parameter to vary",
@@ -191,19 +256,18 @@ class SimulationForm(forms.Form):
         for field in self.RANGE_FIELDS:
             if cleaned_data.get(field) is None and field not in self.errors:
                 self.add_error(field, "This field is required for the selected method.")
-        start = cleaned_data.get("start")
-        stop = cleaned_data.get("stop")
-        step = cleaned_data.get("step")
-        if start is not None and stop is not None and start > stop:
-            self.add_error("stop", STOP_BEFORE_START_MESSAGE)
-        if start is not None and stop is not None and step and step > 0:
-            if (stop - start) / step >= self.MAX_SWEEP_STEPS:
-                self.add_error(
-                    "step",
-                    f"Too many steps (max {self.MAX_SWEEP_STEPS}). "
-                    "Increase step size or reduce range.",
-                )
+        option = cleaned_data.get("option")
+        if option in METHOD_FEATURES:
+            _clean_sweep_range(self, METHOD_FEATURES[option], self.option_label(option))
         return cleaned_data
+
+    @classmethod
+    def option_label(cls, option: str) -> str:
+        """The label the option list shows for a method, e.g. "Slope (%)"."""
+        return next(
+            (label for _, group in cls.OPTIONS for value, label in group if value == option),
+            option,
+        )
 
 
 class TimeseriesForm(forms.Form):
@@ -239,9 +303,11 @@ class TimeseriesForm(forms.Form):
         initial="single",
         widget=forms.RadioSelect(attrs={"class": "btn-check", "autocomplete": "off"}),
     )
+    # Percent impervious takes the whole default range 0-100 (a slope of 0 is not physical).
     feature = forms.ChoiceField(
         label="Parameter to vary",
         choices=FEATURE_CHOICES,
+        initial="PercImperv",
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
@@ -281,7 +347,7 @@ class TimeseriesForm(forms.Form):
         if catchment_choices is not None:
             self.fields["catchment_name"].widget.choices = catchment_choices
 
-    MAX_SWEEP_STEPS = 100
+    MAX_SWEEP_RUNS = MAX_SWEEP_RUNS
     SWEEP_FIELDS = ("feature", "start", "stop", "step")
 
     def clean(self):
@@ -296,16 +362,7 @@ class TimeseriesForm(forms.Form):
         for field in self.SWEEP_FIELDS:
             if cleaned_data.get(field) in (None, "") and field not in self.errors:
                 self.add_error(field, "Required for parameter sweep mode.")
-        start = cleaned_data.get("start")
-        stop = cleaned_data.get("stop")
-        step = cleaned_data.get("step")
-        if start is not None and stop is not None and start > stop:
-            self.add_error("stop", STOP_BEFORE_START_MESSAGE)
-        if start is not None and stop is not None and step and step > 0:
-            if (stop - start) / step >= self.MAX_SWEEP_STEPS:
-                self.add_error(
-                    "step",
-                    f"Too many steps (max {self.MAX_SWEEP_STEPS}). "
-                    "Increase step size or reduce range.",
-                )
+        feature = cleaned_data.get("feature")
+        if feature:
+            _clean_sweep_range(self, feature, dict(self.FEATURE_CHOICES)[feature])
         return cleaned_data

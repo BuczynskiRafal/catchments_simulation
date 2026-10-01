@@ -29,11 +29,11 @@
             return form.elements.namedItem(name);
         });
         var predefined = form.dataset.predefinedMethods.split(" ");
-        var maxSteps = Number(form.dataset.maxSteps);
+        var maxRuns = Number(form.dataset.maxRuns);
 
         function updateHint() {
             var values = inputs.map(readNumber);
-            var result = CS.format.sweepRange(values[0], values[1], values[2], maxSteps);
+            var result = CS.format.sweepRange(values[0], values[1], values[2], maxRuns);
             hint.textContent = result.text;
             hint.classList.toggle("is-warning", result.warning);
             hint.hidden = false;

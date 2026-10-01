@@ -132,7 +132,7 @@
             <p class="cs-eyebrow">Documentation</p>
             <h2 id="overview-title">The Python package</h2>
             <p>Everything this site does comes from the open-source <code>catchment_simulation</code> package, which drives the Storm Water Management Model (SWMM) through pyswmm and swmmio. Its <code>FeaturesSimulation</code> class holds all the methods.</p>
-            <p>The constructor takes two arguments: <code>subcatchment_id</code>, the identifier of the subcatchment you want to simulate, and <code>raw_file</code>, the path to the SWMM input file. It raises <code>FileNotFoundError</code> when the file does not exist and <code>ValueError</code> when the subcatchment is not in the model. Use it as a context manager (<code>with</code> statement) so the temporary files it creates are removed afterwards.</p>
+            <p>The constructor takes two arguments: <code>subcatchment_id</code>, the identifier of the subcatchment you want to simulate, and <code>raw_file</code>, the path to the SWMM input file (a string or a <code>pathlib.Path</code>). It raises <code>FileNotFoundError</code> when the file does not exist and <code>SubcatchmentNotFoundError</code> when the subcatchment is not in the model. Every call cleans up after itself, so no <code>with</code> block is needed. <code>example_model_path()</code> returns the example model that ships with the package, the same one the examples below use.</p>
             <p>Install it with pip:</p>
             <div class="cs-code">
 <pre class="code-snippet"><code>pip install catchment-simulation</code></pre>
@@ -142,33 +142,33 @@
 
         <section class="home-doc" id="simulation-methods" aria-labelledby="simulation-methods-title">
             <h3 id="simulation-methods-title">Simulation methods</h3>
-            <p>Every method runs SWMM on a temporary copy of your model, so the original file is never changed. Sweeps return one row per simulated value.</p>
+            <p>Every method runs SWMM on a temporary copy of your model, so the original file is never changed and every call starts from it. Sweeps return one row per simulated value: the swept feature first, named as its column in the input file (for example <code>PercSlope</code> or <code>S-Imperv</code>), then the results of <code>calculate()</code>. Values outside a feature's physical range, such as a slope of 0, raise <code>InvalidParameterError</code> before any run, and a model SWMM cannot run raises <code>SimulationError</code> with the errors from its report.</p>
 
             <h4 class="home-methods__group">Model and single runs</h4>
             <dl class="home-methods">
-                <dt><code>get_section(section="subcatchments")</code></dt>
-                <dd>Returns the given section of the input file as a pandas DataFrame.</dd>
-                <dt><code>copy_file(copy=None, suffix="copy")</code></dt>
-                <dd>Copies the input file, adding a suffix to its name. Copies the raw file by default.</dd>
                 <dt><code>calculate()</code></dt>
-                <dd>Runs one simulation and returns summary statistics for the subcatchment as a dict with the keys <code>runoff</code>, <code>peak_runoff_rate</code>, <code>infiltration</code> and <code>evaporation</code>.</dd>
+                <dd>Runs the model once and returns summary statistics for the subcatchment as a dict: <code>runoff</code>, <code>infiltration</code>, <code>evaporation</code> and <code>runon</code> are total volumes (m³, or ft³ in US-unit models), <code>peak_runoff_rate</code> is in the model's <code>FLOW_UNITS</code> and <code>precipitation</code> is the total depth (mm or in).</dd>
                 <dt><code>calculate_timeseries()</code></dt>
                 <dd>Runs one simulation and collects every time step. Returns a DataFrame with a <code>DatetimeIndex</code> and the columns <code>rainfall</code>, <code>runoff</code>, <code>infiltration_loss</code>, <code>evaporation_loss</code> and <code>runon</code>. Rainfall and infiltration loss are in mm/h (in/h in US-unit models), evaporation loss in mm/day (in/day), runoff and runon in the model's <code>FLOW_UNITS</code>.</dd>
             </dl>
 
             <h4 class="home-methods__group">Parameter sweeps</h4>
             <dl class="home-methods">
-                <dt><code>simulate_subcatchment(feature, start, stop, step)</code></dt>
-                <dd>Varies any subcatchment feature over a range and returns summary statistics for each value.</dd>
-                <dt><code>simulate_subcatchment_timeseries(feature, start, stop, step)</code></dt>
-                <dd>Like <code>simulate_subcatchment</code>, but keeps the full timeseries of every run: returns a <code>dict[float, pd.DataFrame]</code> keyed by parameter value.</dd>
+                <dt><code>simulate(feature, values)</code></dt>
+                <dd>Runs the model once for every value of a feature (<code>Area</code>, <code>PercImperv</code>, <code>Width</code>, <code>PercSlope</code>, <code>CurbLength</code>, <code>N-Imperv</code>, <code>N-Perv</code>, <code>S-Imperv</code>, <code>S-Perv</code> or <code>PctZero</code>) and returns the summary statistics of each run.</dd>
+                <dt><code>simulate_timeseries(feature, values)</code></dt>
+                <dd>Like <code>simulate</code>, but keeps the full timeseries of every run: returns a <code>dict[float, pd.DataFrame]</code> keyed by value.</dd>
+                <dt><code>build_range(start, stop, step)</code></dt>
+                <dd>The values <code>start</code>, <code>start + step</code>, … up to <code>stop</code>, never past it. The range methods below use it.</dd>
+                <dt><code>simulate_subcatchment(feature, start, stop, step)</code> · <code>simulate_subcatchment_timeseries(feature, start, stop, step)</code></dt>
+                <dd><code>simulate</code> and <code>simulate_timeseries</code> over <code>build_range(start, stop, step)</code>.</dd>
                 <dt><code>simulate_area(start=1, stop=10, step=1)</code></dt>
                 <dd>Sweeps the subcatchment area.</dd>
                 <dt><code>simulate_percent_impervious(start=0, stop=100, step=10)</code></dt>
                 <dd>Sweeps the percentage of impervious area.</dd>
-                <dt><code>simulate_percent_slope(start=0, stop=100, step=10)</code></dt>
+                <dt><code>simulate_percent_slope(start=10, stop=100, step=10)</code></dt>
                 <dd>Sweeps the percent slope.</dd>
-                <dt><code>simulate_width(start=0, stop=100, step=10)</code></dt>
+                <dt><code>simulate_width(start=10, stop=100, step=10)</code></dt>
                 <dd>Sweeps the characteristic width of the overland flow path.</dd>
                 <dt><code>simulate_curb_length(start=0, stop=100, step=10)</code></dt>
                 <dd>Sweeps the total curb length.</dd>
@@ -183,7 +183,7 @@
                 <dt><code>simulate_n_imperv()</code> · <code>simulate_n_perv()</code></dt>
                 <dd>Manning's n for the impervious or the pervious area.</dd>
                 <dt><code>simulate_destore(param)</code></dt>
-                <dd>Runs the subcatchment with depression storage depths from the literature (ASCE, 1992). Takes no range.</dd>
+                <dd>Runs the subcatchment with depression storage depths from the literature (ASCE, 1992), in millimetres or, for a US-unit model, inches. Takes no range.</dd>
                 <dt><code>simulate_s_imperv()</code> · <code>simulate_s_perv()</code></dt>
                 <dd>Depression storage depth for the impervious or the pervious area.</dd>
             </dl>
@@ -193,8 +193,8 @@
             <h3 id="analysis-functions-title">Analysis functions</h3>
             <p>The <code>catchment_simulation.analysis</code> module reads the DataFrame returned by <code>calculate_timeseries()</code>.</p>
             <dl class="home-methods">
-                <dt><code>time_to_peak(timeseries, column="runoff")</code></dt>
-                <dd>Time from the first time step to the peak value, as a <code>pd.Timedelta</code>.</dd>
+                <dt><code>time_to_peak(timeseries, column="runoff", *, start=None)</code></dt>
+                <dd>Time from <code>start</code> (by default the first time step) to the peak value, as a <code>pd.Timedelta</code>.</dd>
                 <dt><code>runoff_volume(timeseries, column="runoff", start=None, end=None)</code></dt>
                 <dd>Total volume from integrating the flow rate over time (trapezoidal rule), optionally between <code>start</code> and <code>end</code>. The result is in flow units × seconds, so cubic metres for a model in CMS.</dd>
             </dl>
@@ -203,15 +203,15 @@
         <section class="home-doc" id="examples" aria-labelledby="examples-title">
             <p class="cs-eyebrow">Examples</p>
             <h2 id="examples-title">Examples on the bundled model</h2>
-            <p>Each chart below comes from running the snippet next to it on the example model that ships with this site (subcatchment <span class="cs-mono">S1</span>). Load the same model in any tool with <em>Try sample data</em>.</p>
+            <p>Each chart below comes from running the snippet next to it on the example model that ships with the package (<code>example_model_path()</code>, subcatchment <span class="cs-mono">S1</span>). Load the same model in any tool with <em>Try sample data</em>.</p>
 
             <article class="home-example" id="example-slope" aria-labelledby="example-slope-title">
                 <h3 id="example-slope-title">Sweep the slope</h3>
                 <div class="cs-code">
-<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation
+<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation, example_model_path
 
-with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
-    df = model.simulate_percent_slope(start=1, stop=100, step=1)</code></pre>
+model = FeaturesSimulation(subcatchment_id="S1", raw_file=example_model_path())
+df = model.simulate_percent_slope(start=1, stop=100, step=1)</code></pre>
                     <button type="button" class="btn btn-sm btn-outline-secondary cs-code__copy">Copy<span class="visually-hidden"> the slope example</span></button>
                 </div>
                 {% include 'main/partials/_home_sweep_chart.html' with key='slope' sweep=sweeps.slope title='Runoff volume against slope' %}
@@ -220,10 +220,10 @@ with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
             <article class="home-example" id="example-area" aria-labelledby="example-area-title">
                 <h3 id="example-area-title">Sweep the area</h3>
                 <div class="cs-code">
-<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation
+<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation, example_model_path
 
-with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
-    df = model.simulate_area(start=1, stop=100, step=1)</code></pre>
+model = FeaturesSimulation(subcatchment_id="S1", raw_file=example_model_path())
+df = model.simulate_area(start=1, stop=100, step=1)</code></pre>
                     <button type="button" class="btn btn-sm btn-outline-secondary cs-code__copy">Copy<span class="visually-hidden"> the area example</span></button>
                 </div>
                 {% include 'main/partials/_home_sweep_chart.html' with key='area' sweep=sweeps.area title='Runoff volume against area' %}
@@ -232,10 +232,10 @@ with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
             <article class="home-example" id="example-width" aria-labelledby="example-width-title">
                 <h3 id="example-width-title">Sweep the width</h3>
                 <div class="cs-code">
-<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation
+<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation, example_model_path
 
-with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
-    df = model.simulate_width(start=10, stop=1000, step=10)</code></pre>
+model = FeaturesSimulation(subcatchment_id="S1", raw_file=example_model_path())
+df = model.simulate_width(start=10, stop=1000, step=10)</code></pre>
                     <button type="button" class="btn btn-sm btn-outline-secondary cs-code__copy">Copy<span class="visually-hidden"> the width example</span></button>
                 </div>
                 {% include 'main/partials/_home_sweep_chart.html' with key='width' sweep=sweeps.width title='Runoff volume against width' %}
@@ -244,10 +244,10 @@ with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
             <article class="home-example" id="example-predefined" aria-labelledby="example-predefined-title">
                 <h3 id="example-predefined-title">Use literature values for Manning's n</h3>
                 <div class="cs-code">
-<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation
+<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation, example_model_path
 
-with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
-    df = model.simulate_n_imperv()</code></pre>
+model = FeaturesSimulation(subcatchment_id="S1", raw_file=example_model_path())
+df = model.simulate_n_imperv()</code></pre>
                     <button type="button" class="btn btn-sm btn-outline-secondary cs-code__copy">Copy<span class="visually-hidden"> the Manning's n example</span></button>
                 </div>
             </article>
@@ -256,10 +256,15 @@ with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
                 <h3 id="example-timeseries-title">Collect a timeseries and its metrics</h3>
                 <p>This is how the storm at the top of the page was computed.</p>
                 <div class="cs-code">
-<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation, runoff_volume, time_to_peak
+<pre class="code-snippet"><code class="language-python">from catchment_simulation import (
+    FeaturesSimulation,
+    example_model_path,
+    runoff_volume,
+    time_to_peak,
+)
 
-with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
-    ts = model.calculate_timeseries()
+model = FeaturesSimulation(subcatchment_id="S1", raw_file=example_model_path())
+ts = model.calculate_timeseries()
 
 ttp = time_to_peak(ts, column="runoff")
 vol = runoff_volume(ts, column="runoff")</code></pre>
@@ -270,12 +275,10 @@ vol = runoff_volume(ts, column="runoff")</code></pre>
             <article class="home-example" id="example-sweep" aria-labelledby="example-sweep-title">
                 <h3 id="example-sweep-title">Sweep a parameter and keep every timeseries</h3>
                 <div class="cs-code">
-<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation
+<pre class="code-snippet"><code class="language-python">from catchment_simulation import FeaturesSimulation, build_range, example_model_path
 
-with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
-    results = model.simulate_subcatchment_timeseries(
-        feature="PercImperv", start=0, stop=100, step=10
-    )
+model = FeaturesSimulation(subcatchment_id="S1", raw_file=example_model_path())
+results = model.simulate_timeseries("PercImperv", build_range(0, 100, 10))
 # results: dict[float, pd.DataFrame], one timeseries per value</code></pre>
                     <button type="button" class="btn btn-sm btn-outline-secondary cs-code__copy">Copy<span class="visually-hidden"> the timeseries sweep example</span></button>
                 </div>

@@ -7,12 +7,14 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import uuid
 from codecs import getincrementaldecoder
 from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache, wraps
 from io import BytesIO, StringIO
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -42,11 +44,25 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from pydantic import ValidationError as PydanticValidationError
 from pyswmm import Simulation
+from pyswmm.errors import MultiSimulationError
+from pyswmm.swmm5 import PySWMM
 
 from catchment_simulation.analysis import runoff_volume, time_to_peak
 from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+from catchment_simulation.exceptions import (
+    InvalidParameterError,
+    SimulationError,
+    SubcatchmentNotFoundError,
+    UnknownFeatureError,
+)
 from catchment_simulation.schemas import SimulationMethodParams
-from main.forms import ContactForm, SimulationForm, TimeseriesForm, UserProfileForm
+from main.forms import (
+    METHOD_FEATURES,
+    ContactForm,
+    SimulationForm,
+    TimeseriesForm,
+    UserProfileForm,
+)
 from main.predictor import predict_runoff
 from main.schemas import ContactMessage
 from main.services import send_message
@@ -83,6 +99,14 @@ CALCULATIONS_RESULTS_TEMPLATE = "main/partials/_calculations_results.html"
 AUTH_REQUIRED_MESSAGE = "Authentication required."
 FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
+SUBCATCHMENT_NOT_FOUND_MESSAGE = "Selected catchment was not found in the uploaded model."
+SWMM_FAILED_MESSAGE = "SWMM could not run the model"
+# SWMM can report an error for every bad line of the model; the page shows the first few.
+MAX_REPORTED_SWMM_ERRORS = 5
+# The sweep outputs the simulation page charts, tabulates and exports, in this order: the
+# volumes and the peak flow of FeaturesSimulation.RESULT_KEYS. Precipitation (a depth,
+# the same in every run) and runon (a volume from upstream subcatchments) are left out.
+SIMULATION_OUTPUT_COLUMNS = ("runoff", "peak_runoff_rate", "infiltration", "evaporation")
 SIM_SESSION_DEFAULTS = {
     "show_download_button": False,
     "chart_config": None,
@@ -100,6 +124,14 @@ class ResultPayloadTooLargeError(ValueError):
 
 class InputValidationError(ValueError):
     """Raised for user-correctable input issues."""
+
+
+class RunFailure(NamedTuple):
+    """How a failed run is reported: the message, the HTTP status and the form field it concerns."""
+
+    message: str
+    status: int
+    field: str | None = None
 
 
 def _is_ajax(request: HttpRequest) -> bool:
@@ -120,32 +152,92 @@ def _form_invalid_json(form: forms.Form) -> JsonResponse:
 
 
 def _run_failed(
-    request: HttpRequest, message: str, status: int, template: str, context: dict
+    request: HttpRequest, failure: RunFailure, template: str, context: dict
 ) -> HttpResponse:
     """
     Report a failed run: JSON for async requests, flash message + page otherwise.
 
-    The async path must not touch ``messages`` - they would surface on the
-    next full page load.
+    A failure that concerns a field of the page's form (``context["form"]``) is
+    also shown on that field. The async path must not touch ``messages`` - they
+    would surface on the next full page load.
     """
+    form = context.get("form")
+    field = failure.field if form is not None and failure.field in form.fields else None
     if _is_ajax(request):
-        return _json_error(message, status)
-    messages.error(request, message)
+        field_errors = {field: [failure.message]} if field else None
+        return _json_error(failure.message, failure.status, field_errors)
+    if field:
+        form.add_error(field, failure.message)
+    messages.error(request, failure.message)
     return render(request, template, context)
 
 
 def _classify_run_error(
     error: Exception, tool: str, too_large_message: str, failed_message: str
-) -> tuple[str, int]:
-    """Log a failed run and return the user-facing message and HTTP status for it."""
+) -> RunFailure:
+    """Log a failed run and return how to report it to the user."""
     if isinstance(error, ResultPayloadTooLargeError):
-        return too_large_message, 413
+        return RunFailure(too_large_message, 413)
+    library_failure = _library_error_failure(error)
+    if library_failure:
+        logger.warning("%s rejected the model or parameters", tool, exc_info=True)
+        return library_failure
     input_error = _coerce_input_validation_error(error)
     if input_error:
         logger.warning("%s input validation failed", tool, exc_info=True)
-        return _format_input_error_message(input_error), 400
+        return RunFailure(_format_input_error_message(input_error), 400)
     logger.exception("%s failed", tool)
-    return failed_message, 500
+    return RunFailure(failed_message, 500)
+
+
+# Directories of an absolute path ("/srv/media/uploads/7/", "C:\\models\\"), which a SWMM
+# error line may contain and the page must not show.
+_PATH_DIRECTORIES = re.compile(r"(?<![\w.])(?:[A-Za-z]:)?[\\/](?:[^\s\\/]+[\\/])+")
+
+
+def _hide_directories(line: str) -> str:
+    """
+    Drop the directories from the file paths in a SWMM error line, keeping the file names.
+
+    The server's own roots go first, with every directory below them, so a root
+    with a space in it is hidden too; any other absolute path loses its directories.
+    """
+    roots = {settings.MEDIA_ROOT, str(settings.BASE_DIR), tempfile.gettempdir()}
+    roots |= {os.path.realpath(root) for root in roots}
+    for root in sorted(roots, key=len, reverse=True):
+        root = root.rstrip("\\/")
+        if root:
+            line = re.sub(re.escape(root) + r"[\\/](?:[^\s\\/]+[\\/])*", "", line)
+    return _PATH_DIRECTORIES.sub("", line)
+
+
+def _simulation_error_message(error: SimulationError) -> str:
+    """The SWMM ERROR lines of a failed run, without server paths and at most a few of them."""
+    lines = [_hide_directories(line) for line in error.report_errors]
+    if not lines:
+        return f"{SWMM_FAILED_MESSAGE}. Open the model in SWMM to find the problem."
+    shown = lines[:MAX_REPORTED_SWMM_ERRORS]
+    message = f"{SWMM_FAILED_MESSAGE}: {' '.join(shown)}"
+    if len(lines) > len(shown):
+        message += f" (and {len(lines) - len(shown)} more errors)"
+    return message
+
+
+def _library_error_failure(error: Exception) -> RunFailure | None:
+    """
+    Report an error of catchment_simulation by its type: invalid input is the user's
+    to correct (400), and so is a model SWMM cannot run, whose report errors are shown.
+    """
+    if isinstance(error, SubcatchmentNotFoundError):
+        return RunFailure(SUBCATCHMENT_NOT_FOUND_MESSAGE, 400, "catchment_name")
+    if isinstance(error, UnknownFeatureError):
+        return RunFailure(str(error), 400, "feature")
+    if isinstance(error, InvalidParameterError):
+        # The package names the parameter, the value and the allowed range.
+        return RunFailure(str(error), 400)
+    if isinstance(error, SimulationError):
+        return RunFailure(_simulation_error_message(error), 400)
+    return None
 
 
 def ajax_login_required(view_func):
@@ -429,11 +521,8 @@ def _coerce_input_validation_error(error: Exception) -> InputValidationError | N
         return InputValidationError("encoding")
 
     if isinstance(error, ValueError):
+        # swmmio and pandas give no specific type for a number they cannot parse in the model.
         lowered = str(error).lower()
-        if "subcatchment" in lowered and "not found" in lowered:
-            return InputValidationError("subcatchment")
-        if "must be <=" in lowered:
-            return InputValidationError("range")
         if "could not convert string to float" in lowered:
             return InputValidationError("non_numeric")
         if "expected numeric" in lowered:
@@ -454,10 +543,6 @@ def _format_input_error_message(error: InputValidationError) -> str:
         return "Input file is missing. Please upload the model again."
     if code == "encoding":
         return "Input file encoding is not supported."
-    if code == "subcatchment":
-        return "Selected catchment was not found in the uploaded model."
-    if code == "range":
-        return "Invalid range values. Ensure start is less than or equal to stop."
     if code == "non_numeric":
         return "Input file contains non-numeric values where numbers are required."
     return "Input file error. Please validate your model and selected parameters."
@@ -939,21 +1024,8 @@ def subcatchments(request: HttpRequest) -> JsonResponse:
 
 
 def get_feature_name(method_name: str) -> str:
-    """Map simulation method name (e.g. ``simulate_area``) to INP column name."""
-
-    feature_map = {
-        "simulate_percent_slope": "PercSlope",
-        "simulate_area": "Area",
-        "simulate_width": "Width",
-        "simulate_percent_impervious": "PercImperv",
-        "simulate_percent_zero_imperv": "Zero-Imperv",
-        "simulate_curb_length": "CurbLength",
-        "simulate_n_imperv": "N-Imperv",
-        "simulate_n_perv": "N-Perv",
-        "simulate_s_imperv": "Destore-Imperv",
-        "simulate_s_perv": "Destore-Perv",
-    }
-    return feature_map.get(method_name, "")
+    """Map a simulation method name (e.g. ``simulate_area``) to the SWMM column it sweeps."""
+    return METHOD_FEATURES.get(method_name, "")
 
 
 def _normalize_flow_units(flow_units: str | None) -> str:
@@ -1045,12 +1117,12 @@ def _build_simulation_axis_labels(
         "Area": "Area [{area}]",
         "Width": "Width [{length}]",
         "PercImperv": "Impervious Area [%]",
-        "Zero-Imperv": "Zero-Impervious Area [%]",
+        "PctZero": "Zero-Impervious Area [%]",
         "CurbLength": "Curb Length [{length}]",
         "N-Imperv": "Manning n (Impervious) [-]",
         "N-Perv": "Manning n (Pervious) [-]",
-        "Destore-Imperv": "Depression Storage (Impervious) [{storage}]",
-        "Destore-Perv": "Depression Storage (Pervious) [{storage}]",
+        "S-Imperv": "Depression Storage (Impervious) [{storage}]",
+        "S-Perv": "Depression Storage (Pervious) [{storage}]",
     }
     y_templates = {
         "runoff": "Total Runoff Volume [{volume}]",
@@ -1208,30 +1280,28 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
         step=form.cleaned_data.get("step") if not is_predefined else None,
         catchment_name=form.cleaned_data["catchment_name"],
     )
-    with FeaturesSimulation(
-        subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
-    ) as model:
-        feature_name = get_feature_name(params.method_name)
-
-        method = getattr(model, params.method_name)
-        if is_predefined:
-            df = method()
-        else:
-            df = method(start=params.start, stop=params.stop, step=params.step)
-        other_cols = [c for c in df.columns if c != feature_name]
-        df = df[[feature_name] + other_cols]
+    model = FeaturesSimulation(subcatchment_id=params.catchment_name, raw_file=uploaded_file_path)
+    feature_name = get_feature_name(params.method_name)
+    method = getattr(model, params.method_name)
+    if is_predefined:
+        df = method()
+    else:
+        df = method(start=params.start, stop=params.stop, step=params.step)
+    # The chart, the table and the download all show exactly these columns.
+    output_columns = list(SIMULATION_OUTPUT_COLUMNS)
+    df = df[[feature_name, *output_columns]]
 
     flow_units = _read_flow_units(uploaded_file_path)
     x_label, y_labels = _build_simulation_axis_labels(
         feature_name=feature_name,
-        y_columns=other_cols,
+        y_columns=output_columns,
         flow_units=flow_units,
     )
     output_file_name = f"{request.user.username}_simulation_result_{_timestamp_suffix()}.xlsx"
     chart_config = {
         "data": json.loads(df.to_json(orient="records")),
         "x": feature_name,
-        "y": other_cols,
+        "y": output_columns,
         "title": f"Dependence of runoff on subcatchment {feature_name}.",
         "xLabel": x_label,
         "yLabels": y_labels,
@@ -1281,7 +1351,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     try:
         _run_simulation(request, form)
     except Exception as error:
-        message, status = _classify_run_error(
+        failure = _classify_run_error(
             error,
             "Simulation",
             "Result set is too large to keep for download. Narrow the simulation range.",
@@ -1290,8 +1360,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
         # A failed run leaves the previous result in place, so the page keeps showing it.
         return _run_failed(
             request,
-            message,
-            status,
+            failure,
             SIMULATION_TEMPLATE,
             {"form": form, **get_session_variables(request)},
         )
@@ -1522,46 +1591,46 @@ def _run_timeseries(request: HttpRequest, form: TimeseriesForm) -> None:
     chart_config = {"mode": mode, "columns": ts_columns, "xLabel": x_label, "yLabels": y_labels}
     timestamp = _timestamp_suffix()
 
-    with FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path) as model:
-        if mode == "single":
-            ts_df = model.calculate_timeseries()
-            data = _timeseries_records(ts_df)
-            summary = {"metrics": _hydrograph_metrics(ts_df, volume_factor)}
-            chart_config["title"] = f"Timeseries for subcatchment {catchment_name}"
-            output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
-        else:
-            feature = form.cleaned_data["feature"]
-            results = model.simulate_subcatchment_timeseries(
-                feature=feature,
-                start=form.cleaned_data["start"],
-                stop=form.cleaned_data["stop"],
-                step=form.cleaned_data["step"],
-            )
-            # The formatted values are the chart legend, the Excel sheet names and the CSV column.
-            runs = {_format_parameter_value(value): ts_df for value, ts_df in results.items()}
-            data = {value: _timeseries_records(ts_df) for value, ts_df in runs.items()}
-            summary = {
-                "sweep_summary": [
-                    {"value": value, **_hydrograph_metrics(ts_df, volume_factor)}
-                    for value, ts_df in runs.items()
-                ]
-            }
-            # The same label as the simulation page's axis: "Percent Slope [%]".
-            parameter_label, _ = _build_simulation_axis_labels(feature, [], flow_units)
-            parameter_name = parameter_label.split(" [")[0]
-            chart_config.update(
-                title=f"Timeseries sweep: {parameter_name} for {catchment_name}",
-                parameterLabel=parameter_label,
-                parameterName=parameter_name,
-                catchment=catchment_name,
-                # Rainfall is the same input in every run, so only the flows can be compared.
-                series=[
-                    {"field": column, "label": y_labels[column]}
-                    for column in ts_columns
-                    if column != "rainfall"
-                ],
-            )
-            output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
+    model = FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path)
+    if mode == "single":
+        ts_df = model.calculate_timeseries()
+        data = _timeseries_records(ts_df)
+        summary = {"metrics": _hydrograph_metrics(ts_df, volume_factor)}
+        chart_config["title"] = f"Timeseries for subcatchment {catchment_name}"
+        output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
+    else:
+        feature = form.cleaned_data["feature"]
+        results = model.simulate_subcatchment_timeseries(
+            feature=feature,
+            start=form.cleaned_data["start"],
+            stop=form.cleaned_data["stop"],
+            step=form.cleaned_data["step"],
+        )
+        # The formatted values are the chart legend, the Excel sheet names and the CSV column.
+        runs = {_format_parameter_value(value): ts_df for value, ts_df in results.items()}
+        data = {value: _timeseries_records(ts_df) for value, ts_df in runs.items()}
+        summary = {
+            "sweep_summary": [
+                {"value": value, **_hydrograph_metrics(ts_df, volume_factor)}
+                for value, ts_df in runs.items()
+            ]
+        }
+        # The same label as the simulation page's axis: "Percent Slope [%]".
+        parameter_label, _ = _build_simulation_axis_labels(feature, [], flow_units)
+        parameter_name = parameter_label.split(" [")[0]
+        chart_config.update(
+            title=f"Timeseries sweep: {parameter_name} for {catchment_name}",
+            parameterLabel=parameter_label,
+            parameterName=parameter_name,
+            catchment=catchment_name,
+            # Rainfall is the same input in every run, so only the flows can be compared.
+            series=[
+                {"field": column, "label": y_labels[column]}
+                for column in ts_columns
+                if column != "rainfall"
+            ],
+        )
+        output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
 
     payload = {
         "mode": mode,
@@ -1612,7 +1681,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
     try:
         _run_timeseries(request, form)
     except Exception as error:
-        message, status = _classify_run_error(
+        failure = _classify_run_error(
             error,
             "Timeseries analysis",
             "Result set is too large to keep for download. Narrow the timeseries range.",
@@ -1621,8 +1690,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
         # A failed run leaves the previous result in place, so the page keeps showing it.
         return _run_failed(
             request,
-            message,
-            status,
+            failure,
             TIMESERIES_TEMPLATE,
             {"form": form, **_get_timeseries_session_variables(request)},
         )
@@ -1635,7 +1703,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
 
 
 def _cleanup_swmm_side_files(inp_path: str) -> None:
-    """Remove .rpt and .out files generated by SWMM alongside a .inp file."""
+    """Remove the .rpt and .out files that the comparison's in-place SWMM run writes."""
     base = os.path.splitext(inp_path)[0]
     for ext in FeaturesSimulation.SWMM_SIDE_EXTENSIONS:
         if ext == ".inp":
@@ -1681,15 +1749,47 @@ def _check_in_user_upload_dir(path: str, user_id: int) -> None:
         raise InputValidationError("invalid_path")
 
 
+def _swmm_report_errors(report_path: str) -> list[str]:
+    """The ``ERROR`` lines of a SWMM report file; none when it cannot be read."""
+    try:
+        with open(report_path, encoding="utf-8", errors="replace") as report:
+            return [line.strip() for line in report if line.strip().startswith("ERROR")]
+    except OSError:
+        return []
+
+
+def _run_swmm_in_place(inp_path: str) -> None:
+    """
+    Run SWMM on the model, leaving its report next to it for swmmio to read.
+
+    FeaturesSimulation cannot do this: it deletes the report of every run. A failure
+    raises SimulationError carrying the report's ERROR lines, like the package does.
+    A failed open leaves the engine half-open with the report unflushed, so the
+    engine is closed first (as catchment_simulation does), or the errors are lost.
+    """
+    report_path = os.path.splitext(inp_path)[0] + ".rpt"
+    try:
+        simulation = Simulation(inp_path)
+    except MultiSimulationError:
+        raise
+    except Exception as exc:
+        PySWMM().swmm_close()
+        raise SimulationError(SWMM_FAILED_MESSAGE, _swmm_report_errors(report_path)) from exc
+    try:
+        with simulation:
+            for _ in simulation:
+                pass
+    except Exception as exc:
+        raise SimulationError(SWMM_FAILED_MESSAGE, _swmm_report_errors(report_path)) from exc
+
+
 def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
     """Run SWMM on the model and pair its runoff with the ANN prediction, in the model's volume unit."""
     # pyswmm reports a missing file as a bare Exception, so check up front.
     if not os.path.isfile(inp_path):
         raise InputValidationError("missing_file")
     try:
-        with Simulation(inp_path) as sim:
-            for _ in sim:
-                pass
+        _run_swmm_in_place(inp_path)
         # Build the model after SWMM run so report-derived columns are available.
         swmmio_model = swmmio.Model(inp_path)
         subcatchments = swmmio_model.subcatchments.dataframe
@@ -1778,7 +1878,7 @@ def _run_calculations(request: HttpRequest) -> HttpResponse:
     try:
         _run_comparison(request)
     except Exception as error:
-        message, status = _classify_run_error(
+        failure = _classify_run_error(
             error,
             "Calculations",
             "The comparison is too large to keep. Use a model with fewer subcatchments.",
@@ -1787,8 +1887,7 @@ def _run_calculations(request: HttpRequest) -> HttpResponse:
         # A failed run leaves the previous comparison in place, so the page keeps showing it.
         return _run_failed(
             request,
-            message,
-            status,
+            failure,
             CALCULATIONS_TEMPLATE,
             {"comparison": _load_comparison(request)},
         )

@@ -85,12 +85,12 @@ class TestSimulationRangeHint:
         sp.set_range(0, 100, 10)
         expect(sp.range_hint).to_have_text("11 runs · 0 → 100, step 10")
         expect(sp.range_hint).not_to_have_class(re.compile(r"\bis-warning\b"))
-        # The package sweeps np.arange(start, stop + step / 2, step): 0, 4, 8 and 12.
+        # The package's build_range never passes stop: 0, 4 and 8.
         sp.set_range(0, 11, 4)
-        expect(sp.range_hint).to_have_text("4 runs · 0 → 11, step 4")
+        expect(sp.range_hint).to_have_text("3 runs · 0 → 11, step 4")
 
     def test_hint_warns_over_server_limit(self, auth_page: Page, live_server) -> None:
-        """Warns (without blocking) once (stop - start) / step reaches the form's limit of 100."""
+        """Warns (without blocking) once the run count passes the form's limit of 100."""
         sp = _open(auth_page, live_server)
         sp.set_range(0, 99, 1)
         expect(sp.range_hint).to_have_text("100 runs · 0 → 99, step 1")
@@ -210,6 +210,23 @@ class TestSimulationValidation:
         expect(sp.loading_spinner).to_be_hidden()
         expect(sp.empty_state).to_be_visible()
         assert sp.window_is_marked()
+
+    def test_value_outside_physical_range_shows_field_error(
+        self, auth_page: Page, live_server
+    ) -> None:
+        """A slope of 0 is rejected on the start field, with the range the package accepts."""
+        sp = _open(auth_page, live_server)
+        sp.load_sample_and_select_catchment()
+        sp.set_option("simulate_percent_slope")
+        sp.set_range(0, 10, 5)
+
+        sp.run_simulation()
+
+        expect(sp.start_input).to_have_class(re.compile(r"\bis-invalid\b"))
+        expect(sp.page.locator("#id_start-async-error")).to_have_text(
+            "Slope (%) must be greater than 0 and at most 100."
+        )
+        expect(sp.run_button).to_be_enabled()
 
     def test_field_error_clears_on_input(self, auth_page: Page, live_server) -> None:
         sp = _open(auth_page, live_server)

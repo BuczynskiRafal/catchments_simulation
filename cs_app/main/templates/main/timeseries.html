@@ -39,7 +39,7 @@
             </div>
 
             <form method="post" action="{% url 'main:timeseries' %}" id="timeseries-form" class="ts-form"
-                  data-max-steps="{{ form.MAX_SWEEP_STEPS }}">
+                  data-max-runs="{{ form.MAX_SWEEP_RUNS }}">
                 {% csrf_token %}
                 {% if form.non_field_errors %}
                 <div class="alert alert-danger" role="alert">{{ form.non_field_errors|join:" " }}</div>

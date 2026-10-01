@@ -19,6 +19,7 @@ from django.test import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
 
+from catchment_simulation import FeaturesSimulation, example_model_path
 from main.views import (
     MODEL_DIGEST_SESSION_KEY,
     RESULT_SESSION_KEYS,
@@ -41,6 +42,23 @@ from main.views import (
     upload_sample,
     upload_status,
 )
+
+
+def _sweep_frame(feature: str, values) -> pd.DataFrame:
+    """A sweep result laid out like FeaturesSimulation's: the feature column, then RESULT_KEYS."""
+    values = [float(value) for value in values]
+    frame = pd.DataFrame({feature: values})
+    for offset, key in enumerate(FeaturesSimulation.RESULT_KEYS, start=1):
+        frame[key] = [offset * (index + 1.0) for index in range(len(values))]
+    return frame
+
+
+@pytest.fixture
+def example_model(tmp_path):
+    """A copy of the package's example model, so SWMM's side files stay out of the repo."""
+    path = tmp_path / "example.inp"
+    path.write_bytes(example_model_path().read_bytes())
+    return str(path)
 
 
 @pytest.mark.django_db
@@ -283,19 +301,8 @@ def test_simulation_view_post_range_persists_form_state(client, user, monkeypatc
             self.subcatchment_id = subcatchment_id
             self.raw_file = raw_file
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
         def simulate_percent_slope(self, start, stop, step):
-            return pd.DataFrame(
-                {
-                    "PercSlope": [start, stop],
-                    "runoff": [1.0, 2.0],
-                }
-            )
+            return _sweep_frame("PercSlope", [start, stop])
 
     monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
 
@@ -328,6 +335,17 @@ def test_simulation_view_post_range_persists_form_state(client, user, monkeypatc
     chart_config = payload["chart_config"]
     assert chart_config["xLabel"] == "Percent Slope [%]"
     assert chart_config["yLabels"]["runoff"] == "Total Runoff Volume [m³]"
+    # Precipitation and runon are computed but not shown, charted or exported.
+    assert payload["results_columns"] == [
+        "PercSlope",
+        "runoff",
+        "peak_runoff_rate",
+        "infiltration",
+        "evaporation",
+    ]
+    assert chart_config["y"] == payload["results_columns"][1:]
+    assert list(chart_config["yLabels"]) == payload["results_columns"][1:]
+    assert all(len(row) == 5 for row in payload["results_data"])
 
     get_response = client.get(reverse("main:simulation"))
     assert get_response.status_code == 200
@@ -356,20 +374,8 @@ def test_simulation_view_post_uses_fallback_labels_when_flow_units_missing(
             self.subcatchment_id = subcatchment_id
             self.raw_file = raw_file
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
         def simulate_percent_slope(self, start, stop, step):
-            return pd.DataFrame(
-                {
-                    "PercSlope": [start, stop],
-                    "runoff": [1.0, 2.0],
-                    "peak_runoff_rate": [0.3, 0.6],
-                }
-            )
+            return _sweep_frame("PercSlope", [start, stop])
 
     monkeypatch.setattr("main.views.FeaturesSimulation", DummyFeaturesSimulation)
 
@@ -405,14 +411,7 @@ def test_simulation_view_post_failure_does_not_persist_form_state(client, user, 
 
     class FailingFeaturesSimulation:
         def __init__(self, subcatchment_id, raw_file):
-            self.subcatchment_id = subcatchment_id
-            self.raw_file = raw_file
-
-        def __enter__(self):
             raise RuntimeError("boom")
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
 
     monkeypatch.setattr("main.views.FeaturesSimulation", FailingFeaturesSimulation)
 
@@ -443,14 +442,7 @@ def test_simulation_view_validation_error_shows_human_message(client, user, monk
 
     class InvalidInputFeaturesSimulation:
         def __init__(self, subcatchment_id, raw_file):
-            self.subcatchment_id = subcatchment_id
-            self.raw_file = raw_file
-
-        def __enter__(self):
             raise ValueError("Expected numeric value in slope sheet.")
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
 
     monkeypatch.setattr("main.views.FeaturesSimulation", InvalidInputFeaturesSimulation)
 
@@ -484,15 +476,8 @@ def test_simulation_view_rejects_oversized_cached_payload(client, user, monkeypa
             self.subcatchment_id = subcatchment_id
             self.raw_file = raw_file
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
         def simulate_percent_slope(self, start, stop, step):
-            size = 2000
-            return pd.DataFrame({"PercSlope": list(range(size)), "runoff": list(range(size))})
+            return _sweep_frame("PercSlope", range(1, 2001))
 
     monkeypatch.setattr("main.views.FeaturesSimulation", HugeFeaturesSimulation)
     monkeypatch.setattr("main.views.MAX_RESULT_CACHE_BYTES", 200)
@@ -502,13 +487,14 @@ def test_simulation_view_rejects_oversized_cached_payload(client, user, monkeypa
         data={
             "option": "simulate_percent_slope",
             "start": "1",
-            "stop": "2000",
+            "stop": "5",
             "step": "1",
             "catchment_name": "S1",
         },
     )
 
     assert response.status_code == 200
+    assert b"Result set is too large to keep for download." in response.content
     assert SIM_RESULT_TOKEN_SESSION_KEY not in client.session
 
 
@@ -1656,12 +1642,6 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
             self.subcatchment_id = subcatchment_id
             self.raw_file = raw_file
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
         def simulate_subcatchment_timeseries(self, feature, start, stop, step):
             idx = pd.date_range("2025-01-01", periods=2, freq="h", name="datetime")
             df = pd.DataFrame(
@@ -1682,7 +1662,7 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
         reverse("main:timeseries"),
         data={
             "mode": "sweep",
-            "feature": "PercSlope",
+            "feature": "PercImperv",
             "start": "0",
             "stop": "20",
             "step": "5",
@@ -1696,7 +1676,7 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
     updated_session = client.session
     assert updated_session["ts_form_state"] == {
         "mode": "sweep",
-        "feature": "PercSlope",
+        "feature": "PercImperv",
         "start": 0.0,
         "stop": 20.0,
         "step": 5.0,
@@ -1719,7 +1699,7 @@ def test_timeseries_view_post_sweep_persists_form_state(client, user, monkeypatc
     assert get_response.status_code == 200
     form = get_response.context["form"]
     assert form["mode"].value() == "sweep"
-    assert form["feature"].value() == "PercSlope"
+    assert form["feature"].value() == "PercImperv"
     assert float(form["start"].value()) == 0.0
     assert float(form["stop"].value()) == 20.0
     assert float(form["step"].value()) == 5.0
@@ -1743,12 +1723,6 @@ def test_timeseries_view_post_single_adds_axis_labels(client, user, monkeypatch)
         def __init__(self, subcatchment_id, raw_file):
             self.subcatchment_id = subcatchment_id
             self.raw_file = raw_file
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
 
         def calculate_timeseries(self):
             idx = pd.date_range("2025-01-01", periods=3, freq="h", name="datetime")
@@ -2247,14 +2221,7 @@ def test_timeseries_view_post_failure_does_not_persist_form_state(client, user, 
 
     class FailingFeaturesSimulation:
         def __init__(self, subcatchment_id, raw_file):
-            self.subcatchment_id = subcatchment_id
-            self.raw_file = raw_file
-
-        def __enter__(self):
             raise RuntimeError("boom")
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
 
     monkeypatch.setattr("main.views.FeaturesSimulation", FailingFeaturesSimulation)
 
@@ -2262,7 +2229,7 @@ def test_timeseries_view_post_failure_does_not_persist_form_state(client, user, 
         reverse("main:timeseries"),
         data={
             "mode": "sweep",
-            "feature": "PercSlope",
+            "feature": "PercImperv",
             "start": "0",
             "stop": "20",
             "step": "5",
@@ -2339,7 +2306,7 @@ def test_timeseries_form_sweep_start_zero_is_valid():
     form = TimeseriesForm(
         data={
             "mode": "sweep",
-            "feature": "PercSlope",
+            "feature": "PercImperv",
             "start": "0",
             "stop": "100",
             "step": "10",
@@ -3032,14 +2999,9 @@ def test_get_catchment_choices_model_without_subcatchments(tmp_path):
 
 
 @pytest.mark.django_db
-def test_subcatchments_with_real_inp_file(user):
+def test_subcatchments_with_real_inp_file(user, example_model):
     """subcatchments returns correct IDs from a real INP file."""
-    fixture_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "tests", "fixtures", "example.inp"
-    )
-    fixture_path = os.path.abspath(fixture_path)
-    if not os.path.exists(fixture_path):
-        pytest.skip("example.inp fixture not found")
+    fixture_path = example_model
 
     factory = RequestFactory()
     request = factory.get(
@@ -3061,14 +3023,9 @@ def test_subcatchments_with_real_inp_file(user):
 
 
 @pytest.mark.django_db
-def test_subcatchment_ids_cached_in_session(user):
+def test_subcatchment_ids_cached_in_session(user, example_model):
     """_get_subcatchment_ids caches results in the session."""
-    fixture_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "tests", "fixtures", "example.inp"
-    )
-    fixture_path = os.path.abspath(fixture_path)
-    if not os.path.exists(fixture_path):
-        pytest.skip("example.inp fixture not found")
+    fixture_path = example_model
 
     factory = RequestFactory()
     request = factory.get("/")
