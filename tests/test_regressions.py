@@ -300,9 +300,70 @@ def test_us_unit_model_sweeps_depression_storage_in_inches(
     sim = FeaturesSimulation("S1", us_model)
     assert sim.flow_units == "CFS"
     assert sim.simulate_s_imperv()["S-Imperv"].tolist() == [0.05, 0.1, 0.2, 0.3]
-    assert FeaturesSimulation("S1", model_path).simulate_s_perv()["S-Perv"].tolist() == list(
-        FeaturesSimulation.DEPRESSION_STORAGE_VALUES
+    # SI models get the same depths in millimetres, without conversion noise.
+    assert FeaturesSimulation("S1", model_path).simulate_s_perv()["S-Perv"].tolist() == [
+        1.27,
+        2.54,
+        5.08,
+        7.62,
+    ]
+
+
+# --- A subcatchment without a [SUBAREAS] row ------------------------------------------------
+
+
+def add_subcatchment_without_subareas(model_path: Path, target: Path) -> Path:
+    """Copy the model to *target* with a second subcatchment, S2, missing from [SUBAREAS]."""
+    s1 = next(line for line in model_path.read_text().splitlines() if line.startswith("S1 "))
+    infiltration = "S1               3.5        0.5        0.25"
+    return write_variant(
+        model_path,
+        target,
+        (s1, f"{s1}\n{s1.replace('S1', 'S2', 1)}"),
+        (infiltration, f"{infiltration}\n{infiltration.replace('S1', 'S2', 1)}"),
     )
+
+
+def test_swmm_runs_a_subcatchment_without_subareas_silently(
+    model_path: Path, tmp_path: Path
+) -> None:
+    # Why the package refuses to sweep it: SWMM reports no error and zero runoff.
+    model = add_subcatchment_without_subareas(model_path, tmp_path / "s2" / "example.inp")
+    result = FeaturesSimulation("S2", model).calculate()
+    assert result["runoff"] == 0
+    assert result["precipitation"] > 0
+
+
+@pytest.mark.parametrize("feature", ["N-Imperv", "N-Perv", "S-Imperv", "S-Perv", "PctZero"])
+def test_subarea_sweep_of_subcatchment_without_subareas_raises_before_any_run(
+    feature: str, model_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = add_subcatchment_without_subareas(model_path, tmp_path / "s2" / "example.inp")
+    original = model.read_bytes()
+    sim = FeaturesSimulation("S2", model)
+
+    def no_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("SWMM must not run for a subcatchment without subareas")
+
+    monkeypatch.setattr(cfs_module, "Simulation", no_run)
+    with pytest.raises(InvalidParameterError, match=r"'S2' has no row in the \[SUBAREAS\]"):
+        sim.simulate(feature, [1])
+    with pytest.raises(InvalidParameterError, match="SUBAREAS"):
+        sim.simulate_timeseries(feature, [1])
+    assert model.read_bytes() == original
+
+
+def test_subarea_methods_of_subcatchment_without_subareas_raise(
+    model_path: Path, tmp_path: Path
+) -> None:
+    sim = FeaturesSimulation(
+        "S2", add_subcatchment_without_subareas(model_path, tmp_path / "s2.inp")
+    )
+    for method in (sim.simulate_n_imperv, sim.simulate_s_perv, sim.simulate_percent_zero_imperv):
+        with pytest.raises(InvalidParameterError, match="SUBAREAS"):
+            method()
+    # Its [SUBCATCHMENTS] features still sweep.
+    assert sim.simulate_area(1, 2, 1)["Area"].tolist() == [1.0, 2.0]
 
 
 # --- P-S5: implementation details are deprecated, still working ----------------------------

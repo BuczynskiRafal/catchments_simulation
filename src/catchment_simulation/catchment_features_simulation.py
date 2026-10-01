@@ -139,9 +139,9 @@ class FeaturesSimulation:
     # Source: ASCE (1992), Design & Construction of Urban Stormwater Management Systems, New York, NY.
     DEPRESSION_STORAGE_VALUES_IN: tuple[float, ...] = (0.05, 0.1, 0.2, 0.3)
     DEPRESSION_STORAGE_VALUES: tuple[float, ...] = tuple(
-        val * 25.4 for val in DEPRESSION_STORAGE_VALUES_IN
+        round(val * 25.4, 2) for val in DEPRESSION_STORAGE_VALUES_IN
     )
-    """Depression storage depths in mm, converted from :attr:`DEPRESSION_STORAGE_VALUES_IN`."""
+    """Depression storage depths in mm: :attr:`DEPRESSION_STORAGE_VALUES_IN` rounded to 0.01 mm."""
 
     def __init__(self, subcatchment_id: str, raw_file: str | os.PathLike[str]) -> None:
         self.subcatchment_id = subcatchment_id
@@ -249,6 +249,13 @@ class FeaturesSimulation:
         checked = validate_values(name, values)
         spec = FEATURES[name]
         section = self._pristine[spec.attribute].copy()
+        if self.subcatchment_id not in section.index:
+            # Setting the value would add a row of blanks, which SWMM rejects. Left alone,
+            # SWMM runs such a subcatchment with zero runoff and no warning.
+            raise InvalidParameterError(
+                f"Subcatchment {self.subcatchment_id!r} has no row in the {spec.section} "
+                f"section of the model, so {name} cannot be simulated."
+            )
         section[name] = section[name].astype(float)
         results = []
         with self._working_copy() as work:
@@ -324,8 +331,9 @@ class FeaturesSimulation:
         UnknownFeatureError
             If *feature* is not a sweepable feature.
         InvalidParameterError
-            If *values* is empty or a value is outside the feature's physical
-            range; raised before any run.
+            If *values* is empty, a value is outside the feature's physical
+            range, or the subcatchment has no row in the feature's section
+            (e.g. ``[SUBAREAS]``); raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """
@@ -360,8 +368,9 @@ class FeaturesSimulation:
         UnknownFeatureError
             If *feature* is not a sweepable feature.
         InvalidParameterError
-            If *values* is empty or a value is outside the feature's physical
-            range; raised before any run.
+            If *values* is empty, a value is outside the feature's physical
+            range, or the subcatchment has no row in the feature's section
+            (e.g. ``[SUBAREAS]``); raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """
@@ -392,8 +401,9 @@ class FeaturesSimulation:
         Raises
         ------
         InvalidParameterError
-            If the range is invalid (see :func:`~catchment_simulation.build_range`)
-            or leaves the feature's physical range.
+            If the range is invalid (see :func:`~catchment_simulation.build_range`),
+            leaves the feature's physical range, or the subcatchment has no row
+            in the feature's section; raised before any run.
         UnknownFeatureError
             If *feature* is not a sweepable feature.
         SimulationError
@@ -424,7 +434,8 @@ class FeaturesSimulation:
         Raises
         ------
         InvalidParameterError
-            If the range is invalid or leaves the feature's physical range.
+            If the range is invalid, leaves the feature's physical range, or the
+            subcatchment has no row in the feature's section; raised before any run.
         UnknownFeatureError
             If *feature* is not a sweepable feature.
         SimulationError
@@ -574,7 +585,8 @@ class FeaturesSimulation:
         Raises
         ------
         InvalidParameterError
-            If the range is invalid or includes a value outside [0, 100]; raised before any run.
+            If the range is invalid, includes a value outside [0, 100], or the
+            subcatchment has no ``[SUBAREAS]`` row; raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """
@@ -597,7 +609,8 @@ class FeaturesSimulation:
         Raises
         ------
         InvalidParameterError
-            If *param* is not ``"Imperv"`` or ``"Perv"``.
+            If *param* is not ``"Imperv"`` or ``"Perv"``, or the subcatchment
+            has no ``[SUBAREAS]`` row; raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """
@@ -614,6 +627,8 @@ class FeaturesSimulation:
 
         Raises
         ------
+        InvalidParameterError
+            If the subcatchment has no ``[SUBAREAS]`` row; raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """
@@ -630,6 +645,8 @@ class FeaturesSimulation:
 
         Raises
         ------
+        InvalidParameterError
+            If the subcatchment has no ``[SUBAREAS]`` row; raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """
@@ -655,7 +672,8 @@ class FeaturesSimulation:
         Raises
         ------
         InvalidParameterError
-            If *param* is not ``"Imperv"`` or ``"Perv"``.
+            If *param* is not ``"Imperv"`` or ``"Perv"``, or the subcatchment
+            has no ``[SUBAREAS]`` row; raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """
@@ -675,6 +693,8 @@ class FeaturesSimulation:
 
         Raises
         ------
+        InvalidParameterError
+            If the subcatchment has no ``[SUBAREAS]`` row; raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """
@@ -691,6 +711,8 @@ class FeaturesSimulation:
 
         Raises
         ------
+        InvalidParameterError
+            If the subcatchment has no ``[SUBAREAS]`` row; raised before any run.
         SimulationError
             If SWMM fails to run the model.
         """

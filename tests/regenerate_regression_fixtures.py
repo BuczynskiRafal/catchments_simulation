@@ -32,6 +32,7 @@ CASES: dict[str, tuple[str, dict[str, float]]] = {
     "area": ("simulate_area", {"start": 1, "stop": 5, "step": 1}),
     "percent_impervious": ("simulate_percent_impervious", {"start": 0, "stop": 50, "step": 10}),
     "n_imperv": ("simulate_n_imperv", {}),
+    "s_imperv": ("simulate_s_imperv", {}),
 }
 
 

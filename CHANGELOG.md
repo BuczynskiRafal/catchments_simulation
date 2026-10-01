@@ -47,6 +47,14 @@ input, plus the result column names. Read **Changed** before upgrading.
 - Depression storage sweeps wrote millimetre values into US-unit models
   (25.4 times too large). Models with `CFS`, `GPM` or `MGD` flow units are now
   swept in inches.
+- Sweeping a `[SUBAREAS]` feature (`N-Imperv`, `N-Perv`, `S-Imperv`,
+  `S-Perv`, `PctZero`) of a subcatchment that has no `[SUBAREAS]` row wrote
+  an incomplete row into the model and failed inside SWMM with `ERROR 203`.
+  It now raises `InvalidParameterError` before the first run. (SWMM itself
+  runs such a subcatchment with zero runoff and no warning.)
+- `DEPRESSION_STORAGE_VALUES` held the millimetre conversion with
+  floating-point noise (`7.619999999999999`); the values are rounded to
+  0.01 mm now: 1.27, 2.54, 5.08 and 7.62. Results are unchanged.
 - `time_to_peak` did not reject an all-NaN column, and `runoff_volume`
   integrated data with an unsorted or non-datetime index. Both raise
   `ValueError` now.
