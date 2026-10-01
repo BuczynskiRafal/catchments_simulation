@@ -11,4 +11,5 @@ prune img
 prune .github
 exclude audit*.md
 
-global-exclude *.py[cod] .DS_Store
+# SWMM writes .rpt/.out next to every model it runs; never ship run output.
+global-exclude *.py[cod] .DS_Store *.rpt *.out
