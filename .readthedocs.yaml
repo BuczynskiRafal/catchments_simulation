@@ -11,8 +11,8 @@ sphinx:
   configuration: docs/source/conf.py
 
 # Read the Docs runs `uv sync` against pyproject.toml and uv.lock. The docs
-# group carries Sphinx; the web group is needed because docs/source/conf.py
-# calls django.setup() for the cs_app pages.
+# group carries Sphinx. The web group adds Django for the cs_app pages;
+# without it docs/source/conf.py builds the package pages only.
 python:
   install:
     - method: uv
