@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, get_args
 from uuid import uuid4
 
 import pandas as pd
@@ -31,7 +31,6 @@ from .features import FEATURES, Feature, build_range, validate_feature, validate
 T = TypeVar("T")
 
 Surface = Literal["Imperv", "Perv"]
-_SURFACES: tuple[Surface, ...] = ("Imperv", "Perv")
 
 US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
 """``FLOW_UNITS`` values for which SWMM uses US customary units."""
@@ -753,9 +752,10 @@ def _deprecated(name: str, instead: str) -> None:
 
 
 def _surface_feature(prefix: Literal["N", "S"], param: str) -> Feature:
-    if param not in _SURFACES:
+    surfaces = get_args(Surface)
+    if param not in surfaces:
         raise InvalidParameterError(
-            f"Unknown surface {param!r}. Allowed values: {', '.join(_SURFACES)}"
+            f"Unknown surface {param!r}. Allowed values: {', '.join(surfaces)}"
         )
     return validate_feature(f"{prefix}-{param}")
 

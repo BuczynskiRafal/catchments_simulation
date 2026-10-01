@@ -73,6 +73,8 @@ class SimulationError(CatchmentSimulationError, RuntimeError):
 
     Attributes
     ----------
+    message : str
+        What failed, without the report lines.
     report_errors : tuple of str
         The ``ERROR ...`` lines SWMM wrote to the run's report file; empty
         when the report holds none.
