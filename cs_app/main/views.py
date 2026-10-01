@@ -44,11 +44,13 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from pydantic import ValidationError as PydanticValidationError
 from pyswmm import Simulation
-from pyswmm.errors import MultiSimulationError
 from pyswmm.swmm5 import PySWMM
 
 from catchment_simulation.analysis import runoff_volume, time_to_peak
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+from catchment_simulation.catchment_features_simulation import (
+    _ENGINE_BUSY_ERRORS,
+    FeaturesSimulation,
+)
 from catchment_simulation.exceptions import (
     InvalidParameterError,
     SimulationError,
@@ -1783,7 +1785,10 @@ def _run_swmm_in_place(inp_path: str) -> None:
     report_path = os.path.splitext(inp_path)[0] + ".rpt"
     try:
         simulation = Simulation(inp_path)
-    except MultiSimulationError:
+    except _ENGINE_BUSY_ERRORS:
+        # pyswmm >= 2.0 refused to open because another simulation is running; closing
+        # the engine would end that one. pyswmm 1.5, which a plain install of swmmio 0.8
+        # gets, has no MultiSimulationError, and the package's tuple is then empty.
         raise
     except Exception as exc:
         PySWMM().swmm_close()

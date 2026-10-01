@@ -1,8 +1,11 @@
+import os
+import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+from pathlib import Path
 
 import pytest
 
@@ -149,3 +152,46 @@ def test_env_bool_invalid_value_logs_warning(monkeypatch, caplog):
 
     assert result is True
     assert "Ignoring invalid PRELOAD_MODEL='maybe'" in caplog.text
+
+
+def test_views_import_with_pyswmm_without_multi_simulation_error():
+    """pyswmm 1.5, which a plain install of swmmio 0.8 gets, has no MultiSimulationError."""
+    code = (
+        "import pyswmm.errors\n"
+        "del pyswmm.errors.MultiSimulationError\n"
+        "import django\n"
+        "django.setup()\n"
+        "import main.views\n"
+        "assert main.views._ENGINE_BUSY_ERRORS == ()\n"
+    )
+    app_dir = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "DJANGO_SETTINGS_MODULE": "cs_app.test_settings"}
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=app_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_refused_open_is_reraised_without_closing_the_engine(monkeypatch):
+    """With pyswmm 2, a second simulation is refused; closing the engine would end the first."""
+    errors = pytest.importorskip("pyswmm.errors")
+    if not hasattr(errors, "MultiSimulationError"):
+        pytest.skip("pyswmm < 2.0 does not refuse a second simulation")
+    from main import views
+
+    def refuse(*args, **kwargs):
+        raise errors.MultiSimulationError("Multi-Simulation Error.")
+
+    def no_close():
+        raise AssertionError("the running simulation's engine must stay open")
+
+    monkeypatch.setattr(views, "Simulation", refuse)
+    monkeypatch.setattr(views, "PySWMM", no_close)
+    with pytest.raises(errors.MultiSimulationError):
+        views._run_swmm_in_place("model.inp")
