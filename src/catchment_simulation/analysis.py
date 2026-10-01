@@ -16,8 +16,10 @@ import pandas as pd
 def time_to_peak(
     timeseries: pd.DataFrame,
     column: str = "runoff",
+    *,
+    start: pd.Timestamp | datetime | None = None,
 ) -> pd.Timedelta:
-    """Calculate the elapsed time from simulation start to the peak value.
+    """Calculate the time from a reference instant to the peak value.
 
     Parameters
     ----------
@@ -26,17 +28,24 @@ def time_to_peak(
         :meth:`FeaturesSimulation.calculate_timeseries`.
     column : str, optional
         Column to analyse, defaults to ``"runoff"``.
+    start : pd.Timestamp | datetime | None, optional
+        Reference instant, e.g. the simulation's ``START_DATE``/``START_TIME``.
+        Defaults to the first timestamp of *timeseries*. A hydrograph from
+        :meth:`FeaturesSimulation.calculate_timeseries` is stamped at the end
+        of each routing step, so its first timestamp is one step after the
+        simulation start.
 
     Returns
     -------
     pd.Timedelta
-        Time elapsed from the first timestamp to the peak.
+        Time elapsed from *start* to the first occurrence of the peak.
 
     Raises
     ------
     ValueError
-        If *timeseries* is empty, *column* is not present, or all values
-        in the column are zero (no meaningful peak).
+        If *timeseries* is empty, *column* is not present, the column is all
+        NaN or all zero (no meaningful peak), or *start* is later than the
+        first timestamp.
     """
     if timeseries.empty:
         raise ValueError("Cannot compute time to peak on an empty timeseries.")
@@ -44,10 +53,18 @@ def time_to_peak(
         raise ValueError(
             f"Column '{column}' not found. Available columns: {list(timeseries.columns)}"
         )
-    if timeseries[column].max() == 0:
+    values = timeseries[column]
+    if values.isna().all():
+        raise ValueError(f"All values in column '{column}' are NaN — no meaningful peak exists.")
+    if values.max() == 0:
         raise ValueError(f"All values in column '{column}' are zero — no meaningful peak exists.")
-    peak_time = timeseries[column].idxmax()
-    return peak_time - timeseries.index[0]
+    reference = timeseries.index[0] if start is None else pd.Timestamp(start)
+    if reference > timeseries.index[0]:
+        raise ValueError(
+            f"start ({reference}) is later than the first timestamp ({timeseries.index[0]})."
+        )
+    peak_time = values.idxmax()
+    return pd.Timedelta(peak_time - reference)
 
 
 def runoff_volume(
@@ -87,9 +104,16 @@ def runoff_volume(
     Raises
     ------
     ValueError
-        If *column* is not present or the (sliced) timeseries has fewer
-        than 2 data points.
+        If the index is not a monotonically increasing ``DatetimeIndex``,
+        *column* is not present, or the (sliced) timeseries has fewer than
+        2 data points.
     """
+    if not isinstance(timeseries.index, pd.DatetimeIndex):
+        raise ValueError(
+            f"The timeseries needs a DatetimeIndex, not {type(timeseries.index).__name__}."
+        )
+    if not timeseries.index.is_monotonic_increasing:
+        raise ValueError("The timeseries index must be sorted in increasing order.")
     if column not in timeseries.columns:
         raise ValueError(
             f"Column '{column}' not found. Available columns: {list(timeseries.columns)}"

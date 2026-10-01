@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -34,12 +35,26 @@ def test_time_to_peak_numerical_correctness() -> None:
     assert time_to_peak(hourly([0.0, 1.0, 3.0, 0.5])) == pd.Timedelta(hours=2)
 
 
+def test_time_to_peak_from_explicit_start() -> None:
+    frame = hourly([0.0, 1.0, 3.0, 0.5])
+    start = frame.index[0] - pd.Timedelta(minutes=5)
+    assert time_to_peak(frame, start=start) == pd.Timedelta(hours=2, minutes=5)
+    assert time_to_peak(frame, start=frame.index[0].to_pydatetime()) == pd.Timedelta(hours=2)
+
+
+def test_time_to_peak_rejects_start_after_first_timestamp() -> None:
+    frame = hourly([0.0, 3.0])
+    with pytest.raises(ValueError, match="later than the first timestamp"):
+        time_to_peak(frame, start=frame.index[1])
+
+
 @pytest.mark.parametrize(
     ("frame", "column", "match"),
     [
         (pd.DataFrame(columns=["runoff"]), "runoff", "empty"),
         (hourly([1.0]), "nonexistent", "not found"),
         (hourly([0.0, 0.0, 0.0]), "runoff", "zero"),
+        (hourly([np.nan, np.nan]), "runoff", "NaN"),
     ],
 )
 def test_time_to_peak_rejects_degenerate_input(
@@ -67,6 +82,16 @@ def test_runoff_volume_numerical_correctness() -> None:
     index = pd.date_range("2022-01-01", periods=3, freq="50s", name="datetime")
     frame = pd.DataFrame({"runoff": [2.0, 2.0, 2.0]}, index=index)
     assert runoff_volume(frame) == pytest.approx(200.0)
+
+
+def test_runoff_volume_rejects_non_datetime_index() -> None:
+    with pytest.raises(ValueError, match="DatetimeIndex"):
+        runoff_volume(pd.DataFrame({"runoff": [1.0, 2.0]}))
+
+
+def test_runoff_volume_rejects_unsorted_index() -> None:
+    with pytest.raises(ValueError, match="sorted"):
+        runoff_volume(hourly([1.0, 2.0, 3.0]).iloc[::-1])
 
 
 @pytest.mark.parametrize(
