@@ -158,7 +158,8 @@ def test_views_import_with_pyswmm_without_multi_simulation_error():
     """pyswmm 1.5, which a plain install of swmmio 0.8 gets, has no MultiSimulationError."""
     code = (
         "import pyswmm.errors\n"
-        "del pyswmm.errors.MultiSimulationError\n"
+        "if hasattr(pyswmm.errors, 'MultiSimulationError'):\n"
+        "    del pyswmm.errors.MultiSimulationError\n"
         "import django\n"
         "django.setup()\n"
         "import main.views\n"
