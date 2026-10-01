@@ -21,15 +21,18 @@ input, plus the result column names. Read **Changed** before upgrading.
 - A second sweep of the same section on one instance (for example
   `simulate_area()` then `simulate_width()`) ran on the values left by the
   first sweep and returned wrong results. Every sweep now starts from the
-  model file on disk.
+  model as it was read when the instance was created.
 - The working copy of the model was written to the current working directory
   under a fixed name: models with relative `FILE` references (rain gauge or
   time series files) failed with SWMM `ERROR 361`, two instances on
   same-named models in different directories overwrote each other's files,
   and `.inp`/`.rpt`/`.out` files were left behind. Each call now copies the
-  model to a uniquely named file next to the original (or to the system temp
-  directory when that directory is read-only) and deletes the copy, its report
-  and its output before returning. Nothing is written to the working
+  model to a uniquely named file next to the original and deletes the copy,
+  its report and its output before returning. Nothing is written to the
+  working directory. When the model's directory is read-only, the copy goes to
+  a new private temporary directory, removed afterwards, so a relative `FILE`
+  reference fails with a `SimulationError` that says the directory is not
+  writable, instead of picking up an unrelated file from the shared temp
   directory.
 - A typo in a parameter, such as `simulate_destore("imperv")`, was silently
   ignored and returned a constant result. It now raises
@@ -46,7 +49,7 @@ input, plus the result column names. Read **Changed** before upgrading.
   accepted now.
 - Depression storage sweeps wrote millimetre values into US-unit models
   (25.4 times too large). Models with `CFS`, `GPM` or `MGD` flow units are now
-  swept in inches.
+  swept in inches. `FLOW_UNITS` is read case-insensitively, as SWMM reads it.
 - Sweeping a `[SUBAREAS]` feature (`N-Imperv`, `N-Perv`, `S-Imperv`,
   `S-Perv`, `PctZero`) of a subcatchment that has no `[SUBAREAS]` row wrote
   an incomplete row into the model and failed inside SWMM with `ERROR 203`.
@@ -55,8 +58,9 @@ input, plus the result column names. Read **Changed** before upgrading.
 - `DEPRESSION_STORAGE_VALUES` held the millimetre conversion with
   floating-point noise (`7.619999999999999`); the values are rounded to
   0.01 mm now: 1.27, 2.54, 5.08 and 7.62. Results are unchanged.
-- `time_to_peak` did not reject an all-NaN column or a non-datetime index,
-  and `runoff_volume` integrated data with an unsorted or non-datetime index.
+- `time_to_peak` did not reject an all-NaN column or an unsorted or
+  non-datetime index (an unsorted one could give a negative time), and
+  `runoff_volume` integrated data with an unsorted or non-datetime index.
   Both raise `ValueError` now.
 
 ### Changed
@@ -68,6 +72,9 @@ input, plus the result column names. Read **Changed** before upgrading.
   `precipitation` and `runon`.
 - `calculate()` and `calculate_timeseries()` always run the unmodified model.
   Before, a call after a sweep ran the last swept value.
+- A `FeaturesSimulation` reads the model file once, when it is created, and
+  every call runs that snapshot. Changes to the file afterwards are not seen;
+  create a new instance to run them.
 - `simulate_width()` and `simulate_percent_slope()` start at 10 by default
   (was 0, which is not a physical value).
 - Invalid ranges raise `InvalidParameterError` instead of pydantic's

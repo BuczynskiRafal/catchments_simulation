@@ -212,13 +212,16 @@ A missing model file raises `FileNotFoundError`.
 
 ## How runs work
 
-Every call copies the model to a uniquely named file next to it, so relative
-`FILE` references (rain gauges, time series) keep resolving, runs SWMM on the
-copy and deletes the copy with its `.rpt` and `.out` files before returning.
-The original file is never modified and every call starts from it, so results
-do not depend on earlier calls. If the model's directory is not writable, the
-copy goes to the system temporary directory, where relative `FILE` references
-cannot resolve.
+A `FeaturesSimulation` reads the model file once, when it is created: changes
+to the file afterwards are not seen, so create a new instance to run them.
+Every call writes that model to a uniquely named file next to the original, so
+relative `FILE` references (rain gauges, time series) keep resolving, runs
+SWMM on the copy and deletes the copy with its `.rpt` and `.out` files before
+returning. The original file is never modified and every call starts from the
+model as it was read, so results do not depend on earlier calls. If the
+model's directory is not writable, the copy goes to a new private temporary
+directory, where relative `FILE` references cannot resolve: the run fails with
+a `SimulationError` that says so.
 
 SWMM runs one simulation per process at a time, so a `FeaturesSimulation` is
 not thread-safe. To run sweeps in parallel, use processes:

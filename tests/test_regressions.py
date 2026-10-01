@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import pickle
 import stat
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -86,6 +87,28 @@ def test_pk1_calculate_after_sweep_runs_the_original_model(model_path: Path) -> 
     )
 
 
+def test_pk1_changes_to_the_file_after_construction_are_not_seen(
+    model_path: Path, tmp_path: Path
+) -> None:
+    original = write_variant(model_path, tmp_path / "original" / "example.inp")
+    sim = FeaturesSimulation("S1", model_path)
+    # A smaller S1 ([SUBCATCHMENTS], which the instance edits) and a heavier storm
+    # ([TIMESERIES], which it does not): a mix of the two models would show.
+    write_variant(
+        model_path,
+        model_path,
+        ("J1               5        25", "J1               2        25"),
+        ("test_series                 5          12", "test_series                 5          40"),
+    )
+    fresh = FeaturesSimulation("S1", original)
+    assert FeaturesSimulation("S1", model_path).calculate() != pytest.approx(fresh.calculate())
+
+    assert sim.calculate() == pytest.approx(fresh.calculate())
+    assert_frame_equal(sim.calculate_timeseries(), fresh.calculate_timeseries())
+    assert_frame_equal(sim.simulate_width(10, 20, 10), fresh.simulate_width(10, 20, 10))
+    assert_frame_equal(sim.simulate_n_perv(), fresh.simulate_n_perv())
+
+
 # --- P-K2: working file in the CWD under a fixed name --------------------------------------
 
 
@@ -153,6 +176,32 @@ def test_pk2_read_only_model_directory_falls_back_to_temp_dir(
 
     assert_frame_equal(result, expected)
     assert files_under(model_dir) == {"example.inp"}
+
+
+@pytest.mark.parametrize("decoy", [False, True], ids=["no-decoy", "decoy-in-temp-dir"])
+def test_pk2_read_only_model_directory_never_resolves_files_in_the_temp_dir(
+    model_path: Path, tmp_path: Path, request: pytest.FixtureRequest, decoy: bool
+) -> None:
+    external = move_rain_to_file(model_path, tmp_path / "read-only" / "example.inp", "rain.dat")
+    if decoy:
+        # An unrelated rain file in the shared temp dir, with valid but different data.
+        records = [line.split() for line in (external.parent / "rain.dat").read_text().splitlines()]
+        (Path(tempfile.gettempdir()) / "rain.dat").write_text(
+            "".join(f"{hour} {2 * float(value)}\n" for hour, value in records)
+        )
+    model_dir = external.parent
+    model_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)
+    request.addfinalizer(lambda: model_dir.chmod(stat.S_IRWXU))
+    if os.access(model_dir, os.W_OK):
+        pytest.skip("the model directory stays writable (root or Windows)")
+
+    with pytest.raises(SimulationError, match="not writable") as excinfo:
+        FeaturesSimulation("S1", external).calculate()
+
+    assert "relative FILE references" in str(excinfo.value)
+    assert any("ERROR 361" in line for line in excinfo.value.report_errors)
+    assert files_under(model_dir) == {"example.inp", "rain.dat"}
+    assert files_under(Path(tempfile.gettempdir())) == ({"rain.dat"} if decoy else set())
 
 
 # --- P-K3: misspelled names gave silent, constant results ----------------------------------
@@ -307,6 +356,26 @@ def test_us_unit_model_sweeps_depression_storage_in_inches(
         5.08,
         7.62,
     ]
+
+
+@pytest.mark.parametrize(
+    ("option", "flow_units", "depths"),
+    [
+        ("flow_units cms", "CMS", [1.27, 2.54, 5.08, 7.62]),
+        ("Flow_Units Cms", "CMS", [1.27, 2.54, 5.08, 7.62]),
+        ("flow_units cfs", "CFS", [0.05, 0.1, 0.2, 0.3]),
+    ],
+)
+def test_flow_units_option_is_case_insensitive(
+    model_path: Path, tmp_path: Path, option: str, flow_units: str, depths: list[float]
+) -> None:
+    # SWMM matches keywords case-insensitively, so this is still a CMS (or CFS) model.
+    model = write_variant(
+        model_path, tmp_path / "case" / "example.inp", ("FLOW_UNITS           CMS", option)
+    )
+    sim = FeaturesSimulation("S1", model)
+    assert sim.flow_units == flow_units
+    assert sim.simulate_s_imperv()["S-Imperv"].tolist() == depths
 
 
 # --- A subcatchment without a [SUBAREAS] row ------------------------------------------------

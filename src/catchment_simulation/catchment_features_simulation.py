@@ -11,7 +11,7 @@ import os
 import shutil
 import tempfile
 import warnings
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, get_args
 from uuid import uuid4
@@ -49,14 +49,18 @@ US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
 class FeaturesSimulation:
     """Sweep the features of one subcatchment of a SWMM model.
 
-    Every public call copies the model to a uniquely named working file next to
-    the source, so relative ``FILE`` references in the model keep resolving,
-    runs SWMM on the copy and deletes the copy, its report and its output
-    before returning. The source file is never modified and every call starts
-    from it, so a result never depends on earlier calls. If the source
-    directory is not writable, the copy goes to the system temp directory,
-    where relative ``FILE`` references cannot resolve; SWMM's error then
-    surfaces as :class:`SimulationError`.
+    The instance reads the model file once, when it is created, and works on
+    that snapshot: changes to the file after construction are not seen, so
+    create a new instance to run them. Every public call writes the snapshot to
+    a uniquely named working file next to the source, so relative ``FILE``
+    references in the model keep resolving, runs SWMM on the copy and deletes
+    the copy, its report and its output before returning. The source file is
+    never modified and every call starts from the snapshot, so a result never
+    depends on earlier calls. If the source directory is not writable, the copy
+    goes to a new private temporary directory, removed afterwards, where
+    relative ``FILE`` references cannot resolve (they are never looked up in
+    the shared temp directory); SWMM's error then surfaces as
+    :class:`SimulationError`, whose message says so.
 
     SWMM runs one simulation per process at a time: an instance is not
     thread-safe, and parallel sweeps need separate processes. pyswmm 2 refuses
@@ -149,14 +153,18 @@ class FeaturesSimulation:
         self.subcatchment_id = subcatchment_id
         self.raw_file = os.fspath(raw_file)
         self._source = Path(raw_file).resolve(strict=True)
+        self._snapshot = self._source.read_bytes()
         self._copies: list[Path] = []
-        inp = swmmio.Model(str(self._source)).inp
-        self._pristine: dict[str, pd.DataFrame] = {
-            attribute: getattr(inp, attribute).copy()
-            for attribute in {spec.attribute for spec in FEATURES.values()}
-        }
-        options = inp.options["Value"]
-        self.flow_units = str(options.get("FLOW_UNITS", "CFS")).upper()
+        # Parse the snapshot itself, so the sections always match the model that runs.
+        with self._working_copy() as work:
+            inp = swmmio.Model(str(work)).inp
+            self._pristine: dict[str, pd.DataFrame] = {
+                attribute: getattr(inp, attribute).copy()
+                for attribute in {spec.attribute for spec in FEATURES.values()}
+            }
+            # SWMM keywords are case-insensitive.
+            options = {str(key).upper(): value for key, value in inp.options["Value"].items()}
+        self.flow_units = str(options.get("FLOW_UNITS", "CFS")).strip().upper()
         available = [str(name) for name in self._pristine["subcatchments"].index]
         if subcatchment_id not in available:
             raise SubcatchmentNotFoundError(subcatchment_id, available)
@@ -189,18 +197,26 @@ class FeaturesSimulation:
 
     @contextmanager
     def _working_copy(self) -> Iterator[Path]:
-        """Yield a fresh copy of the source model; delete it and its SWMM outputs afterwards."""
-        work = self._source.with_name(f"{self._source.stem}.cs-{uuid4().hex[:8]}.inp")
-        try:
-            shutil.copyfile(self._source, work)
-        except OSError:
-            _remove_swmm_files(work)
-            work = Path(tempfile.gettempdir()) / work.name
-            shutil.copyfile(self._source, work)
-        try:
+        """Yield a fresh copy of the model snapshot; delete it and its SWMM outputs afterwards.
+
+        The copy goes next to the source. If that directory is not writable, it
+        goes to a new private temporary directory, never to the shared temp
+        directory itself, where a relative ``FILE`` reference could pick up an
+        unrelated file of the same name.
+        """
+        with ExitStack() as cleanup:
+            work = self._source.with_name(f"{self._source.stem}.cs-{uuid4().hex[:8]}.inp")
+            try:
+                work.write_bytes(self._snapshot)
+            except OSError:
+                _remove_swmm_files(work)
+                private_dir = cleanup.enter_context(
+                    tempfile.TemporaryDirectory(prefix=f"{self._source.stem}.cs-")
+                )
+                work = Path(private_dir) / work.name
+                work.write_bytes(self._snapshot)
+            cleanup.callback(_remove_swmm_files, work)
             yield work
-        finally:
-            _remove_swmm_files(work)
 
     def _run(
         self, inp: Path, on_step: Callable[[Any, Any], None] | None = None
@@ -223,6 +239,12 @@ class FeaturesSimulation:
             message = f"SWMM failed to run {self._source.name}"
             if not errors:
                 message += f": {str(exc).strip() or type(exc).__name__}"
+            if inp.parent != self._source.parent:
+                message += (
+                    f"\nThe directory of {self._source.name} is not writable, so SWMM ran"
+                    " a copy of the model in a temporary directory, where relative FILE"
+                    " references in the model could not be resolved."
+                )
             raise SimulationError(message, errors) from exc
         return statistics
 
@@ -247,7 +269,7 @@ class FeaturesSimulation:
         """Run *run* once per value with *feature* of the subcatchment set to that value.
 
         Every value is validated before the first run, and every sweep starts
-        from the source model.
+        from the model snapshot.
         """
         name = validate_feature(feature)
         checked = validate_values(name, values)
@@ -275,7 +297,7 @@ class FeaturesSimulation:
         """Run the unmodified model and return the subcatchment's statistics.
 
         Before 0.1.0 a call after a sweep ran the last swept value; it now
-        always runs the model as it is on disk.
+        always runs the model as it was read when the instance was created.
 
         Returns
         -------

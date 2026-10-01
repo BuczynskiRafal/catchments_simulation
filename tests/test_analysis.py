@@ -70,6 +70,12 @@ def test_time_to_peak_rejects_degenerate_input(
         time_to_peak(frame, column=column)
 
 
+def test_time_to_peak_rejects_unsorted_index() -> None:
+    # Reversed, the first timestamp is the latest: the peak would lie before it.
+    with pytest.raises(ValueError, match="sorted"):
+        time_to_peak(hourly([1.0, 3.0, 2.0]).iloc[::-1])
+
+
 # --- runoff_volume -------------------------------------------------------------------------
 
 

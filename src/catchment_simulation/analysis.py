@@ -46,15 +46,18 @@ def time_to_peak(
     Raises
     ------
     ValueError
-        If *timeseries* is empty or has no ``DatetimeIndex``, *column* is not
-        present, the column is all NaN or all zero (no meaningful peak), or
-        *start* is later than the first timestamp.
+        If *timeseries* is empty, its index is not a monotonically increasing
+        ``DatetimeIndex``, *column* is not present, the column is all NaN or
+        all zero (no meaningful peak), or *start* is later than the first
+        timestamp.
     """
     if timeseries.empty:
         raise ValueError("Cannot compute time to peak on an empty timeseries.")
     index = timeseries.index
     if not isinstance(index, pd.DatetimeIndex):
         raise ValueError(f"The timeseries needs a DatetimeIndex, not {type(index).__name__}.")
+    if not index.is_monotonic_increasing:
+        raise ValueError("The timeseries index must be sorted in increasing order.")
     if column not in timeseries.columns:
         raise ValueError(
             f"Column '{column}' not found. Available columns: {list(timeseries.columns)}"
