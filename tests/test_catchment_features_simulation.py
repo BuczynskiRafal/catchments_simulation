@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -18,6 +18,9 @@ from catchment_simulation import (
     build_range,
 )
 from catchment_simulation.features import FEATURES
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 RESULT_COLUMNS = list(FeaturesSimulation.RESULT_KEYS)
 
@@ -272,6 +275,6 @@ def test_manning_n_values() -> None:
 def test_depression_storage_values() -> None:
     inches = FeaturesSimulation.DEPRESSION_STORAGE_VALUES_IN
     assert inches == (0.05, 0.1, 0.2, 0.3)
-    assert FeaturesSimulation.DEPRESSION_STORAGE_VALUES == pytest.approx(
-        [value * 25.4 for value in inches]
-    )
+    millimetres = FeaturesSimulation.DEPRESSION_STORAGE_VALUES
+    assert millimetres == (1.27, 2.54, 5.08, 7.62)
+    assert millimetres == pytest.approx([value * 25.4 for value in inches])

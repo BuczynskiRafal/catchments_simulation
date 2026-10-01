@@ -42,7 +42,7 @@ class TestSimulationParams:
             SimulationParams(start=0, stop=10, step=-5)
 
     def test_start_greater_than_stop_rejected(self):
-        with pytest.raises(ValidationError, match="start .* must be <= stop"):
+        with pytest.raises(ValidationError, match=r"start .* must be <= stop"):
             SimulationParams(start=100, stop=10, step=1)
 
     def test_float_values_accepted(self):
@@ -296,7 +296,7 @@ class TestSimulationMethodParams:
             )
 
     def test_start_greater_than_stop_rejected(self):
-        with pytest.raises(ValidationError, match="start .* must be <= stop"):
+        with pytest.raises(ValidationError, match=r"start .* must be <= stop"):
             SimulationMethodParams(
                 method_name="simulate_area",
                 start=50,
@@ -359,14 +359,13 @@ class TestSimulationMethodParams:
 
     def test_predefined_methods_constant(self):
         """Test that PREDEFINED_METHODS contains expected methods."""
-        assert SimulationMethodParams.PREDEFINED_METHODS == frozenset(
-            {
-                "simulate_n_imperv",
-                "simulate_n_perv",
-                "simulate_s_imperv",
-                "simulate_s_perv",
-            }
-        )
+        predefined = SimulationMethodParams.PREDEFINED_METHODS
+        assert predefined == {
+            "simulate_n_imperv",
+            "simulate_n_perv",
+            "simulate_s_imperv",
+            "simulate_s_perv",
+        }
 
 
 class TestConsistencyWithLibrary:

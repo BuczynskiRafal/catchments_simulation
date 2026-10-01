@@ -92,8 +92,35 @@ target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B"]
-ignore = ["E501"]
+select = [
+    "E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "PERF", "C4", "RET", "PT", "NPY", "PD",
+    "TC", "D",
+]
+ignore = [
+    "E501",  # line length is the formatter's job; long strings and URLs stay unbroken
+]
+# The web app's copy uses typographic characters on purpose ("model flow units × s",
+# "didn’t match"); the tests and page objects match that text.
+allowed-confusables = ["×", "’"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.flake8-type-checking]
+# pydantic resolves field annotations at runtime, so their imports must stay real.
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
+[tool.ruff.lint.per-file-ignores]
+# Docstrings are required for the published library only, not for tests, the web app or docs.
+"tests/**" = ["D"]
+"docs/**" = ["D"]
+# The web app hands str paths to and from Django storage, the session and pyswmm, so
+# os.path is the native type there; moving it to pathlib is a refactor of its own.
+"cs_app/**" = ["D", "PTH"]
+# Django declares form options (Meta.fields, labels, error_messages) as mutable class
+# attributes and copies them; migrations are generated.
+"cs_app/**/forms.py" = ["RUF012"]
+"cs_app/**/migrations/*.py" = ["RUF012"]
 
 [tool.mypy]
 python_version = "3.10"

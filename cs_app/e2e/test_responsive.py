@@ -33,7 +33,7 @@ class TestResponsiveHome:
     """Home page at different viewport sizes."""
 
     @pytest.mark.parametrize(
-        "viewport_name,viewport",
+        ("viewport_name", "viewport"),
         VIEWPORTS.items(),
         ids=VIEWPORTS.keys(),
     )
@@ -46,7 +46,7 @@ class TestResponsiveHome:
         assert hp.get_main_heading() is not None
 
     @pytest.mark.parametrize(
-        "viewport_name,viewport",
+        ("viewport_name", "viewport"),
         VIEWPORTS.items(),
         ids=VIEWPORTS.keys(),
     )
@@ -148,7 +148,7 @@ class TestResponsiveSimulation:
     """Simulation page form layout at different viewports (requires auth)."""
 
     @pytest.mark.parametrize(
-        "viewport_name,viewport",
+        ("viewport_name", "viewport"),
         [("mobile", VIEWPORTS["mobile"]), ("tablet", VIEWPORTS["tablet"])],
         ids=["mobile", "tablet"],
     )

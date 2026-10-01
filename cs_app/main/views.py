@@ -958,7 +958,7 @@ def upload_status(request: HttpRequest) -> JsonResponse:
                 }
             )
         except OSError:
-            # File disappeared between session set and now – clean up
+            # File disappeared between session set and now - clean up
             request.session.pop("uploaded_file_path", None)
     return JsonResponse({"has_file": False})
 
@@ -1249,9 +1249,12 @@ def _get_form_initial(
         if coerced_value is None:
             continue
 
-        if isinstance(field, forms.ChoiceField) and field_name != "catchment_name":
-            if not field.valid_value(coerced_value):
-                continue
+        if (
+            isinstance(field, forms.ChoiceField)
+            and field_name != "catchment_name"
+            and not field.valid_value(coerced_value)
+        ):
+            continue
 
         initial[field_name] = coerced_value
 
@@ -1309,7 +1312,7 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
     payload = {
         "chart_config": chart_config,
         "results_columns": df.columns.tolist(),
-        "results_data": df.values.tolist(),
+        "results_data": df.to_numpy().tolist(),
         "feature_name": feature_name,
         "output_file_name": output_file_name,
     }
@@ -1708,10 +1711,8 @@ def _cleanup_swmm_side_files(inp_path: str) -> None:
     for ext in FeaturesSimulation.SWMM_SIDE_EXTENSIONS:
         if ext == ".inp":
             continue
-        try:
+        with suppress(OSError):
             os.remove(base + ext)
-        except OSError:
-            pass
 
 
 def calculations(request: HttpRequest) -> HttpResponse:

@@ -11,11 +11,9 @@ import os
 import shutil
 import tempfile
 import warnings
-from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from types import TracebackType
-from typing import Any, Literal, TypeVar, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, get_args
 from uuid import uuid4
 
 import pandas as pd
@@ -26,6 +24,10 @@ from swmmio.utils.modify_model import replace_inp_section
 
 from .exceptions import InvalidParameterError, SimulationError, SubcatchmentNotFoundError
 from .features import FEATURES, Feature, build_range, validate_feature, validate_values
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
+    from types import TracebackType
 
 try:
     from pyswmm.errors import MultiSimulationError
@@ -98,9 +100,9 @@ class FeaturesSimulation:
     ['PercImperv', 'runoff', 'peak_runoff_rate']
     """
 
-    SWMM_SIDE_EXTENSIONS: tuple[str, ...] = (".inp", ".rpt", ".out")
+    SWMM_SIDE_EXTENSIONS: ClassVar[tuple[str, ...]] = (".inp", ".rpt", ".out")
 
-    RESULT_KEYS: tuple[str, ...] = (
+    RESULT_KEYS: ClassVar[tuple[str, ...]] = (
         "runoff",
         "peak_runoff_rate",
         "infiltration",
@@ -108,7 +110,7 @@ class FeaturesSimulation:
         "precipitation",
         "runon",
     )
-    TIMESERIES_KEYS: tuple[str, ...] = (
+    TIMESERIES_KEYS: ClassVar[tuple[str, ...]] = (
         "rainfall",
         "runoff",
         "infiltration_loss",
@@ -117,7 +119,7 @@ class FeaturesSimulation:
     )
 
     # Source: McCuen, R. et al. (1996), Hydrology, FHWA-SA-96-067, Federal Highway Administration, Washington, DC.
-    MANNING_N: dict[str, float] = {
+    MANNING_N: ClassVar[dict[str, float]] = {
         "smooth asphalt": 0.011,
         "smooth concrete": 0.012,
         "ordinary concrete lining": 0.013,
@@ -134,11 +136,11 @@ class FeaturesSimulation:
         "Bermuda grass": 0.41,
         "woods, dense underbrush": 0.8,
     }
-    MANNING_N_VALUES: tuple[float, ...] = tuple(MANNING_N.values())
+    MANNING_N_VALUES: ClassVar[tuple[float, ...]] = tuple(MANNING_N.values())
 
     # Source: ASCE (1992), Design & Construction of Urban Stormwater Management Systems, New York, NY.
-    DEPRESSION_STORAGE_VALUES_IN: tuple[float, ...] = (0.05, 0.1, 0.2, 0.3)
-    DEPRESSION_STORAGE_VALUES: tuple[float, ...] = tuple(
+    DEPRESSION_STORAGE_VALUES_IN: ClassVar[tuple[float, ...]] = (0.05, 0.1, 0.2, 0.3)
+    DEPRESSION_STORAGE_VALUES: ClassVar[tuple[float, ...]] = tuple(
         round(val * 25.4, 2) for val in DEPRESSION_STORAGE_VALUES_IN
     )
     """Depression storage depths in mm: :attr:`DEPRESSION_STORAGE_VALUES_IN` rounded to 0.01 mm."""
@@ -160,6 +162,7 @@ class FeaturesSimulation:
             raise SubcatchmentNotFoundError(subcatchment_id, available)
 
     def __enter__(self) -> FeaturesSimulation:
+        """Return the instance; leaving the block calls :meth:`close`."""
         return self
 
     def __exit__(
@@ -168,6 +171,7 @@ class FeaturesSimulation:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        """Call :meth:`close`; exceptions propagate."""
         self.close()
 
     def close(self) -> None:

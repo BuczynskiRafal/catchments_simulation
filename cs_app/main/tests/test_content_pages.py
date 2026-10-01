@@ -19,7 +19,7 @@ from main.models import UserProfile
 SIGNUP_PASSWORD = f"T!{uuid.uuid4().hex}"
 
 
-@pytest.fixture()
+@pytest.fixture
 def fresh_home_cache():
     views._load_home_data_cached.cache_clear()
     yield
@@ -100,7 +100,7 @@ def test_chart_json_rejects_non_finite_or_non_numeric(tmp_path, monkeypatch, bad
     (tmp_path / "sweep.json").write_text(json.dumps([{"slope": 1, "runoff": bad_value}]))
     monkeypatch.setattr(views, "HOME_DATA_DIR", str(tmp_path))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="row 0 needs numeric 'slope' and 'runoff'"):
         views._load_chart_json("sweep.json", "slope", "runoff")
 
 
@@ -116,7 +116,7 @@ def test_hydrograph_json_rejects_rows_without_datetime(tmp_path, monkeypatch):
     (tmp_path / views.HOME_HYDROGRAPH_FILE).write_text(json.dumps(rows))
     monkeypatch.setattr(views, "HOME_DATA_DIR", str(tmp_path))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="row 0 is malformed"):
         views._load_hydrograph_json()
 
 
@@ -257,5 +257,6 @@ def test_register_invalid_logs_field_names_but_not_values(client, caplog, capsys
     assert response.status_code == 200
     assert "Create account" in response.content.decode()
     assert "password2" in caplog.text
-    assert password1 not in caplog.text and password2 not in caplog.text
+    assert password1 not in caplog.text
+    assert password2 not in caplog.text
     assert capsys.readouterr().out == ""

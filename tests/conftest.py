@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import shutil
 import tempfile
-from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from catchment_simulation import example_model_path
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @pytest.fixture(autouse=True)

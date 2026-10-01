@@ -3101,7 +3101,8 @@ def test_theme_init_runs_synchronously_in_head_before_styles(
 
     match = re.search(r'<script src="[^"]*/main/js/core/theme-init\.js"(?P<attrs>[^>]*)>', head)
     assert match
-    assert "defer" not in match["attrs"] and "async" not in match["attrs"]
+    assert "defer" not in match["attrs"]
+    assert "async" not in match["attrs"]
     assert head.index("theme-init.js") < head.index('rel="stylesheet"')
 
 
@@ -3172,7 +3173,8 @@ def test_shell_has_skip_link_main_landmark_and_toast_region(client):
     assert '<a class="visually-hidden-focusable cs-skip-link" href="#main-content">' in html
     assert '<main id="main-content" class="container content-wrapper" tabindex="-1">' in html
     assert re.search(r'<div class="toast-container[^"]*" aria-live="polite">', html)
-    assert 'aria-controls="main-nav"' in html and 'id="main-nav"' in html
+    assert 'aria-controls="main-nav"' in html
+    assert 'id="main-nav"' in html
 
 
 @pytest.mark.django_db

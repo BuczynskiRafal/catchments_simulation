@@ -12,7 +12,7 @@ from .pages.contact_page import ContactPage
 pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture()
+@pytest.fixture
 def contact(page: Page, live_server) -> ContactPage:
     cp = ContactPage(page, live_server.url)
     cp.navigate_to()

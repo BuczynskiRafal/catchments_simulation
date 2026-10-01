@@ -7,10 +7,13 @@ decoupled from the simulation class itself.
 
 from __future__ import annotations
 
-from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 def time_to_peak(

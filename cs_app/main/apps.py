@@ -47,10 +47,7 @@ def _should_preload_model() -> bool:
     if "pytest" in argv0:
         return False
 
-    if argv0 in WORKER_PROCESS_NAMES:
-        return False
-
-    return True
+    return argv0 not in WORKER_PROCESS_NAMES
 
 
 class MainConfig(AppConfig):

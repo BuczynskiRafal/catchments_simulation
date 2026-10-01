@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from catchment_simulation import FeaturesSimulation, runoff_volume, time_to_peak
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

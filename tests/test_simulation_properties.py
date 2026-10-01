@@ -5,13 +5,16 @@ Slow tests (they run the SWMM engine), kept to a few small examples.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import hypothesis.strategies as st
 import pytest
 from hypothesis import HealthCheck, given, settings
 
 from catchment_simulation import FeaturesSimulation, build_range
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 small_range = st.fixed_dictionaries(
     {

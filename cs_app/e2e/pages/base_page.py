@@ -123,17 +123,16 @@ class BasePage:
             self.page.wait_for_function("typeof window.axe !== 'undefined'")
 
         raw = self.page.evaluate("() => axe.run()")
-        violations: list[AxeViolation] = []
-        for v in raw.get("violations", []):
-            violations.append(
-                AxeViolation(
-                    id=v["id"],
-                    impact=v.get("impact", "unknown"),
-                    description=v.get("description", ""),
-                    help_url=v.get("helpUrl", ""),
-                    nodes_count=len(v.get("nodes", [])),
-                )
+        violations = [
+            AxeViolation(
+                id=v["id"],
+                impact=v.get("impact", "unknown"),
+                description=v.get("description", ""),
+                help_url=v.get("helpUrl", ""),
+                nodes_count=len(v.get("nodes", [])),
             )
+            for v in raw.get("violations", [])
+        ]
         return AxeReport(violations=violations)
 
     def assert_no_critical_a11y_violations(self) -> AxeReport:

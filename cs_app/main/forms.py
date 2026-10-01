@@ -156,14 +156,15 @@ class SimulationForm(forms.Form):
     Supports both range-based methods (requiring start/stop/step) and
     predefined methods (using literature values, no range parameters).
 
-    Attributes:
-        option: A choice field for selecting the parameter to simulate.
-        start: An integer field for the starting value of the parameter range.
-        stop: An integer field for the ending value of the parameter range.
-        step: An integer field for the step size in the parameter range.
-            The range must give at most MAX_SWEEP_RUNS values, each within the
-            physical range of the swept feature.
-        catchment_name: A field for the name of the catchment.
+    Attributes
+    ----------
+    option
+        The parameter to simulate.
+    start, stop, step
+        The parameter range. It must give at most ``MAX_SWEEP_RUNS`` values,
+        each within the physical range of the swept feature.
+    catchment_name
+        The name of the subcatchment.
     """
 
     OPTIONS = (

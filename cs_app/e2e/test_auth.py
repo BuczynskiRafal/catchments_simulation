@@ -259,7 +259,7 @@ class TestProtectedRoutes:
     """Pages that redirect anonymous users to login (@login_required)."""
 
     @pytest.mark.parametrize(
-        "path,expected_next",
+        ("path", "expected_next"),
         [
             ("/simulation", "/simulation"),
             ("/timeseries", "/timeseries"),

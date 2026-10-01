@@ -80,7 +80,7 @@ def test_validate_values_rejects_empty_input() -> None:
 
 def test_validate_feature() -> None:
     assert validate_feature("PctZero") == "PctZero"
-    with pytest.raises(UnknownFeatureError, match="'pctzero'.*PctZero") as excinfo:
+    with pytest.raises(UnknownFeatureError, match=r"'pctzero'.*PctZero") as excinfo:
         validate_feature("pctzero")
     assert excinfo.value.allowed == tuple(FEATURES)
     assert isinstance(excinfo.value, ValueError)

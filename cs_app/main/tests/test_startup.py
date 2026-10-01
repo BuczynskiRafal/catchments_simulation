@@ -101,9 +101,8 @@ def test_main_config_ready_raises_preload_failure(monkeypatch, caplog):
     monkeypatch.setattr("main.predictor.preload_model", failing_preload)
 
     app_config = MainConfig("main", import_module("main"))
-    with caplog.at_level("ERROR"):
-        with pytest.raises(RuntimeError, match="boom"):
-            app_config.ready()
+    with caplog.at_level("ERROR"), pytest.raises(RuntimeError, match="boom"):
+        app_config.ready()
 
     assert "Failed to preload ANN predictor model during app startup" in caplog.text
 

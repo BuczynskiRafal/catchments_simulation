@@ -16,7 +16,7 @@ HERO_HEADING = "See how a subcatchment turns rain into runoff."
 PHONE = {"width": 360, "height": 780}
 
 
-@pytest.fixture()
+@pytest.fixture
 def home(page: Page, live_server) -> HomePage:
     hp = HomePage(page, live_server.url)
     hp.navigate_to()

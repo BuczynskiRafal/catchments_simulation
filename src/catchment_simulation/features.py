@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import ValidationError
 
 from .exceptions import InvalidParameterError, UnknownFeatureError
 from .schemas import SimulationParams
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 SubcatchmentFeature = Literal["Area", "PercImperv", "Width", "PercSlope", "CurbLength"]
 """Columns of the ``[SUBCATCHMENTS]`` section that can be swept."""
@@ -89,7 +91,7 @@ def validate_feature(feature: str) -> Feature:
     """
     if feature not in FEATURES:
         raise UnknownFeatureError(feature, FEATURES)
-    return cast(Feature, feature)
+    return cast("Feature", feature)
 
 
 def validate_values(feature: Feature, values: Iterable[float]) -> list[float]:

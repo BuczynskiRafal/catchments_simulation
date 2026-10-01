@@ -137,7 +137,7 @@ class TestCalculationsAsyncErrors:
 class TestCalculationsExecution:
     """Running calculations (requires sample data + SWMM + ANN model)."""
 
-    @pytest.fixture()
+    @pytest.fixture
     def results_page(self, auth_page: Page, live_server) -> CalculationsPage:
         cp = _open(auth_page, live_server)
         cp.upload.click_sample_data()

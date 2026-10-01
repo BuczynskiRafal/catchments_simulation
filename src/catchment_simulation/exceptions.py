@@ -7,8 +7,10 @@ types keep working.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class CatchmentSimulationError(Exception):
@@ -42,6 +44,7 @@ class UnknownFeatureError(InvalidParameterError):
         )
 
     def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle with the constructor arguments, so the attributes survive."""
         return type(self), (self.feature, self.allowed)
 
 
@@ -65,6 +68,7 @@ class SubcatchmentNotFoundError(InvalidParameterError):
         )
 
     def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle with the constructor arguments, so the attributes survive."""
         return type(self), (self.subcatchment_id, self.available)
 
 
@@ -87,4 +91,5 @@ class SimulationError(CatchmentSimulationError, RuntimeError):
         super().__init__(message + details)
 
     def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle with the constructor arguments, so the attributes survive."""
         return type(self), (self.message, self.report_errors)

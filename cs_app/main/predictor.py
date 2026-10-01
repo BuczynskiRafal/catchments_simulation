@@ -94,9 +94,7 @@ class SimpleMLPModel:
 
         # Dense layer 2 (output)
         x = x @ self.dense_2_kernel + self.dense_2_bias
-        x = self._relu(x)
-
-        return x
+        return self._relu(x)
 
 
 _model: SimpleMLPModel | None = None

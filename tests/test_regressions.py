@@ -161,7 +161,7 @@ def test_pk2_read_only_model_directory_falls_back_to_temp_dir(
 @pytest.mark.parametrize("method", ["simulate_destore", "simulate_manning_n"])
 def test_pk3_misspelled_surface_raises(model_path: Path, method: str) -> None:
     sim = FeaturesSimulation("S1", model_path)
-    with pytest.raises(InvalidParameterError, match="Imperv.*Perv"):
+    with pytest.raises(InvalidParameterError, match=r"Imperv.*Perv"):
         getattr(sim, method)("imperv")
 
 
@@ -207,7 +207,7 @@ def test_pw4_out_of_bounds_values_raise_before_any_run(
     monkeypatch.setattr(cfs_module, "Simulation", no_run)
     with pytest.raises(InvalidParameterError, match="Width"):
         sim.simulate_width(0, 0, 1)
-    with pytest.raises(InvalidParameterError, match="PercImperv.*110"):
+    with pytest.raises(InvalidParameterError, match=r"PercImperv.*110"):
         sim.simulate("PercImperv", [50, 110])
     with pytest.raises(InvalidParameterError, match="PercSlope"):
         sim.simulate_percent_slope(0, 10, 10)

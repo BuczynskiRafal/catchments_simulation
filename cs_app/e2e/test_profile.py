@@ -18,7 +18,7 @@ from .pages.user_profile_page import UserProfilePage
 pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture()
+@pytest.fixture
 def other_user(db) -> User:
     return User.objects.create_user(
         username="other_user", email="other@example.com", password=OTHER_USER_PASSWORD
