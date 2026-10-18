@@ -20,6 +20,16 @@ def isolated_media_root(settings, tmp_path):
     settings.MEDIA_ROOT = str(tmp_path / "media")
 
 
+@pytest.fixture(autouse=True)
+def isolated_cache():
+    """Clear Django cache before and after every test to avoid state leakage across tests."""
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()
+
+
 @pytest.fixture
 def user_model(user):
     """A copy of the sample model in ``user``'s upload directory, where an upload puts it."""

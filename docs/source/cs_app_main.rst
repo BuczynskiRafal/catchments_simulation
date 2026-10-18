@@ -12,6 +12,38 @@ views module
    :undoc-members:
    :show-inheritance:
 
+units module
+----------------------------------------
+
+.. automodule:: main.units
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+exports module
+----------------------------------------
+
+.. automodule:: main.exports
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+services module
+----------------------------------------
+
+.. automodule:: main.services
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+schemas module
+----------------------------------------
+
+.. automodule:: main.schemas
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 urls module
 ---------------------------------------
 

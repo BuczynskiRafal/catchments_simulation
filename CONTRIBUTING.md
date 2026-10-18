@@ -76,6 +76,7 @@ Tests are crucial for maintaining the quality and stability of the project. When
 
 ```bash
 uv run pytest -n auto
+DJANGO_SETTINGS_MODULE=cs_app.test_settings uv run --group web pytest -n auto cs_app/main/tests/ cs_app/register/tests.py
 ```
 
 The tests run the real SWMM engine. On macOS, if Python is killed with SIGKILL when importing pyswmm, see the codesign note in [cs_app/README.md](cs_app/README.md#macos-processes-killed-with-sigkill).

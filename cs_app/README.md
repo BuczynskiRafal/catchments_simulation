@@ -92,7 +92,9 @@ codesign --force --sign - .venv/lib/python3.*/site-packages/swmm/toolkit/*.dylib
 ### Configuration
 
 Settings are read from environment variables, and from `cs_app/.env` if it
-exists. `SECRET_KEY` and `DATABASE_URL` are required. Start from the example:
+exists. In production (`DEBUG=False`), `SECRET_KEY` and `DATABASE_URL` are
+strictly required; in local development (`DEBUG=True`), safe development
+fallbacks (`sqlite:///db.sqlite3`) are used if omitted. Start from the example:
 
 ```bash
 cp cs_app/.env.example cs_app/.env
@@ -139,17 +141,18 @@ The image is built from the repository root, because it installs the
 docker build -f cs_app/Dockerfile -t catchment-simulations .
 ```
 
-The CI workflow `django.yml` builds this image on every push. The container
-serves the app with gunicorn on port 8000 and needs the same environment
-variables as a local run (at least `SECRET_KEY` and `DATABASE_URL`).
-`cs_app/docker-compose.yml` sketches a setup with a PostgreSQL `db` service.
+The CI workflow `django.yml` builds and smoke-tests this image on every push.
+The container serves the app as a non-root user with gunicorn on port 8000 and
+exposes a readiness probe at `/healthz/`. `cs_app/docker-compose.yml` provides
+a multi-container setup with PostgreSQL.
 
 ## Deployment (Render)
 
-`cs_app/render.yaml` describes the Render service: a Docker web service built
-from `cs_app/Dockerfile` with a health check on `/`, and a PostgreSQL
-database. `cs_app/build.sh` is the native (non-Docker) build script: it
-installs the `web` group, collects static files and applies migrations.
+`cs_app/render.yaml` describes the Render Blueprint: a Docker web service built
+from `cs_app/Dockerfile` (using the repository root context) with a health
+check on `/healthz/`, and a managed PostgreSQL database. `cs_app/build.sh` is
+the native (non-Docker) build script using `uv`: it installs the `web` group,
+collects static files, and applies migrations.
 
 For production, make sure that:
 
@@ -171,10 +174,13 @@ Proxy-level limits are the first line of defence; Django limits are the second.
 
 Threat model notes:
 
-- Upload validation never reads the whole file into memory, which protects
-  the Django workers' memory.
-- A spoofed or missing `Content-Length` is also bounded by server-side
-  streamed body limiting.
+- Upload size limits and streamed chunk validation run before CSRF/multipart
+  body parsing, protecting the Django workers' memory against oversized or
+  spoofed `Content-Length` requests.
+- Uploaded `.inp` files are scanned for external file directives (`[FILES]`,
+  `[BACKDROP]`, `FILE` references in `[TIMESERIES]`, `[RAINGAGES]`,
+  `[TEMPERATURE]`, `[EVAPORATION]`, and `[LID_USAGE]`) before saving, and SWMM
+  executions run in isolated temporary directories.
 - Disk and CPU pressure from many concurrent large uploads still needs
   infrastructure controls (proxy limits, rate limiting, worker sizing).
 

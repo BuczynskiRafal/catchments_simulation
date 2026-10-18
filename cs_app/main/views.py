@@ -13,7 +13,7 @@ from codecs import getincrementaldecoder
 from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache, wraps
-from io import BytesIO, StringIO
+from io import StringIO
 from typing import NamedTuple
 
 import numpy as np
@@ -30,7 +30,6 @@ from django.core.exceptions import ValidationError
 from django.core.files.uploadhandler import FileUploadHandler, StopUpload
 from django.db import connection
 from django.http import (
-    FileResponse,
     HttpRequest,
     HttpResponse,
     HttpResponseForbidden,
@@ -54,8 +53,7 @@ try:
 except ImportError:  # pyswmm 1.5, which a plain install of swmmio 0.8 gets, lacks it
     _ENGINE_BUSY_ERRORS = ()
 
-from catchment_simulation.analysis import runoff_volume, time_to_peak
-from catchment_simulation.catchment_features_simulation import US_FLOW_UNITS, FeaturesSimulation
+from catchment_simulation.catchment_features_simulation import FeaturesSimulation
 from catchment_simulation.exceptions import (
     InvalidParameterError,
     SimulationError,
@@ -63,6 +61,17 @@ from catchment_simulation.exceptions import (
     UnknownFeatureError,
 )
 from catchment_simulation.schemas import SimulationMethodParams
+from main.exports import (
+    EXCEL_CONTENT_TYPE as EXCEL_CONTENT_TYPE,
+)
+from main.exports import (
+    _excel_attachment_response,
+    _safe_download_filename,
+    _timeseries_payload_to_csv_df,
+)
+from main.exports import (
+    _normalize_sheet_name as _normalize_sheet_name,
+)
 from main.forms import (
     METHOD_FEATURES,
     ContactForm,
@@ -74,13 +83,50 @@ from main.forms import (
 from main.predictor import predict_runoff
 from main.schemas import ContactMessage
 from main.services import send_message
+from main.units import (
+    _M3_TO_FT3 as _M3_TO_FT3,
+)
+from main.units import (
+    _US_GALLON_FT3 as _US_GALLON_FT3,
+)
+from main.units import (
+    ANN_RUNOFF_FACTORS as ANN_RUNOFF_FACTORS,
+)
+from main.units import (
+    REPORT_RUNOFF_FACTORS as REPORT_RUNOFF_FACTORS,
+)
+from main.units import (
+    RUNOFF_VOLUME_FACTORS as RUNOFF_VOLUME_FACTORS,
+)
+from main.units import (
+    SI_FLOW_UNITS as SI_FLOW_UNITS,
+)
+from main.units import (
+    _ann_runoff_factor,
+    _build_simulation_axis_labels,
+    _build_timeseries_axis_labels,
+    _format_parameter_value,
+    _hydrograph_metrics,
+    _hydrograph_summary,
+    _is_finite_number,
+    _normalize_flow_units,
+    _report_runoff_unit,
+    _runoff_volume_unit,
+    _timeseries_records,
+    _unit_labels,
+)
+from main.units import (
+    _format_duration as _format_duration,
+)
+from main.units import (
+    _unit_system as _unit_system,
+)
 
 logger = logging.getLogger(__name__)
 SIM_FORM_STATE_SESSION_KEY = "sim_form_state"
 TS_FORM_STATE_SESSION_KEY = "ts_form_state"
 SIM_FORM_STATE_FIELDS = ("option", "start", "stop", "step", "catchment_name")
 TS_FORM_STATE_FIELDS = ("mode", "feature", "start", "stop", "step", "catchment_name")
-EXCEL_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SIM_RESULT_TOKEN_SESSION_KEY = "sim_result_token"
 TS_RESULT_TOKEN_SESSION_KEY = "ts_result_token"
 CALC_RESULT_TOKEN_SESSION_KEY = "calc_result_token"
@@ -96,7 +142,6 @@ MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 UPLOAD_SUBDIR = "uploaded_files"
 # SHA-256 of the session model's content: loading the same model again keeps its results.
 MODEL_DIGEST_SESSION_KEY = "uploaded_file_sha256"
-SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
 SIMULATION_TEMPLATE = "main/simulation.html"
 SIMULATION_RESULTS_TEMPLATE = "main/partials/_simulation_results.html"
 TIMESERIES_TEMPLATE = "main/timeseries.html"
@@ -305,10 +350,6 @@ HOME_SWEEPS = {
 }
 
 
-def _is_finite_number(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and np.isfinite(value)
-
-
 def _read_data_records(filename: str) -> list[dict]:
     """Read a non-empty JSON list of objects from the data directory."""
     with open(os.path.join(HOME_DATA_DIR, filename), encoding="utf-8") as file:
@@ -340,16 +381,6 @@ def _load_hydrograph_json() -> list[dict]:
         plotted = dict(zip(HOME_HYDROGRAPH_FIELDS, values, strict=True))
         records.append({"datetime": row["datetime"], **plotted})
     return records
-
-
-def _hydrograph_summary(records: list[dict], volume_factor: float) -> dict:
-    """Headline numbers of the example event, computed like a timeseries run's metrics."""
-    frame = pd.DataFrame(records)
-    frame.index = pd.to_datetime(frame.pop("datetime"))
-    return {
-        "peak_rainfall": float(frame["rainfall"].max()),
-        **_hydrograph_metrics(frame, volume_factor),
-    }
 
 
 def _build_home_data() -> dict:
@@ -449,36 +480,6 @@ def _load_cached_result(scope: str, user_id: int, token: str | None) -> dict | N
         return None
 
     return payload
-
-
-def _safe_download_filename(name: str | None, fallback: str, extension: str = ".xlsx") -> str:
-    """Sanitize user-facing filenames used in Content-Disposition."""
-    candidate = os.path.basename(name or "").strip()
-    if not candidate:
-        candidate = fallback
-    candidate = re.sub(r'[\r\n"]+', "_", candidate)
-    base_name = os.path.splitext(candidate)[0] or os.path.splitext(fallback)[0] or "results"
-    if not extension:
-        normalized_extension = ""
-    else:
-        normalized_extension = extension if extension.startswith(".") else f".{extension}"
-    safe_name = f"{base_name}{normalized_extension}"
-    return safe_name[:150]
-
-
-def _normalize_sheet_name(raw_name: str, used_names: set[str]) -> str:
-    """Create Excel-safe unique sheet names (<=31 chars)."""
-    sanitized = "".join("_" if char in r"[]:*?/\\" else char for char in (raw_name or "sheet"))
-    sanitized = sanitized.strip() or "sheet"
-    base = sanitized[:31]
-    candidate = base
-    suffix = 1
-    while candidate.lower() in used_names:
-        suffix_text = f"_{suffix}"
-        candidate = f"{base[: 31 - len(suffix_text)]}{suffix_text}"
-        suffix += 1
-    used_names.add(candidate.lower())
-    return candidate
 
 
 def _is_valid_result_token(token: str | None) -> bool:
@@ -1182,11 +1183,6 @@ def get_feature_name(method_name: str) -> str:
     return METHOD_FEATURES.get(method_name, "")
 
 
-def _normalize_flow_units(flow_units: str | None) -> str:
-    """Normalize FLOW_UNITS token for comparisons and labels."""
-    return str(flow_units or "").strip().upper()
-
-
 def _read_flow_units(inp_path: str) -> str | None:
     """
     Read FLOW_UNITS from a SWMM input file as FeaturesSimulation does: the keyword
@@ -1236,126 +1232,6 @@ def _form_units(request: HttpRequest) -> dict[str, str] | None:
     """The units the sweep forms label their parameters in; None (SI) without a model."""
     flow_units = _session_flow_units(request)
     return _unit_labels(flow_units) if flow_units else None
-
-
-def _unit_system(flow_units: str | None) -> str:
-    """Classify FLOW_UNITS into SI/US/UNKNOWN buckets."""
-    normalized = _normalize_flow_units(flow_units)
-    if normalized in SI_FLOW_UNITS:
-        return "SI"
-    if normalized in US_FLOW_UNITS:
-        return "US"
-    return "UNKNOWN"
-
-
-def _unit_labels(flow_units: str | None) -> dict[str, str]:
-    """Return display units for chart labels.
-
-    SWMM reports rainfall and infiltration rates per hour but evaporation rates per day.
-    """
-    normalized = _normalize_flow_units(flow_units)
-    system = _unit_system(normalized)
-    if system == "SI":
-        return {
-            "length": "m",
-            "area": "ha",
-            "storage": "mm",
-            "depth_rate": "mm/h",
-            "evaporation_rate": "mm/day",
-            "volume": "m³",
-            "flow_rate": normalized,
-        }
-    if system == "US":
-        return {
-            "length": "ft",
-            "area": "acre",
-            "storage": "in",
-            "depth_rate": "in/h",
-            "evaporation_rate": "in/day",
-            "volume": "ft³",
-            "flow_rate": normalized,
-        }
-    return {
-        "length": "model length units",
-        "area": "model area units",
-        "storage": "model storage units",
-        "depth_rate": "model depth/time units",
-        "evaporation_rate": "model evaporation rate units",
-        "volume": "model volume units",
-        "flow_rate": normalized or "model flow units",
-    }
-
-
-def _build_simulation_axis_labels(
-    feature_name: str, y_columns: list[str], flow_units: str | None
-) -> tuple[str, dict[str, str]]:
-    """Build X and Y labels for simulation charts."""
-    units = _unit_labels(flow_units)
-    x_templates = {
-        "PercSlope": "Percent Slope [%]",
-        "Area": "Area [{area}]",
-        "Width": "Width [{length}]",
-        "PercImperv": "Impervious Area [%]",
-        "PctZero": "Zero-Impervious Area [%]",
-        "CurbLength": "Curb Length [{length}]",
-        "N-Imperv": "Manning n (Impervious) [-]",
-        "N-Perv": "Manning n (Pervious) [-]",
-        "S-Imperv": "Depression Storage (Impervious) [{storage}]",
-        "S-Perv": "Depression Storage (Pervious) [{storage}]",
-    }
-    y_templates = {
-        "runoff": "Total Runoff Volume [{volume}]",
-        "peak_runoff_rate": "Peak Runoff Rate [{flow_rate}]",
-        "infiltration": "Total Infiltration Volume [{volume}]",
-        "evaporation": "Total Evaporation Volume [{volume}]",
-    }
-
-    x_template = x_templates.get(feature_name)
-    x_label = x_template.format(**units) if x_template else feature_name or "Parameter"
-    y_labels = {}
-    for column in y_columns:
-        y_template = y_templates.get(column)
-        y_labels[column] = y_template.format(**units) if y_template else column
-    return x_label, y_labels
-
-
-def _build_timeseries_axis_labels(
-    columns: list[str], flow_units: str | None
-) -> tuple[str, dict[str, str]]:
-    """Build X and Y labels for timeseries charts."""
-    units = _unit_labels(flow_units)
-    y_templates = {
-        "rainfall": "Rainfall Intensity [{depth_rate}]",
-        "runoff": "Runoff Rate [{flow_rate}]",
-        "infiltration_loss": "Infiltration Loss [{depth_rate}]",
-        "evaporation_loss": "Evaporation Loss [{evaporation_rate}]",
-        "runon": "Runon Rate [{flow_rate}]",
-    }
-    y_labels = {}
-    for column in columns:
-        y_template = y_templates.get(column)
-        y_labels[column] = y_template.format(**units) if y_template else column
-    return "Time", y_labels
-
-
-def _excel_attachment_response(
-    output_file_name: str, sheets: dict[str, pd.DataFrame]
-) -> HttpResponse:
-    """Return an in-memory Excel attachment from sheet->DataFrame mapping."""
-    buffer = BytesIO()
-    used_names: set[str] = set()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for sheet_name, df in sheets.items():
-            normalized_sheet_name = _normalize_sheet_name(sheet_name, used_names)
-            df.to_excel(writer, sheet_name=normalized_sheet_name, index=False)
-    buffer.seek(0)
-    safe_name = _safe_download_filename(output_file_name, "results.xlsx")
-    return FileResponse(
-        buffer,
-        as_attachment=True,
-        filename=safe_name,
-        content_type=EXCEL_CONTENT_TYPE,
-    )
 
 
 def get_session_variables(request: HttpRequest) -> dict:
@@ -1613,27 +1489,6 @@ def download_timeseries_results(request: HttpRequest) -> HttpResponse:
     return redirect("main:timeseries")
 
 
-def _timeseries_payload_to_csv_df(payload: dict) -> pd.DataFrame:
-    """Convert cached timeseries payload to a single CSV-friendly DataFrame."""
-    mode = payload.get("mode")
-    data = payload.get("data")
-
-    if mode == "single" and isinstance(data, list):
-        return pd.DataFrame(data)
-
-    if mode == "sweep" and isinstance(data, dict):
-        frames: list[pd.DataFrame] = []
-        for parameter_value, rows in data.items():
-            frame = pd.DataFrame(rows)
-            frame.insert(0, "parameter_value", parameter_value)
-            frames.append(frame)
-        if frames:
-            return pd.concat(frames, ignore_index=True)
-        return pd.DataFrame(columns=["parameter_value"])
-
-    raise ValueError("Invalid timeseries payload for CSV export.")
-
-
 @login_required
 @require_POST
 def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
@@ -1663,96 +1518,6 @@ def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
         logger.exception("Failed to generate timeseries CSV download")
         messages.error(request, "Failed to generate the timeseries CSV file.")
         return redirect("main:timeseries")
-
-
-# runoff_volume() integrates flow over seconds, i.e. returns flow unit x s; these
-# factors turn that into the volume unit of the model's unit system (m³ or ft³).
-_US_GALLON_FT3 = 0.133680556
-RUNOFF_VOLUME_FACTORS = {
-    "CMS": 1.0,
-    "LPS": 1e-3,
-    "MLD": 1e3 / 86_400,
-    "CFS": 1.0,
-    "GPM": _US_GALLON_FT3 / 60,
-    "MGD": 1e6 * _US_GALLON_FT3 / 86_400,
-}
-
-
-# SWMM reports a subcatchment's total runoff in 10^6 L (SI models) or 10^6 US gal
-# (US models); swmmio names that column TotalRunoffMG either way.
-REPORT_RUNOFF_FACTORS = {"SI": 1e3, "US": 1e6 * _US_GALLON_FT3}
-# The ANN model was trained exclusively on SI runoff (10^6 L = 10^3 m³); US models
-# therefore convert 10^3 m³ -> ft³ rather than 10^6 US gal -> ft³.
-_M3_TO_FT3 = 1.0 / (0.3048**3)
-ANN_RUNOFF_FACTORS = {"SI": 1e3, "US": 1e3 * _M3_TO_FT3}
-
-
-def _report_runoff_unit(flow_units: str | None) -> tuple[float, str]:
-    """Return the factor from the report's total runoff to the display volume unit, and that unit."""
-    system = _unit_system(flow_units)
-    if system in REPORT_RUNOFF_FACTORS:
-        return REPORT_RUNOFF_FACTORS[system], _unit_labels(flow_units)["volume"]
-    return 1.0, "10⁶ L or gal"
-
-
-def _ann_runoff_factor(flow_units: str | None) -> float:
-    """Return the factor from the ANN output (10^6 L = 10^3 m³) to the model's display volume unit."""
-    system = _unit_system(flow_units)
-    return ANN_RUNOFF_FACTORS.get(system, 1.0)
-
-
-def _runoff_volume_unit(flow_units: str | None) -> tuple[float, str]:
-    """Return the factor from runoff_volume() to the display volume unit, and that unit."""
-    normalized = _normalize_flow_units(flow_units)
-    units = _unit_labels(normalized)
-    if normalized in RUNOFF_VOLUME_FACTORS:
-        return RUNOFF_VOLUME_FACTORS[normalized], units["volume"]
-    return 1.0, f"{units['flow_rate']} × s"
-
-
-def _format_duration(delta: pd.Timedelta) -> str:
-    """Format a duration as e.g. "1 d 8 h 55 min", leaving out zero parts."""
-    remaining = round(delta.total_seconds())
-    parts = []
-    for size, unit in ((86_400, "d"), (3_600, "h"), (60, "min"), (1, "s")):
-        amount, remaining = divmod(remaining, size)
-        if amount:
-            parts.append(f"{amount} {unit}")
-    return " ".join(parts) or "0 min"
-
-
-def _format_parameter_value(value: float) -> str:
-    """Shortest text for a swept value, without float noise: 0.0 -> "0", 0.30000000000000004 -> "0.3"."""
-    return f"{value:.10g}"
-
-
-def _timeseries_records(ts_df: pd.DataFrame) -> list[dict]:
-    """JSON-safe rows of one run: the datetime index as text, NaN as null."""
-    frame = ts_df.reset_index()
-    frame["datetime"] = frame["datetime"].astype(str)
-    return json.loads(frame.to_json(orient="records"))
-
-
-def _hydrograph_metrics(ts_df: pd.DataFrame, volume_factor: float) -> dict:
-    """Peak, time to peak and volume of one run's runoff; None where a value is undefined."""
-    runoff = ts_df["runoff"]
-    try:
-        delay = time_to_peak(ts_df, column="runoff")
-    except ValueError:  # no runoff at all, so there is no peak to time
-        delay = pd.NaT
-    try:
-        volume = runoff_volume(ts_df, column="runoff") * volume_factor
-    except ValueError:  # fewer than two timesteps
-        volume = None
-    peak = float(runoff.max()) if not runoff.empty else None
-    has_peak = not pd.isna(delay)
-    return {
-        "peak": peak if _is_finite_number(peak) else None,
-        "peak_at": runoff.idxmax().strftime("%Y-%m-%d %H:%M") if has_peak else None,
-        "time_to_peak": _format_duration(delay) if has_peak else None,
-        "time_to_peak_seconds": delay.total_seconds() if has_peak else None,
-        "volume": volume if _is_finite_number(volume) else None,
-    }
 
 
 def _get_timeseries_session_variables(request: HttpRequest) -> dict:
