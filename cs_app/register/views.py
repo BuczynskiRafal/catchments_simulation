@@ -9,6 +9,7 @@ import logging
 
 from django.contrib import messages
 from django.contrib.auth import login
+from django.db import IntegrityError
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 
@@ -37,11 +38,19 @@ def register(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = RegisterForm(request.POST)
         if form.is_valid():
-            user = form.save()
-            login(request, user)
-            name = user.get_short_name() or user.get_username()
-            messages.success(request, f"Welcome, {name}. Your account is ready.")
-            return redirect("main:main_view")
+            try:
+                user = form.save()
+            except IntegrityError:
+                logger.warning("Registration race condition on unique username/email")
+                form.add_error(
+                    "username",
+                    "An account with this username or email already exists.",
+                )
+            else:
+                login(request, user)
+                name = user.get_short_name() or user.get_username()
+                messages.success(request, f"Welcome, {name}. Your account is ready.")
+                return redirect("main:main_view")
         # Field names only: the submitted values (and passwords) never reach the log.
         logger.info("Registration rejected: invalid fields %s", sorted(form.errors))
     else:

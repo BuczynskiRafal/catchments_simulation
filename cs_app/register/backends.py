@@ -38,9 +38,10 @@ def resolve_username(identifier: str) -> str:
     if users.filter(**{username_field: identifier}).exists():
         return identifier
 
-    lookups = [f"{username_field}__iexact"]
     if "@" in identifier:
-        lookups.append(f"{UserModel.get_email_field_name()}__iexact")
+        lookups = [f"{UserModel.get_email_field_name()}__iexact", f"{username_field}__iexact"]
+    else:
+        lookups = [f"{username_field}__iexact"]
     for lookup in lookups:
         matches = list(users.filter(**{lookup: identifier})[:2])
         if len(matches) == 1:

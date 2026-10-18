@@ -199,7 +199,11 @@ def test_profile_form_owner_comes_from_instance_or_initial(user):
 @pytest.mark.django_db
 def test_non_owner_sees_bio_as_text_without_email(client, user):
     owner = User.objects.create_user(
-        username="owner", email="owner@example.com", password=f"T!{uuid.uuid4().hex}"
+        username="owner",
+        email="owner@example.com",
+        first_name="PrivateFirst",
+        last_name="PrivateLast",
+        password=f"T!{uuid.uuid4().hex}",
     )
     UserProfile.objects.create(user=owner, bio="Hydrologist.")
     client.force_login(user)
@@ -209,6 +213,8 @@ def test_non_owner_sees_bio_as_text_without_email(client, user):
     assert '<p class="profile-card__bio">Hydrologist.</p>' in html
     assert 'id="id_bio"' not in html
     assert "owner@example.com" not in html
+    assert "PrivateFirst" not in html
+    assert "PrivateLast" not in html
 
 
 # ---------------------------------------------------------------------------

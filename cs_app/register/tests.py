@@ -179,6 +179,42 @@ def test_register_rejects_email_used_by_another_account_ignoring_case(account):
     assert form.errors["email"] == ["An account with this email already exists. Log in instead."]
 
 
+def test_register_rejects_duplicate_username(account):
+    form = RegisterForm(data=_signup_data(username="test1", email="other@example.com"))
+
+    assert not form.is_valid()
+    assert "username" in form.errors
+
+
+def test_register_rejects_username_containing_at_sign(db):
+    form = RegisterForm(data=_signup_data(username="attacker@example.com", email="ok@example.com"))
+
+    assert not form.is_valid()
+    assert form.errors["username"] == [
+        "Enter a username without '@' so it cannot be confused with an email address."
+    ]
+
+
+def test_register_handles_concurrent_integrity_error_gracefully(client, db, monkeypatch):
+    from django.db import IntegrityError
+
+    def raise_integrity_error(self, commit=True):
+        raise IntegrityError("UNIQUE constraint failed: auth_user.username")
+
+    monkeypatch.setattr(RegisterForm, "save", raise_integrity_error)
+
+    response = client.post(reverse("register:register"), _signup_data())
+
+    assert response.status_code == 200
+    assert "An account with this username or email already exists." in response.content.decode()
+
+
+def test_unused_auth_password_reset_route_is_not_exposed(client):
+    response = client.get("/accounts/password_reset/")
+
+    assert response.status_code == 404
+
+
 def test_register_then_logout_then_login_with_email(client, db):
     response = client.post(reverse("register:register"), _signup_data())
     assert response.status_code == 302
