@@ -20,6 +20,13 @@ updates:
           - "*"
         update-types:
           - "major"
+    ignore:
+      # swmmio 0.8.3..0.8.6 pins pyswmm<2, which downgrades uv.lock from pyswmm 2.1 to 1.5.
+      - dependency-name: "swmmio"
+        versions: [">=0.8.3,<0.9"]
+      # pyswmm 2.2.0 pulls swmm-toolkit 0.17.0, whose macOS arm64 wheel has an invalid libomp signature.
+      - dependency-name: "pyswmm"
+        versions: ["2.2.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
