@@ -11,7 +11,7 @@ SECRET_KEY = os.environ.get("SECRET_KEY", default="KEY")
 
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS: list[str] = []
 
 # Upload hard limits for SWMM INP files.
 INP_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
