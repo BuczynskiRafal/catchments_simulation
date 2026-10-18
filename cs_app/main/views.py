@@ -203,6 +203,7 @@ def _classify_run_error(
 # Directories of an absolute path ("/srv/media/uploads/7/", "C:\\models\\"), which a SWMM
 # error line may contain and the page must not show.
 _PATH_DIRECTORIES = re.compile(r"(?<![\w.])(?:[A-Za-z]:)?[\\/](?:[^\s\\/]+[\\/])+")
+_EXTERNAL_FILE_ORACLE_ERROR = re.compile(r"ERROR\s+36[13]\b[^\n]*", re.IGNORECASE)
 
 
 def _hide_directories(line: str) -> str:
@@ -211,7 +212,13 @@ def _hide_directories(line: str) -> str:
 
     The server's own roots go first, with every directory below them, so a root
     with a space in it is hidden too; any other absolute path loses its directories.
+    External-file open/read errors (ERROR 361/363) are collapsed to a uniform message
+    so they cannot be used as a file-existence oracle.
     """
+    if _EXTERNAL_FILE_ORACLE_ERROR.search(line):
+        return _EXTERNAL_FILE_ORACLE_ERROR.sub(
+            "ERROR 361: external files are not supported in uploaded models.", line
+        )
     roots = {settings.MEDIA_ROOT, str(settings.BASE_DIR), tempfile.gettempdir()}
     roots |= {os.path.realpath(root) for root in roots}
     for root in sorted(roots, key=len, reverse=True):
@@ -644,6 +651,7 @@ MIN_SWMM_SECTION_MATCHES = 2
 SWMM_SECTION_HEADERS = frozenset(
     {"[TITLE]", "[OPTIONS]", "[RAINGAGES]", "[SUBCATCHMENTS]", "[SUBAREAS]"}
 )
+FORBIDDEN_SWMM_SECTION_PREFIXES = ("[FILE", "[BACKDROP")
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -656,25 +664,73 @@ def _sanitize_filename(filename: str) -> str:
     return sanitized[:100] if sanitized else "uploaded_file"
 
 
+def _is_forbidden_inp_directive(section: str, stripped_line: str) -> bool:
+    """Return True when an INP section header or data row references an external server file."""
+    if not stripped_line:
+        return False
+    if stripped_line.startswith("[") and stripped_line.endswith("]"):
+        return stripped_line.upper().startswith(FORBIDDEN_SWMM_SECTION_PREFIXES)
+
+    tokens = stripped_line.upper().split()
+    if not tokens:
+        return False
+    if section.startswith("[TIMESERIES"):
+        return len(tokens) >= 2 and tokens[1] == "FILE"
+    if section.startswith("[RAINGAGE"):
+        return "FILE" in tokens[1:]
+    if section.startswith(("[TEMPERATURE", "[EVAPORATION")):
+        return tokens[0] == "FILE" or (len(tokens) >= 2 and tokens[1] == "FILE")
+    if section.startswith("[LID_USAGE"):
+        # In SWMM [LID_USAGE], optional 9th column (index 8) is a detailed report file path.
+        return (len(tokens) >= 9 and tokens[8] not in ("*", '""', "''")) or ('"' in stripped_line)
+    return False
+
+
+def _scan_inp_lines(
+    lines: list[str],
+    matched_sections: set[str],
+    current_section: str,
+) -> tuple[bool, str]:
+    """Validate a batch of decoded INP lines; return (is_valid, updated_section)."""
+    for line in lines:
+        if "\x00" in line or len(line) > UPLOAD_VALIDATION_MAX_LINE_BUFFER:
+            return False, current_section
+        stripped = line.split(";", 1)[0].strip()
+        if not stripped:
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current_section = stripped.upper()
+            if _is_forbidden_inp_directive(current_section, stripped):
+                return False, current_section
+            if current_section in SWMM_SECTION_HEADERS:
+                matched_sections.add(current_section)
+        elif _is_forbidden_inp_directive(current_section, stripped):
+            return False, current_section
+    return True, current_section
+
+
 def _validate_inp_file_content(file_content: bytes) -> bool:
-    """Check in-memory bytes for SWMM section headers. Handles BOM and mixed line endings."""
+    """Check in-memory bytes for SWMM section headers and forbidden external-file directives."""
     try:
         if file_content.startswith(b"\xef\xbb\xbf"):
             file_content = file_content[3:]
-        elif file_content.startswith(b"\xff\xfe") or file_content.startswith(b"\xfe\xff"):
-            file_content = file_content[2:]
-
-        try:
             content_str = file_content.decode("utf-8")
-        except UnicodeDecodeError:
-            content_str = file_content.decode("latin-1")
+        elif file_content.startswith(b"\xff\xfe"):
+            content_str = file_content[2:].decode("utf-16-le")
+        elif file_content.startswith(b"\xfe\xff"):
+            content_str = file_content[2:].decode("utf-16-be")
+        else:
+            try:
+                content_str = file_content.decode("utf-8")
+            except UnicodeDecodeError:
+                content_str = file_content.decode("latin-1")
 
-        content_upper = content_str.replace("\r\n", "\n").replace("\r", "\n").upper()
-
-        # Check for common SWMM section headers
-        swmm_sections = ["[TITLE]", "[OPTIONS]", "[RAINGAGES]", "[SUBCATCHMENTS]", "[SUBAREAS]"]
-        return any(section in content_upper for section in swmm_sections)
+        normalized = content_str.replace("\r\n", "\n").replace("\r", "\n")
+        matched_sections: set[str] = set()
+        valid, _ = _scan_inp_lines(normalized.split("\n"), matched_sections, "")
+        return valid and len(matched_sections) >= 1
     except Exception:
+        logger.debug("Failed to validate in-memory INP file content", exc_info=True)
         return False
 
 
@@ -692,10 +748,11 @@ def _detect_inp_encoding_prefix(prefix: bytes) -> tuple[str, int]:
 def _validate_inp_file_stream(
     uploaded_file: object, chunk_size: int = UPLOAD_VALIDATION_CHUNK_SIZE
 ) -> bool:
-    """Validate SWMM INP headers without loading the entire file into memory."""
+    """Validate SWMM INP headers and reject external file directives across the full stream."""
     decoder = None
     pending = ""
     matched_sections: set[str] = set()
+    current_section = ""
     try:
         for chunk in uploaded_file.chunks(chunk_size):
             if decoder is None:
@@ -705,29 +762,27 @@ def _validate_inp_file_stream(
 
             pending += decoder.decode(chunk, final=False)
             pending = pending.replace("\r\n", "\n").replace("\r", "\n")
+            if "\n" not in pending and len(pending) > UPLOAD_VALIDATION_MAX_LINE_BUFFER:
+                return False
             lines = pending.split("\n")
-            pending = lines.pop()[-UPLOAD_VALIDATION_MAX_LINE_BUFFER:] if lines else pending
+            pending = lines.pop() if lines else pending
 
-            for line in lines:
-                normalized_line = line.strip().upper()
-                if normalized_line in SWMM_SECTION_HEADERS:
-                    matched_sections.add(normalized_line)
-                    if len(matched_sections) >= MIN_SWMM_SECTION_MATCHES:
-                        return True
+            valid, current_section = _scan_inp_lines(lines, matched_sections, current_section)
+            if not valid:
+                return False
 
         if decoder is None:
             return False
 
         pending += decoder.decode(b"", final=True)
         pending = pending.replace("\r\n", "\n").replace("\r", "\n")
-        for line in pending.split("\n"):
-            normalized_line = line.strip().upper()
-            if normalized_line in SWMM_SECTION_HEADERS:
-                matched_sections.add(normalized_line)
-                if len(matched_sections) >= MIN_SWMM_SECTION_MATCHES:
-                    return True
+        valid, current_section = _scan_inp_lines(
+            pending.split("\n"), matched_sections, current_section
+        )
+        if not valid:
+            return False
 
-        return False
+        return len(matched_sections) >= MIN_SWMM_SECTION_MATCHES
     except (OSError, UnicodeError, AttributeError):
         logger.warning("Failed to validate uploaded INP file stream", exc_info=True)
         return False
