@@ -107,6 +107,7 @@ FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
 SUBCATCHMENT_NOT_FOUND_MESSAGE = "Selected catchment was not found in the uploaded model."
 SWMM_FAILED_MESSAGE = "SWMM could not run the model"
+ENGINE_BUSY_MESSAGE = "Another simulation is currently running. Please retry in a moment."
 NO_RUNOFF_SUMMARY_MESSAGE = (
     "SWMM computed no subcatchment runoff for this model: its report has no Subcatchment "
     "Runoff Summary. Check that IGNORE_RAINFALL is not set to YES."
@@ -245,6 +246,11 @@ def _library_error_failure(error: Exception) -> RunFailure | None:
     Report an error of catchment_simulation by its type: invalid input is the user's
     to correct (400), and so is a model SWMM cannot run, whose report errors are shown.
     """
+    if _ENGINE_BUSY_ERRORS and (
+        isinstance(error, _ENGINE_BUSY_ERRORS)
+        or (isinstance(error, SimulationError) and isinstance(error.__cause__, _ENGINE_BUSY_ERRORS))
+    ):
+        return RunFailure(ENGINE_BUSY_MESSAGE, 503)
     if isinstance(error, SubcatchmentNotFoundError):
         return RunFailure(SUBCATCHMENT_NOT_FOUND_MESSAGE, 400, "catchment_name")
     if isinstance(error, UnknownFeatureError):
@@ -483,12 +489,58 @@ def _user_upload_dir(user_id: int) -> str:
     return os.path.join(settings.MEDIA_ROOT, UPLOAD_SUBDIR, str(user_id))
 
 
-def _safe_remove_file(path: str | None) -> None:
-    """Best-effort file removal safe for concurrent requests."""
+def _is_in_user_upload_dir(path: str | None, user_id: int | None) -> bool:
+    """Return True when path resolves inside the given user's upload directory."""
+    if not path or user_id is None:
+        return False
+    user_dir = os.path.realpath(_user_upload_dir(user_id))
+    try:
+        common_path = os.path.commonpath([os.path.realpath(path), user_dir])
+    except ValueError:
+        return False
+    return common_path == user_dir
+
+
+def _safe_remove_file(path: str | None, user_id: int | None = None) -> None:
+    """Best-effort file removal scoped to the user's upload directory."""
     if not path:
+        return
+    if user_id is not None and not _is_in_user_upload_dir(path, user_id):
+        logger.warning("Refusing to remove file outside user upload dir: %s", path)
         return
     with suppress(OSError):
         os.remove(path)
+
+
+def _atomic_write_chunks(chunks, target_path: str) -> None:
+    """Write uploaded byte chunks to target_path atomically via a temporary sibling file."""
+    target_dir = os.path.dirname(target_path)
+    os.makedirs(target_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".upload-", suffix=".tmp", dir=target_dir)
+    try:
+        with os.fdopen(fd, "wb") as destination:
+            for chunk in chunks:
+                destination.write(chunk)
+        os.replace(tmp_path, target_path)
+    except BaseException:
+        with suppress(OSError):
+            os.remove(tmp_path)
+        raise
+
+
+def _atomic_copy_file(source_path: str, target_path: str) -> None:
+    """Copy source_path to target_path atomically via a temporary sibling file."""
+    target_dir = os.path.dirname(target_path)
+    os.makedirs(target_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".sample-", suffix=".tmp", dir=target_dir)
+    os.close(fd)
+    try:
+        shutil.copyfile(source_path, tmp_path)
+        os.replace(tmp_path, target_path)
+    except BaseException:
+        with suppress(OSError):
+            os.remove(tmp_path)
+        raise
 
 
 def _file_too_large_message() -> str:
@@ -956,17 +1008,10 @@ def _store_upload(request: HttpRequest) -> HttpResponse:
     user_dir = _user_upload_dir(request.user.id)
     file_path = os.path.join(user_dir, safe_filename + file_extension)
 
-    # Remove previous uploaded file from disk
     old_path = request.session.get("uploaded_file_path")
+    _atomic_write_chunks(uploaded_file.chunks(), file_path)
     if old_path and old_path != file_path:
-        _safe_remove_file(old_path)
-
-    # Ensure upload directory exists
-    os.makedirs(user_dir, exist_ok=True)
-
-    with open(file_path, "wb+") as destination:
-        for chunk in uploaded_file.chunks():
-            destination.write(chunk)
+        _safe_remove_file(old_path, request.user.id)
 
     unchanged = _adopt_model(request, file_path)
     logger.info("File uploaded successfully: %s", file_path)
@@ -993,18 +1038,17 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Sample file is not available."}, status=500)
 
     user_dir = _user_upload_dir(request.user.id)
-    os.makedirs(user_dir, exist_ok=True)
     file_path = os.path.join(user_dir, "example.inp")
 
     try:
-        shutil.copyfile(sample_source_path, file_path)
+        _atomic_copy_file(sample_source_path, file_path)
     except OSError:
         logger.exception("Failed to copy sample INP file for user %s", request.user.id)
         return JsonResponse({"error": "Failed to load sample file."}, status=500)
 
     old_path = request.session.get("uploaded_file_path")
     if old_path and old_path != file_path:
-        _safe_remove_file(old_path)
+        _safe_remove_file(old_path, request.user.id)
 
     unchanged = _adopt_model(request, file_path)
     try:
@@ -1028,6 +1072,9 @@ def upload_status(request: HttpRequest) -> JsonResponse:
     """Return ``{has_file, filename, size}`` for the current session upload."""
     file_path = request.session.get("uploaded_file_path")
     if file_path:
+        if not _is_in_user_upload_dir(file_path, request.user.id):
+            request.session.pop("uploaded_file_path", None)
+            return JsonResponse({"has_file": False})
         try:
             size = os.path.getsize(file_path)
             return JsonResponse(
@@ -1050,7 +1097,7 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Method not allowed."}, status=405)
 
     file_path = request.session.pop("uploaded_file_path", None)
-    _safe_remove_file(file_path)
+    _safe_remove_file(file_path, request.user.id)
     _forget_model_state(request)
 
     return JsonResponse({"message": "Upload cleared.", "option_labels": parameter_labels()})
@@ -1065,7 +1112,12 @@ def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
         if cached_ids is not None:
             return cached_ids
 
-    if not file_path or not os.path.exists(file_path):
+    user_id = getattr(getattr(request, "user", None), "id", None)
+    if (
+        not file_path
+        or (user_id is not None and not _is_in_user_upload_dir(file_path, user_id))
+        or not os.path.exists(file_path)
+    ):
         request.session.pop("_subcatchment_ids", None)
         request.session.pop("_subcatchment_ids_file", None)
         return []
@@ -1075,7 +1127,9 @@ def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
         ids = list(model.inp.subcatchments.index)
     except Exception:
         logger.warning("Failed to read subcatchments from %s", file_path, exc_info=True)
-        ids = []
+        request.session.pop("_subcatchment_ids", None)
+        request.session.pop("_subcatchment_ids_file", None)
+        return []
 
     request.session["_subcatchment_ids"] = ids
     request.session["_subcatchment_ids_file"] = file_path
@@ -1153,6 +1207,9 @@ def _session_flow_units(request: HttpRequest) -> str | None:
         return None
     if request.session.get("_flow_units_file") == file_path:
         return request.session.get("_flow_units")
+    user_id = getattr(getattr(request, "user", None), "id", None)
+    if user_id is not None and not _is_in_user_upload_dir(file_path, user_id):
+        return None
     flow_units = _read_flow_units(file_path)
     if flow_units is not None:
         request.session["_flow_units"] = flow_units
@@ -1865,12 +1922,7 @@ def _load_comparison(request: HttpRequest) -> dict | None:
 
 def _check_in_user_upload_dir(path: str, user_id: int) -> None:
     """Refuse a model path outside the user's upload directory."""
-    user_dir = os.path.realpath(_user_upload_dir(user_id))
-    try:
-        common_path = os.path.commonpath([os.path.realpath(path), user_dir])
-    except ValueError:
-        common_path = None
-    if common_path != user_dir:
+    if not _is_in_user_upload_dir(path, user_id):
         logger.warning("File path traversal attempt or cross-user access: %s", path)
         raise InputValidationError("invalid_path")
 
@@ -1912,35 +1964,39 @@ def _run_swmm_in_place(inp_path: str) -> None:
 
 
 def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
-    """Run SWMM on the model and pair its runoff with the ANN prediction, in the model's volume unit."""
+    """Run SWMM on an isolated copy of the model and pair its runoff with the ANN prediction."""
     # pyswmm reports a missing file as a bare Exception, so check up front.
     if not os.path.isfile(inp_path):
         raise InputValidationError("missing_file")
-    try:
-        _run_swmm_in_place(inp_path)
-        # Build the model after SWMM run so report-derived columns are available.
-        swmmio_model = swmmio.Model(inp_path)
-        subcatchments = swmmio_model.subcatchments.dataframe
-        if subcatchments.empty:
-            raise InputValidationError("no_subcatchments")
-        # swmmio reads TotalRunoffMG from the report, which lacks it when SWMM skipped runoff.
-        if "TotalRunoffMG" not in subcatchments.columns:
-            raise InputValidationError("no_runoff_summary")
-        ann_predictions = predict_runoff(swmmio_model)
-        flow_units = _read_flow_units(inp_path)
-        swmm_factor, unit = _report_runoff_unit(flow_units)
-        ann_factor = _ann_runoff_factor(flow_units)
-        comparison = pd.DataFrame(
-            data={
-                "Name": subcatchments.index,
-                "SWMM_Runoff": subcatchments["TotalRunoffMG"].to_numpy(dtype=float) * swmm_factor,
-                # predict_runoff() always outputs 10^6 L (10^3 m³) from the SI-trained network.
-                "ANN_Runoff": np.round(ann_predictions.astype(float) * ann_factor, 2),
-            },
-        )
-        return comparison, unit
-    finally:
-        _cleanup_swmm_side_files(inp_path)
+    with tempfile.TemporaryDirectory(prefix="cs-calc-") as work_dir:
+        work_inp = os.path.join(work_dir, os.path.basename(inp_path) or "model.inp")
+        shutil.copyfile(inp_path, work_inp)
+        try:
+            _run_swmm_in_place(work_inp)
+            # Build the model after SWMM run so report-derived columns are available.
+            swmmio_model = swmmio.Model(work_inp)
+            subcatchments = swmmio_model.subcatchments.dataframe
+            if subcatchments.empty:
+                raise InputValidationError("no_subcatchments")
+            # swmmio reads TotalRunoffMG from the report, which lacks it when SWMM skipped runoff.
+            if "TotalRunoffMG" not in subcatchments.columns:
+                raise InputValidationError("no_runoff_summary")
+            ann_predictions = predict_runoff(swmmio_model)
+            flow_units = _read_flow_units(work_inp)
+            swmm_factor, unit = _report_runoff_unit(flow_units)
+            ann_factor = _ann_runoff_factor(flow_units)
+            comparison = pd.DataFrame(
+                data={
+                    "Name": subcatchments.index,
+                    "SWMM_Runoff": subcatchments["TotalRunoffMG"].to_numpy(dtype=float)
+                    * swmm_factor,
+                    # predict_runoff() always outputs 10^6 L (10^3 m³) from the SI-trained network.
+                    "ANN_Runoff": np.round(ann_predictions.astype(float) * ann_factor, 2),
+                },
+            )
+            return comparison, unit
+        finally:
+            _cleanup_swmm_side_files(work_inp)
 
 
 def _finite_or_none(value) -> float | None:

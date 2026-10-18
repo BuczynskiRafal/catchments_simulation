@@ -519,3 +519,33 @@ def test_report_errors_are_capped(client, user, example_model, monkeypatch):
     assert "ERROR 204: bad line 4" in message
     assert "ERROR 205" not in message
     assert message.endswith("(and 3 more errors)")
+
+
+@pytest.mark.django_db
+def test_engine_busy_error_returns_503(client, user, example_model, monkeypatch):
+    """Concurrent SWMM runs raising MultiSimulationError (direct or wrapped) return HTTP 503 (WA1)."""
+    from main.views import ENGINE_BUSY_MESSAGE
+
+    class FakeBusyError(Exception):
+        pass
+
+    monkeypatch.setattr("main.views._ENGINE_BUSY_ERRORS", (FakeBusyError,))
+    _login_with_model(client, user, example_model)
+
+    wrapped = SimulationError("SWMM failed")
+    wrapped.__cause__ = FakeBusyError("Multi-Simulation Error.")
+    with monkeypatch.context() as mp:
+        mp.setattr("main.views.FeaturesSimulation", _raising_simulation(wrapped))
+        sim_resp = client.post(reverse("main:simulation"), data=SIMULATION_POST, **AJAX)
+        assert sim_resp.status_code == 503
+        assert sim_resp.json() == {"message": ENGINE_BUSY_MESSAGE, "field_errors": {}}
+
+    with monkeypatch.context() as mp:
+
+        def busy_sim(_path):
+            raise FakeBusyError("Multi-Simulation Error.")
+
+        mp.setattr("main.views.Simulation", busy_sim)
+        calc_resp = client.post(reverse("main:calculations"), **AJAX)
+        assert calc_resp.status_code == 503
+        assert calc_resp.json() == {"message": ENGINE_BUSY_MESSAGE, "field_errors": {}}

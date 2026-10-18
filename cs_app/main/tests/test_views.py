@@ -2501,10 +2501,13 @@ def test_upload_status_no_file(user):
 
 
 @pytest.mark.django_db
-def test_upload_status_with_file(user, tmp_path):
-    """Test that upload_status returns file info when a file exists in session."""
-    test_file = tmp_path / "test.inp"
-    test_file.write_text("[TITLE]\nTest\n")
+def test_upload_status_with_file(user):
+    """Test that upload_status returns file info when a file exists in the user's upload dir."""
+    user_dir = _user_upload_dir(user.id)
+    os.makedirs(user_dir, exist_ok=True)
+    test_file = os.path.join(user_dir, "test.inp")
+    with open(test_file, "w", encoding="utf-8") as handle:
+        handle.write("[TITLE]\nTest\n")
 
     factory = RequestFactory()
     request = factory.get(
@@ -2514,7 +2517,7 @@ def test_upload_status_with_file(user, tmp_path):
 
     session_middleware = SessionMiddleware(lambda req: None)
     session_middleware.process_request(request)
-    request.session["uploaded_file_path"] = str(test_file)
+    request.session["uploaded_file_path"] = test_file
     request.session.save()
     request.user = user
 
@@ -2525,6 +2528,31 @@ def test_upload_status_with_file(user, tmp_path):
     assert data["has_file"] is True
     assert data["filename"] == "test.inp"
     assert data["size"] > 0
+
+
+@pytest.mark.django_db
+def test_upload_status_rejects_outside_user_dir(user, tmp_path):
+    """upload_status refuses to stat a path outside the user's upload directory."""
+    outside_file = tmp_path / "secret.inp"
+    outside_file.write_text("[TITLE]\nSecret\n")
+
+    factory = RequestFactory()
+    request = factory.get(
+        "/upload/status/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = str(outside_file)
+    request.session.save()
+    request.user = user
+
+    response = upload_status(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["has_file"] is False
+    assert "uploaded_file_path" not in request.session
 
 
 @pytest.mark.django_db
@@ -2706,10 +2734,13 @@ def test_upload_clear_wrong_method(user):
 
 
 @pytest.mark.django_db
-def test_upload_clear_removes_file_and_session(user, tmp_path):
-    """upload_clear deletes the file from disk and removes session key."""
-    test_file = tmp_path / "to_delete.inp"
-    test_file.write_text("[TITLE]\nTest\n")
+def test_upload_clear_removes_file_and_session(user):
+    """upload_clear deletes the file from the user's upload directory and removes session key."""
+    user_dir = _user_upload_dir(user.id)
+    os.makedirs(user_dir, exist_ok=True)
+    test_file = os.path.join(user_dir, "to_delete.inp")
+    with open(test_file, "w", encoding="utf-8") as handle:
+        handle.write("[TITLE]\nTest\n")
 
     factory = RequestFactory()
     request = factory.post(
@@ -2718,7 +2749,7 @@ def test_upload_clear_removes_file_and_session(user, tmp_path):
     )
     session_middleware = SessionMiddleware(lambda req: None)
     session_middleware.process_request(request)
-    request.session["uploaded_file_path"] = str(test_file)
+    request.session["uploaded_file_path"] = test_file
     request.session.save()
     request.user = user
 
@@ -2726,7 +2757,31 @@ def test_upload_clear_removes_file_and_session(user, tmp_path):
 
     assert response.status_code == 200
     assert "uploaded_file_path" not in request.session
-    assert not test_file.exists()
+    assert not os.path.exists(test_file)
+
+
+@pytest.mark.django_db
+def test_upload_clear_refuses_outside_user_dir(user, tmp_path):
+    """upload_clear never deletes a file outside the user's upload directory (SA1)."""
+    outside_file = tmp_path / "keep_me.inp"
+    outside_file.write_text("[TITLE]\nDo not delete\n")
+
+    factory = RequestFactory()
+    request = factory.post(
+        "/upload/clear/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = str(outside_file)
+    request.session.save()
+    request.user = user
+
+    response = upload_clear(request)
+
+    assert response.status_code == 200
+    assert "uploaded_file_path" not in request.session
+    assert outside_file.exists()
 
 
 @pytest.mark.django_db
@@ -3002,9 +3057,9 @@ def test_get_catchment_choices_model_without_subcatchments(tmp_path):
 
 
 @pytest.mark.django_db
-def test_subcatchments_with_real_inp_file(user, example_model):
-    """subcatchments returns correct IDs from a real INP file."""
-    fixture_path = example_model
+def test_subcatchments_with_real_inp_file(user, user_model):
+    """subcatchments returns correct IDs from a real INP file in the user's upload directory."""
+    fixture_path = user_model
 
     factory = RequestFactory()
     request = factory.get(
@@ -3026,9 +3081,30 @@ def test_subcatchments_with_real_inp_file(user, example_model):
 
 
 @pytest.mark.django_db
-def test_subcatchment_ids_cached_in_session(user, example_model):
+def test_subcatchments_refuses_outside_user_dir(user, example_model):
+    """subcatchments refuses to parse a file outside the user's upload directory (SA1)."""
+    factory = RequestFactory()
+    request = factory.get(
+        "/subcatchments/",
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = example_model
+    request.session.save()
+    request.user = user
+
+    response = subcatchments(request)
+
+    assert response.status_code == 200
+    data = json.loads(response.content)
+    assert data["subcatchments"] == []
+
+
+@pytest.mark.django_db
+def test_subcatchment_ids_cached_in_session(user, user_model):
     """_get_subcatchment_ids caches results in the session."""
-    fixture_path = example_model
+    fixture_path = user_model
 
     factory = RequestFactory()
     request = factory.get("/")
@@ -3036,6 +3112,7 @@ def test_subcatchment_ids_cached_in_session(user, example_model):
     session_middleware.process_request(request)
     request.session["uploaded_file_path"] = fixture_path
     request.session.save()
+    request.user = user
 
     ids1 = _get_subcatchment_ids(request)
     assert "S1" in ids1
@@ -3045,6 +3122,31 @@ def test_subcatchment_ids_cached_in_session(user, example_model):
     # Second call should use cache (same result)
     ids2 = _get_subcatchment_ids(request)
     assert ids1 == ids2
+
+
+@pytest.mark.django_db
+def test_subcatchment_ids_does_not_poison_session_cache_on_parse_error(
+    user, user_model, monkeypatch
+):
+    """When swmmio.Model raises transiently, _get_subcatchment_ids does not cache [] (SA6)."""
+    factory = RequestFactory()
+    request = factory.get("/")
+    session_middleware = SessionMiddleware(lambda req: None)
+    session_middleware.process_request(request)
+    request.session["uploaded_file_path"] = user_model
+    request.session.save()
+    request.user = user
+
+    def broken_model(_path):
+        raise RuntimeError("transient read error")
+
+    with monkeypatch.context() as mp:
+        mp.setattr("main.views.swmmio.Model", broken_model)
+        assert _get_subcatchment_ids(request) == []
+        assert "_subcatchment_ids" not in request.session
+
+    # Subsequent call succeeds once swmmio.Model works again.
+    assert "S1" in _get_subcatchment_ids(request)
 
 
 # ----------------------------------------------------------------------
