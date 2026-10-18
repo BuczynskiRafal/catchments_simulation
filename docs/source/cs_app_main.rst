@@ -12,6 +12,14 @@ views module
    :undoc-members:
    :show-inheritance:
 
+api module
+----------------------------------------
+
+.. automodule:: main.api
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 units module
 ----------------------------------------
 

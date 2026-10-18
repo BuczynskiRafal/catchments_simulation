@@ -53,6 +53,22 @@ You need to register and log in before running simulations or calculations.
 - Simulation and timeseries downloads are generated in memory on demand; no
   media files are persisted.
 
+### JSON REST API
+
+Authenticated users can also interact with the application programmatically via
+JSON endpoints under `/api/`:
+
+| Endpoint               | Methods       | Description                                                            |
+|------------------------|---------------|------------------------------------------------------------------------|
+| `/api/status/`         | `GET`         | Current session model metadata, flow units, subcatchments, and labels  |
+| `/api/upload/`         | `POST`        | Upload a `.inp` model (`multipart/form-data`)                          |
+| `/api/upload/sample/`  | `POST`        | Load the bundled `example.inp` model into the session                  |
+| `/api/upload/clear/`   | `POST`        | Clear the session model and cached results                             |
+| `/api/subcatchments/`  | `GET`         | List subcatchment IDs, flow units, and unit-aware parameter labels     |
+| `/api/simulation/`     | `GET`, `POST` | Retrieve the latest parameter sweep or run a new sweep (`JSON` / form) |
+| `/api/timeseries/`     | `GET`, `POST` | Retrieve the latest timeseries analysis or run a new one               |
+| `/api/calculations/`   | `GET`, `POST` | Retrieve or run the SWMM vs. ANN runoff comparison                     |
+
 ## Local development
 
 ### Prerequisites

@@ -13,7 +13,11 @@ class RequestBodySizeLimitMiddleware:
     @staticmethod
     def _too_large_response(request: HttpRequest) -> HttpResponse:
         message = "Request body too large."
-        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        if (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or request.path == "/api"
+            or request.path.startswith("/api/")
+        ):
             return JsonResponse(
                 {"error": message, "message": message, "field_errors": {}},
                 status=413,
@@ -21,9 +25,9 @@ class RequestBodySizeLimitMiddleware:
         return HttpResponse(message, status=413, content_type="text/plain; charset=utf-8")
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
-        # The dedicated /upload/ view enforces its own INP_UPLOAD_MAX_BODY_BYTES limit
-        # after authentication checks; all other endpoints are capped at DATA_UPLOAD_MAX_MEMORY_SIZE.
-        is_inp_upload = request.path.rstrip("/") == "/upload"
+        # The dedicated /upload/ and /api/upload/ views enforce their own INP_UPLOAD_MAX_BODY_BYTES
+        # limit after authentication checks; all other endpoints are capped at DATA_UPLOAD_MAX_MEMORY_SIZE.
+        is_inp_upload = request.path.rstrip("/") in ("/upload", "/api/upload")
         if request.method in ("POST", "PUT", "PATCH") and not is_inp_upload:
             max_bytes = getattr(settings, "DATA_UPLOAD_MAX_MEMORY_SIZE", None)
             if max_bytes is not None:
