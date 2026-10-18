@@ -33,13 +33,13 @@ jobs:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -62,7 +62,7 @@ jobs:
 
     - name: Upload coverage reports to Codecov
       if: ${{ github.actor != 'dependabot[bot]' && env.CODECOV_TOKEN != '' }}
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: ./coverage.xml
@@ -77,13 +77,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
 
     - name: Set up Python 3.10
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.10'
 
@@ -111,13 +111,13 @@ jobs:
         python-version: ['3.10', '3.14']
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -140,13 +140,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
 
     - name: Set up Python 3.12
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.12'
 
@@ -167,13 +167,13 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install uv
       uses: astral-sh/setup-uv@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.12'
 
@@ -229,7 +229,7 @@ jobs:
         EOF
 
     - name: Store distribution packages
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: python-package-distributions
         path: dist/
@@ -249,7 +249,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
 
     - name: Download distribution packages
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8
       with:
         name: python-package-distributions
         path: dist/
@@ -289,7 +289,7 @@ jobs:
 
     steps:
     - name: Download distribution packages
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8
       with:
         name: python-package-distributions
         path: dist/
@@ -310,7 +310,7 @@ jobs:
 
     steps:
     - name: Download distribution packages
-      uses: actions/download-artifact@v7
+      uses: actions/download-artifact@v8
       with:
         name: python-package-distributions
         path: dist/

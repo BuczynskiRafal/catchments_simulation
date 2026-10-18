@@ -39,7 +39,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-django>=4.5",
-    "ruff==0.16.9",
+    "ruff==0.17.0",
     "pytest-xdist>=3.6",
     "mypy>=1.0",
     "pandas-stubs>=2.2",
@@ -47,18 +47,19 @@ dev = [
     "pre-commit>=3.0",
 ]
 web = [
-    "Django>=4.2,<5.0",
-    "Werkzeug==3.1.5",
-    "crispy-bootstrap5==2024.2",
-    "python-dotenv==1.0.0",
-    "django-crispy-forms==2.0",
-    "django-import-export==3.2.0",
-    "django-storages==1.13.2",
+    "Django>=4.2,<6.0",
+    "Werkzeug==3.1.8",
+    "crispy-bootstrap5>=2024.2",
+    "python-dotenv==1.2.4",
+    "django-crispy-forms>=2.0",
+    "django-import-export==4.4.1",
+    "django-storages==1.14.6",
+    "openpyxl>=3.1.5",
     "psycopg2-binary>=2.9.6",
     "plotly>=5.18.0",
-    "dj-database-url==2.0.0",
-    "whitenoise==6.4.0",
-    "gunicorn==25.1.0",
+    "dj-database-url==3.1.2",
+    "whitenoise==6.12.0",
+    "gunicorn==26.2.0",
     "setuptools>=70",
     "pydantic[email]>=2.0",
 ]
@@ -123,7 +124,6 @@ runtime-evaluated-base-classes = ["pydantic.BaseModel"]
 "cs_app/**/migrations/*.py" = ["RUF012"]
 
 [tool.mypy]
-python_version = "3.10"
 strict = true
 mypy_path = ["cs_app"]
 
@@ -146,6 +146,9 @@ module = [
     "cs_app.*",
     "main.*",
     "register.*",
+    "e2e.*",
+    "data.*",
+    "conftest",
 ]
 implicit_reexport = true
 disallow_untyped_defs = false

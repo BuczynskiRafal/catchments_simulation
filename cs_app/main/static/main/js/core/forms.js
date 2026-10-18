@@ -24,11 +24,12 @@
         return form.querySelector("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])");
     }
 
-    /** Crispy places `.invalid-feedback#error_N_<input id>` and `#<input id>_helptext` next to each field. */
+    /** Crispy places `.invalid-feedback` (`#error_N_<input id>` or nested `<p id="error_N_<input id>">`) and `#<input id>_helptext` next to each field. */
     function linkErrors(form) {
         form.querySelectorAll(".is-invalid").forEach(function (input) {
             input.setAttribute("aria-invalid", "true");
-            form.querySelectorAll('.invalid-feedback[id$="_' + input.id + '"]').forEach(function (feedback) {
+            var selector = '.invalid-feedback[id$="_' + input.id + '"], .invalid-feedback [id$="_' + input.id + '"]';
+            form.querySelectorAll(selector).forEach(function (feedback) {
                 describeBy(input, feedback.id);
             });
         });
