@@ -764,6 +764,7 @@ def test_calculations_ajax_swmm_failure_returns_400(calc_client, monkeypatch):
         raise RuntimeError("swmm crashed")
 
     monkeypatch.setattr("main.views.Simulation", failing_simulation)
+    monkeypatch.setattr("main.views.PySWMM", lambda: SimpleNamespace(swmm_close=lambda: None))
     monkeypatch.setattr("main.views._cleanup_swmm_side_files", lambda _path: None)
 
     response = calc_client.post(reverse("main:calculations"), **AJAX)
