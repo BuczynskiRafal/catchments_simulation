@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -30,7 +30,7 @@ class Command(BaseCommand):
             help="List files that would be removed without deleting them.",
         )
 
-    def handle(self, *args: object, **options: object) -> str:
+    def handle(self, *args: object, **options: Any) -> str:
         max_age_hours = float(options["max_age_hours"])
         if max_age_hours < 0:
             raise CommandError("--max-age-hours must be non-negative.")

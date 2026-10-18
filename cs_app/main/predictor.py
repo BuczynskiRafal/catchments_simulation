@@ -173,30 +173,17 @@ REQUIRED_SUBCATCHMENT_COLUMNS: tuple[str, ...] = (
 )
 _FT_TO_M = 0.3048
 _IN_TO_MM = 25.4
-_SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
-_US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
 
 
 def _is_us_flow_units(swmmio_model: object) -> bool:
     """Return True when swmmio_model specifies US flow units (CFS, GPM, MGD)."""
+    from main.units import _extract_options_flow_units, _unit_system
+
     inp = getattr(swmmio_model, "inp", None)
     options = getattr(inp, "options", None)
     if options is None:
         return False
-
-    entries = ()
-    if hasattr(options, "columns") and hasattr(options, "empty"):
-        if not options.columns.empty:
-            value_col = "Value" if "Value" in options.columns else options.columns[0]
-            entries = options[value_col].items()
-    elif isinstance(options, dict):
-        entries = options.items()
-
-    flow_units = {str(k).strip().upper(): v for k, v in entries}.get("FLOW_UNITS")
-    normalized = str(flow_units or "").strip().upper()
-    if normalized in _SI_FLOW_UNITS:
-        return False
-    return normalized in _US_FLOW_UNITS
+    return _unit_system(_extract_options_flow_units(options)) == "US"
 
 
 def predict_runoff(swmmio_model: swmmio.Model) -> np.ndarray:

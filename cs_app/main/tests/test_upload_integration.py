@@ -174,3 +174,40 @@ def test_non_upload_endpoint_rejects_oversized_multipart_body_with_413(csrf_clie
 
     assert response.status_code == 413
     assert response.json()["message"] == "Request body too large."
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("url_name", ["main:upload_sample", "main:upload_clear"])
+def test_upload_subpaths_are_capped_by_request_body_size_limit_middleware(
+    csrf_client, settings, url_name
+):
+    """Non-INP endpoints under /upload/* must not bypass RequestBodySizeLimitMiddleware."""
+    settings.DATA_UPLOAD_MAX_MEMORY_SIZE = 100
+    response = csrf_client.post(
+        reverse(url_name),
+        data={"payload": "x" * 512},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+    assert response.status_code == 413
+    assert response.json()["message"] == "Request body too large."
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "malicious_section",
+    [
+        '[FILES] trailing_token\nSAVE OUTFLOWS "/tmp/pwned.txt"',
+        '[FILES\nSAVE OUTFLOWS "/tmp/pwned.txt"',
+        '[TIMESERIES] trailing_token\nts1 FILE "/dev/zero"',
+        '[EVAP]\nFILE "/etc/passwd"',
+        '[TEMPERATURE]\nFILE_EXTRA "/etc/passwd"',
+        '[BACK]\nFILE "/etc/passwd"',
+    ],
+)
+def test_upload_rejects_swmm_prefix_and_malformed_header_bypasses(csrf_client, malicious_section):
+    """libswmm5 section/keyword prefix edge cases cannot smuggle external file directives."""
+    token = csrf_client.cookies[settings.CSRF_COOKIE_NAME].value
+    payload = f"[TITLE]\nTest\n[OPTIONS]\nFLOW_UNITS CMS\n{malicious_section}\n".encode()
+    response = _post_upload(csrf_client, content=payload, HTTP_X_CSRFTOKEN=token)
+    assert response.status_code == 400
+    assert "Invalid file content" in response.json()["error"]

@@ -14,7 +14,7 @@ from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache, wraps
 from io import StringIO
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -102,21 +102,46 @@ from main.units import (
     SI_FLOW_UNITS as SI_FLOW_UNITS,
 )
 from main.units import (
-    _ann_runoff_factor,
-    _build_simulation_axis_labels,
-    _build_timeseries_axis_labels,
-    _format_parameter_value,
-    _hydrograph_metrics,
-    _hydrograph_summary,
-    _is_finite_number,
-    _normalize_flow_units,
-    _report_runoff_unit,
-    _runoff_volume_unit,
-    _timeseries_records,
-    _unit_labels,
+    _ann_runoff_factor as _ann_runoff_factor,
+)
+from main.units import (
+    _build_simulation_axis_labels as _build_simulation_axis_labels,
+)
+from main.units import (
+    _build_timeseries_axis_labels as _build_timeseries_axis_labels,
+)
+from main.units import (
+    _extract_options_flow_units,
 )
 from main.units import (
     _format_duration as _format_duration,
+)
+from main.units import (
+    _format_parameter_value as _format_parameter_value,
+)
+from main.units import (
+    _hydrograph_metrics as _hydrograph_metrics,
+)
+from main.units import (
+    _hydrograph_summary as _hydrograph_summary,
+)
+from main.units import (
+    _is_finite_number as _is_finite_number,
+)
+from main.units import (
+    _normalize_flow_units as _normalize_flow_units,
+)
+from main.units import (
+    _report_runoff_unit as _report_runoff_unit,
+)
+from main.units import (
+    _runoff_volume_unit as _runoff_volume_unit,
+)
+from main.units import (
+    _timeseries_records as _timeseries_records,
+)
+from main.units import (
+    _unit_labels as _unit_labels,
 )
 from main.units import (
     _unit_system as _unit_system,
@@ -250,7 +275,10 @@ def _classify_run_error(
 # Directories of an absolute path ("/srv/media/uploads/7/", "C:\\models\\"), which a SWMM
 # error line may contain and the page must not show.
 _PATH_DIRECTORIES = re.compile(r"(?<![\w.])(?:[A-Za-z]:)?[\\/](?:[^\s\\/]+[\\/])+")
-_EXTERNAL_FILE_ORACLE_ERROR = re.compile(r"ERROR\s+36[13]\b[^\n]*", re.IGNORECASE)
+_EXTERNAL_FILE_ORACLE_ERROR = re.compile(
+    r"ERROR\s+(?:30[34]|319|320|33[6789]|34[12]|35[1234]|36[13])\b[^\n]*",
+    re.IGNORECASE,
+)
 
 
 def _hide_directories(line: str) -> str:
@@ -721,7 +749,7 @@ MIN_SWMM_SECTION_MATCHES = 2
 SWMM_SECTION_HEADERS = frozenset(
     {"[TITLE]", "[OPTIONS]", "[RAINGAGES]", "[SUBCATCHMENTS]", "[SUBAREAS]"}
 )
-FORBIDDEN_SWMM_SECTION_PREFIXES = ("[FILE", "[BACKDROP")
+FORBIDDEN_SWMM_SECTION_PREFIXES = ("[FILE", "[BACK")
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -738,19 +766,22 @@ def _is_forbidden_inp_directive(section: str, stripped_line: str) -> bool:
     """Return True when an INP section header or data row references an external server file."""
     if not stripped_line:
         return False
-    if stripped_line.startswith("[") and stripped_line.endswith("]"):
-        return stripped_line.upper().startswith(FORBIDDEN_SWMM_SECTION_PREFIXES)
+    if stripped_line.startswith("["):
+        header_tokens = stripped_line.upper().split()
+        # Reject malformed section headers (missing closing ']' or extra tokens after ']')
+        # and forbidden external-file sections ([FILES], [BACKDROP] and their SWMM 4-char prefixes).
+        if len(header_tokens) != 1 or not header_tokens[0].endswith("]"):
+            return True
+        return header_tokens[0].startswith(FORBIDDEN_SWMM_SECTION_PREFIXES)
 
     tokens = stripped_line.upper().split()
     if not tokens:
         return False
-    if section.startswith("[TIMESERIES"):
-        return len(tokens) >= 2 and tokens[1] == "FILE"
-    if section.startswith("[RAINGAGE"):
-        return "FILE" in tokens[1:]
-    if section.startswith(("[TEMPERATURE", "[EVAPORATION")):
-        return tokens[0] == "FILE" or (len(tokens) >= 2 and tokens[1] == "FILE")
-    if section.startswith("[LID_USAGE"):
+    if section.startswith(("[TIME", "[RAING", "[PATTE")):
+        return any(tok.startswith("FILE") for tok in tokens[1:])
+    if section.startswith(("[TEMP", "[EVAP")):
+        return any(tok.startswith("FILE") for tok in tokens[:2])
+    if section.startswith("[LID_U"):
         # In SWMM [LID_USAGE], optional 9th column (index 8) is a detailed report file path.
         return (len(tokens) >= 9 and tokens[8] not in ("*", '""', "''")) or ('"' in stripped_line)
     return False
@@ -768,10 +799,10 @@ def _scan_inp_lines(
         stripped = line.split(";", 1)[0].strip()
         if not stripped:
             continue
-        if stripped.startswith("[") and stripped.endswith("]"):
-            current_section = stripped.upper()
+        if stripped.startswith("["):
             if _is_forbidden_inp_directive(current_section, stripped):
                 return False, current_section
+            current_section = stripped.upper()
             if current_section in SWMM_SECTION_HEADERS:
                 matched_sections.add(current_section)
         elif _is_forbidden_inp_directive(current_section, stripped):
@@ -816,7 +847,7 @@ def _detect_inp_encoding_prefix(prefix: bytes) -> tuple[str, int]:
 
 
 def _validate_inp_file_stream(
-    uploaded_file: object, chunk_size: int = UPLOAD_VALIDATION_CHUNK_SIZE
+    uploaded_file: Any, chunk_size: int = UPLOAD_VALIDATION_CHUNK_SIZE
 ) -> bool:
     """Validate SWMM INP headers and reject external file directives across the full stream."""
     decoder = None
@@ -1198,17 +1229,7 @@ def _read_flow_units(inp_path: str) -> str | None:
         logger.warning("Failed to read FLOW_UNITS from %s", inp_path, exc_info=True)
         return None
 
-    entries = ()
-    if isinstance(options, pd.DataFrame):
-        if not options.columns.empty:
-            value_column = "Value" if "Value" in options.columns else options.columns[0]
-            entries = options[value_column].items()
-    elif isinstance(options, dict):
-        entries = options.items()
-    # SWMM keywords are case-insensitive.
-    flow_units = {str(key).strip().upper(): value for key, value in entries}.get("FLOW_UNITS")
-    normalized = _normalize_flow_units(str(flow_units) if flow_units is not None else None)
-    return normalized or "CFS"
+    return _extract_options_flow_units(options)
 
 
 def _session_flow_units(request: HttpRequest) -> str | None:
@@ -1557,8 +1578,8 @@ def _run_timeseries(request: HttpRequest, form: TimeseriesForm) -> None:
     model = FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path)
     if mode == "single":
         ts_df = model.calculate_timeseries()
-        data = _timeseries_records(ts_df)
-        summary = {"metrics": _hydrograph_metrics(ts_df, volume_factor)}
+        data: Any = _timeseries_records(ts_df)
+        summary: dict[str, Any] = {"metrics": _hydrograph_metrics(ts_df, volume_factor)}
         chart_config["title"] = f"Timeseries for subcatchment {catchment_name}"
         output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
     else:

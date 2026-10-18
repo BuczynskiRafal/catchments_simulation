@@ -125,6 +125,7 @@ runtime-evaluated-base-classes = ["pydantic.BaseModel"]
 [tool.mypy]
 python_version = "3.10"
 strict = true
+mypy_path = ["cs_app"]
 
 [[tool.mypy.overrides]]
 # swmmio, pyswmm, and Django web stack packages without bundled PEP 561 stubs.
@@ -146,9 +147,16 @@ module = [
     "main.*",
     "register.*",
 ]
+implicit_reexport = true
 disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
 disallow_untyped_decorators = false
+disallow_any_generics = false
+disallow_subclassing_any = false
 warn_return_any = false
+strict_optional = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

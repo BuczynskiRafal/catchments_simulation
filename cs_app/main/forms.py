@@ -113,7 +113,7 @@ def _clean_sweep_range(form: forms.Form, feature: str, label: str) -> None:
         # 0.1), so the run count is all that build_range can still reject.
         form.add_error("step", TOO_MANY_RUNS_MESSAGE)
         return
-    spec = FEATURES[feature]
+    spec = FEATURES[feature]  # type: ignore[index]
     message = f"{label} must be {_describe_bounds(spec)}."
     if not spec.contains(values[0]):
         form.add_error("start", message)

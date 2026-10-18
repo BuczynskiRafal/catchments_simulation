@@ -91,10 +91,10 @@ DATABASES = {
     "default": dj_database_url.parse(db_url, conn_max_age=600),
 }
 
-# Analysis results are kept in the cache between page visits. The file backend survives
-# a server restart (runserver's autoreload, a deploy) and is shared by every worker
-# process on the host; the default in-memory cache is neither. A deployment running
-# several hosts needs a shared backend instead (Redis, database).
+# Analysis results are kept in the cache between page visits. FileBasedCache is shared
+# across Gunicorn worker processes on the same host/container and survives dev autoreloads
+# (but is ephemeral across container redeploys unless backed by a persistent volume).
+# Multi-instance deployments require a shared external backend (e.g. Redis or database).
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",

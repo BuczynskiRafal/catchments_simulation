@@ -17,8 +17,9 @@ def resolve_username(identifier: str) -> str:
     """
     Map a login identifier to the username of the account it names.
 
-    Tried in order: the exact username, then the username and the email
-    address compared case-insensitively. A case-insensitive match counts only
+    Tried in order: the exact username, then (when the identifier contains ``@``)
+    the email address compared case-insensitively, and finally the username
+    compared case-insensitively. A case-insensitive match counts only
     when exactly one account has it; an ambiguous identifier is returned
     unchanged, so it matches no account rather than an arbitrary one.
 

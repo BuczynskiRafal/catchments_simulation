@@ -381,6 +381,17 @@ def test_comparison_converts_us_units_for_ann_predictions(client, user):
     assert us_ann_ft3 == pytest.approx(si_ann_m3 * _M3_TO_FT3, rel=1e-4)
 
 
+def test_is_us_flow_units_defaults_to_cfs_when_omitted_in_options():
+    """When [OPTIONS] omits FLOW_UNITS, SWMM defaults to CFS (US), matching _read_flow_units."""
+    from main.predictor import _is_us_flow_units
+
+    class ModelWithEmptyOptions:
+        class inp:
+            options = pd.DataFrame({"Value": {"INFILTRATION": "HORTON"}})
+
+    assert _is_us_flow_units(ModelWithEmptyOptions()) is True
+
+
 # ---------------------------------------------------------------------------
 # Typed errors of the package, raised by a stand-in
 # ---------------------------------------------------------------------------

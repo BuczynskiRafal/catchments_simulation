@@ -44,6 +44,21 @@ def _normalize_flow_units(flow_units: str | None) -> str:
     return str(flow_units or "").strip().upper()
 
 
+def _extract_options_flow_units(options: object) -> str:
+    """Extract normalized FLOW_UNITS from swmmio Model.inp.options, defaulting to SWMM's CFS."""
+    entries: list[tuple[object, object]] = []
+    if isinstance(options, pd.DataFrame):
+        if not options.columns.empty:
+            value_column = "Value" if "Value" in options.columns else options.columns[0]
+            entries = list(options[value_column].items())
+    elif isinstance(options, dict):
+        entries = list(options.items())
+    # SWMM keywords are case-insensitive; omitted FLOW_UNITS defaults to CFS in SWMM 5.
+    flow_units = {str(key).strip().upper(): value for key, value in entries}.get("FLOW_UNITS")
+    normalized = _normalize_flow_units(str(flow_units) if flow_units is not None else None)
+    return normalized or "CFS"
+
+
 def _unit_system(flow_units: str | None) -> str:
     """Classify FLOW_UNITS into SI/US/UNKNOWN buckets."""
     normalized = _normalize_flow_units(flow_units)
@@ -194,20 +209,21 @@ def _hydrograph_metrics(ts_df: pd.DataFrame, volume_factor: float) -> dict:
     """Peak, time to peak and volume of one run's runoff; None where a value is undefined."""
     runoff = ts_df["runoff"]
     try:
-        delay = time_to_peak(ts_df, column="runoff")
+        delay: pd.Timedelta | None = time_to_peak(ts_df, column="runoff")
     except ValueError:  # no runoff at all, so there is no peak to time
-        delay = pd.NaT
+        delay = None
     try:
         volume = runoff_volume(ts_df, column="runoff") * volume_factor
     except ValueError:  # fewer than two timesteps
         volume = None
     peak = float(runoff.max()) if not runoff.empty else None
-    has_peak = not pd.isna(delay)
+    has_peak = delay is not None and not pd.isna(delay)
+    peak_idx = runoff.idxmax() if has_peak else None
     return {
         "peak": peak if _is_finite_number(peak) else None,
-        "peak_at": runoff.idxmax().strftime("%Y-%m-%d %H:%M") if has_peak else None,
-        "time_to_peak": _format_duration(delay) if has_peak else None,
-        "time_to_peak_seconds": delay.total_seconds() if has_peak else None,
+        "peak_at": peak_idx.strftime("%Y-%m-%d %H:%M") if hasattr(peak_idx, "strftime") else None,
+        "time_to_peak": _format_duration(delay) if delay is not None and has_peak else None,
+        "time_to_peak_seconds": delay.total_seconds() if delay is not None and has_peak else None,
         "volume": volume if _is_finite_number(volume) else None,
     }
 

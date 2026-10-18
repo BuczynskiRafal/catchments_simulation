@@ -23,7 +23,8 @@ class RequestBodySizeLimitMiddleware:
     def __call__(self, request: HttpRequest) -> HttpResponse:
         # The dedicated /upload/ view enforces its own INP_UPLOAD_MAX_BODY_BYTES limit
         # after authentication checks; all other endpoints are capped at DATA_UPLOAD_MAX_MEMORY_SIZE.
-        if request.method in ("POST", "PUT", "PATCH") and not request.path.startswith("/upload"):
+        is_inp_upload = request.path.rstrip("/") == "/upload"
+        if request.method in ("POST", "PUT", "PATCH") and not is_inp_upload:
             max_bytes = getattr(settings, "DATA_UPLOAD_MAX_MEMORY_SIZE", None)
             if max_bytes is not None:
                 raw_length = request.META.get("CONTENT_LENGTH")
@@ -41,8 +42,6 @@ class RequestBodySizeLimitMiddleware:
                 )
 
         response = self.get_response(request)
-        if getattr(request, "_upload_body_too_large", False) and not request.path.startswith(
-            "/upload"
-        ):
+        if getattr(request, "_upload_body_too_large", False) and not is_inp_upload:
             return self._too_large_response(request)
         return response
