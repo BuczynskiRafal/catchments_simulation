@@ -77,3 +77,51 @@ def test_subcatchments_url():
     """Tests the URL of the subcatchments endpoint."""
     path = reverse("main:subcatchments")
     assert resolve(path).view_name == "main:subcatchments"
+
+
+def test_api_status_url():
+    path = reverse("main:api_status")
+    assert path == "/api/status/"
+    assert resolve(path).view_name == "main:api_status"
+
+
+def test_api_upload_url():
+    path = reverse("main:api_upload")
+    assert path == "/api/upload/"
+    assert resolve(path).view_name == "main:api_upload"
+
+
+def test_api_upload_sample_url():
+    path = reverse("main:api_upload_sample")
+    assert path == "/api/upload/sample/"
+    assert resolve(path).view_name == "main:api_upload_sample"
+
+
+def test_api_upload_clear_url():
+    path = reverse("main:api_upload_clear")
+    assert path == "/api/upload/clear/"
+    assert resolve(path).view_name == "main:api_upload_clear"
+
+
+def test_api_subcatchments_url():
+    path = reverse("main:api_subcatchments")
+    assert path == "/api/subcatchments/"
+    assert resolve(path).view_name == "main:api_subcatchments"
+
+
+def test_api_simulation_url():
+    path = reverse("main:api_simulation")
+    assert path == "/api/simulation/"
+    assert resolve(path).view_name == "main:api_simulation"
+
+
+def test_api_timeseries_url():
+    path = reverse("main:api_timeseries")
+    assert path == "/api/timeseries/"
+    assert resolve(path).view_name == "main:api_timeseries"
+
+
+def test_api_calculations_url():
+    path = reverse("main:api_calculations")
+    assert path == "/api/calculations/"
+    assert resolve(path).view_name == "main:api_calculations"

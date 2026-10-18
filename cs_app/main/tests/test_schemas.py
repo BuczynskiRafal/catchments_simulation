@@ -187,3 +187,105 @@ class TestSendMessageService:
 
         assert ok is False
         assert "Failed to send contact form message" in caplog.text
+
+
+class TestApiSchemas:
+    """Tests for SimulationRequest and TimeseriesRequest Pydantic schemas."""
+
+    def test_simulation_request_valid(self):
+        from main.schemas import SimulationRequest
+
+        req = SimulationRequest(
+            option="simulate_percent_slope",
+            catchment_name="S1",
+            start=1.0,
+            stop=5.0,
+            step=1.0,
+        )
+        assert req.option == "simulate_percent_slope"
+        assert req.catchment_name == "S1"
+        assert req.start == 1.0
+
+    def test_simulation_request_rejects_extra_fields(self):
+        from main.schemas import SimulationRequest
+
+        with pytest.raises(ValidationError):
+            SimulationRequest(
+                option="simulate_n_imperv",
+                catchment_name="S1",
+                extra_field="nope",
+            )
+
+    def test_timeseries_request_valid_modes(self):
+        from main.schemas import TimeseriesRequest
+
+        single = TimeseriesRequest(mode="single", catchment_name="S1")
+        assert single.mode == "single"
+        assert single.feature is None
+
+        sweep = TimeseriesRequest(
+            mode="sweep",
+            catchment_name="S1",
+            feature="PercImperv",
+            start=0.0,
+            stop=20.0,
+            step=10.0,
+        )
+        assert sweep.mode == "sweep"
+        assert sweep.feature == "PercImperv"
+
+    def test_timeseries_request_rejects_invalid_mode(self):
+        from main.schemas import TimeseriesRequest
+
+        with pytest.raises(ValidationError):
+            TimeseriesRequest(mode="invalid", catchment_name="S1")
+
+    def test_simulation_request_enforces_range_and_rejects_bool(self):
+        from main.schemas import SimulationRequest
+
+        with pytest.raises(ValidationError):
+            SimulationRequest(option="simulate_percent_slope", catchment_name="S1")
+
+        with pytest.raises(ValidationError):
+            SimulationRequest(
+                option="simulate_percent_slope",
+                catchment_name="S1",
+                start=10.0,
+                stop=1.0,
+                step=1.0,
+            )
+
+        with pytest.raises(ValidationError):
+            SimulationRequest(
+                option="simulate_percent_slope",
+                catchment_name="S1",
+                start=True,
+                stop=5.0,
+                step=1.0,
+            )
+
+    def test_timeseries_request_enforces_sweep_fields_and_rejects_bool(self):
+        from main.schemas import TimeseriesRequest
+
+        with pytest.raises(ValidationError):
+            TimeseriesRequest(mode="sweep", catchment_name="S1")
+
+        with pytest.raises(ValidationError):
+            TimeseriesRequest(
+                mode="sweep",
+                catchment_name="S1",
+                feature="PercImperv",
+                start=20.0,
+                stop=5.0,
+                step=1.0,
+            )
+
+        with pytest.raises(ValidationError):
+            TimeseriesRequest(
+                mode="sweep",
+                catchment_name="S1",
+                feature="PercImperv",
+                start=False,
+                stop=20.0,
+                step=10.0,
+            )
