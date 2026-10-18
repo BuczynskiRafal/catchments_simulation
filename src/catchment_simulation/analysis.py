@@ -7,17 +7,22 @@ decoupled from the simulation class itself.
 
 from __future__ import annotations
 
-from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 def time_to_peak(
     timeseries: pd.DataFrame,
     column: str = "runoff",
+    *,
+    start: pd.Timestamp | datetime | None = None,
 ) -> pd.Timedelta:
-    """Calculate the elapsed time from simulation start to the peak value.
+    """Calculate the time from a reference instant to the peak value.
 
     Parameters
     ----------
@@ -26,28 +31,48 @@ def time_to_peak(
         :meth:`FeaturesSimulation.calculate_timeseries`.
     column : str, optional
         Column to analyse, defaults to ``"runoff"``.
+    start : pd.Timestamp | datetime | None, optional
+        Reference instant, e.g. the simulation's ``START_DATE``/``START_TIME``.
+        Defaults to the first timestamp of *timeseries*. A hydrograph from
+        :meth:`FeaturesSimulation.calculate_timeseries` is stamped at the end
+        of each routing step, so its first timestamp is one step after the
+        simulation start.
 
     Returns
     -------
     pd.Timedelta
-        Time elapsed from the first timestamp to the peak.
+        Time elapsed from *start* to the first occurrence of the peak.
 
     Raises
     ------
     ValueError
-        If *timeseries* is empty, *column* is not present, or all values
-        in the column are zero (no meaningful peak).
+        If *timeseries* is empty, its index is not a monotonically increasing
+        ``DatetimeIndex``, *column* is not present, the column is all NaN or
+        all zero (no meaningful peak), or *start* is later than the first
+        timestamp.
     """
     if timeseries.empty:
         raise ValueError("Cannot compute time to peak on an empty timeseries.")
+    index = timeseries.index
+    if not isinstance(index, pd.DatetimeIndex):
+        raise ValueError(f"The timeseries needs a DatetimeIndex, not {type(index).__name__}.")
+    if not index.is_monotonic_increasing:
+        raise ValueError("The timeseries index must be sorted in increasing order.")
     if column not in timeseries.columns:
         raise ValueError(
-            f"Column '{column}' not found. " f"Available columns: {list(timeseries.columns)}"
+            f"Column '{column}' not found. Available columns: {list(timeseries.columns)}"
         )
-    if timeseries[column].max() == 0:
+    values = timeseries[column]
+    if values.isna().all():
+        raise ValueError(f"All values in column '{column}' are NaN — no meaningful peak exists.")
+    if values.max() == 0:
         raise ValueError(f"All values in column '{column}' are zero — no meaningful peak exists.")
-    peak_time = timeseries[column].idxmax()
-    return peak_time - timeseries.index[0]
+    reference = index[0] if start is None else pd.Timestamp(start)
+    if reference > index[0]:
+        raise ValueError(f"start ({reference}) is later than the first timestamp ({index[0]}).")
+    # argmax skips NaN and returns the position of the first maximum.
+    peak_time = index[int(values.argmax())]
+    return peak_time - reference
 
 
 def runoff_volume(
@@ -87,18 +112,28 @@ def runoff_volume(
     Raises
     ------
     ValueError
-        If *column* is not present or the (sliced) timeseries has fewer
-        than 2 data points.
+        If the index is not a monotonically increasing ``DatetimeIndex``,
+        *column* is not present, or the (sliced) timeseries has fewer than
+        2 data points.
     """
+    if not isinstance(timeseries.index, pd.DatetimeIndex):
+        raise ValueError(
+            f"The timeseries needs a DatetimeIndex, not {type(timeseries.index).__name__}."
+        )
+    if not timeseries.index.is_monotonic_increasing:
+        raise ValueError("The timeseries index must be sorted in increasing order.")
     if column not in timeseries.columns:
         raise ValueError(
-            f"Column '{column}' not found. " f"Available columns: {list(timeseries.columns)}"
+            f"Column '{column}' not found. Available columns: {list(timeseries.columns)}"
         )
     ts = timeseries[column]
     if start is not None or end is not None:
-        ts = ts.loc[start:end]  # type: ignore[misc]
+        ts = ts.loc[slice(start, end)]
     if len(ts) < 2:
         raise ValueError("At least 2 data points are required for volume integration.")
-    dt_seconds = (ts.index[1:] - ts.index[:-1]).total_seconds().values
-    avg_flow = (ts.values[:-1] + ts.values[1:]) / 2
+    # The slice keeps the DatetimeIndex; the stubs only know it as an Index.
+    times = pd.DatetimeIndex(ts.index)
+    dt_seconds = (times[1:] - times[:-1]).total_seconds().to_numpy()
+    flow = ts.to_numpy(dtype=float)
+    avg_flow = (flow[:-1] + flow[1:]) / 2
     return float(np.sum(avg_flow * dt_seconds))

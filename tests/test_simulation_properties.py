@@ -1,19 +1,20 @@
 """Property-based tests for SWMM simulation invariants using Hypothesis.
 
-Slow tests (runs SWMM engine). Uses small parameter ranges to control execution time.
-Marked with @pytest.mark.slow for selective CI execution.
+Slow tests (they run the SWMM engine), kept to a few small examples.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import hypothesis.strategies as st
-import numpy as np
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 
-from catchment_simulation import FeaturesSimulation
+from catchment_simulation import FeaturesSimulation, build_range
 
-# ---------------------------------------------------------------------------
-# Strategies — limited ranges for fast SWMM runs (~10 steps max)
-# ---------------------------------------------------------------------------
+if TYPE_CHECKING:
+    from pathlib import Path
 
 small_range = st.fixed_dictionaries(
     {
@@ -23,55 +24,28 @@ small_range = st.fixed_dictionaries(
     }
 )
 
-
-@pytest.fixture
-def simulation_instance():
-    """Create a FeaturesSimulation instance with cleanup."""
-    with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
-        yield sim
-
-
-# ===========================================================================
-# Simulation invariant tests
-# ===========================================================================
+# The library never writes to the model file, so one copy can serve every example.
+swmm_settings = settings(
+    max_examples=3, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
 
 
 @pytest.mark.slow
 class TestSimulationProperties:
-    """Property-based tests for SWMM simulation invariants."""
-
     @given(params=small_range)
-    @settings(max_examples=3, deadline=None)
-    def test_simulate_area_returns_valid_dataframe(self, params: dict[str, float]) -> None:
-        with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
-            df = sim.simulate_area(**params)
-            expected_cols = set(FeaturesSimulation.RESULT_KEYS) | {"Area"}
-            assert set(df.columns) == expected_cols
-            for key in FeaturesSimulation.RESULT_KEYS:
-                assert (df[key] >= 0).all(), f"Column {key} has negative values"
+    @swmm_settings
+    def test_simulate_area_rows_match_range(
+        self, model_path: Path, params: dict[str, float]
+    ) -> None:
+        frame = FeaturesSimulation("S1", model_path).simulate_area(**params)
+        assert frame["Area"].tolist() == build_range(**params)
+        assert (frame[list(FeaturesSimulation.RESULT_KEYS)] >= 0).all().all()
 
+    @pytest.mark.parametrize("method", ["simulate_percent_impervious", "simulate_width"])
     @given(params=small_range)
-    @settings(max_examples=3, deadline=None)
-    def test_simulate_area_row_count_matches_range(self, params: dict[str, float]) -> None:
-        with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
-            df = sim.simulate_area(**params)
-            expected_count = len(
-                np.arange(params["start"], params["stop"] + params["step"] / 2, params["step"])
-            )
-            assert len(df) == expected_count
-
-    @given(params=small_range)
-    @settings(max_examples=3, deadline=None)
-    def test_simulate_percent_impervious_non_negative(self, params: dict[str, float]) -> None:
-        with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
-            df = sim.simulate_percent_impervious(**params)
-            for key in FeaturesSimulation.RESULT_KEYS:
-                assert (df[key] >= 0).all(), f"Column {key} has negative values"
-
-    @given(params=small_range)
-    @settings(max_examples=3, deadline=None)
-    def test_simulate_width_non_negative(self, params: dict[str, float]) -> None:
-        with FeaturesSimulation("S1", "tests/fixtures/example.inp") as sim:
-            df = sim.simulate_width(**params)
-            for key in FeaturesSimulation.RESULT_KEYS:
-                assert (df[key] >= 0).all(), f"Column {key} has negative values"
+    @swmm_settings
+    def test_results_non_negative(
+        self, model_path: Path, method: str, params: dict[str, float]
+    ) -> None:
+        frame = getattr(FeaturesSimulation("S1", model_path), method)(**params)
+        assert (frame[list(FeaturesSimulation.RESULT_KEYS)] >= 0).all().all()

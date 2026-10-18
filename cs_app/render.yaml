@@ -1,17 +1,32 @@
 services:
   - type: web
     name: catchment-simulations
-    env: docker
-    buildCommand: "docker build -t catchment-simulations -f cs_app/Dockerfile ."
-    startCommand: "docker run -p 8000:8000 catchment-simulations"
-    healthCheckPath: "/"
+    runtime: docker
+    dockerfilePath: ./cs_app/Dockerfile
+    dockerContext: .
+    healthCheckPath: "/healthz"
     envVars:
-      - key: DJANGO_CS_PASSWORD
-        value: mysecretpassword
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: SECURE_SSL_REDIRECT
+        value: "True"
+      - key: SECURE_HSTS_SECONDS
+        value: "31536000"
+      - key: SECURE_HSTS_INCLUDE_SUBDOMAINS
+        value: "True"
+      - key: SECURE_HSTS_PRELOAD
+        value: "True"
+      - key: USE_X_FORWARDED_PROTO
+        value: "True"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: catchment-simulations-db
+          property: connectionString
 
 databases:
   - name: catchment-simulations-db
     plan: "starter"
     user: "django_cs"
-    password: "mysecretpassword"
     database: "django_cs"

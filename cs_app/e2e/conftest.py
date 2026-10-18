@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import os
 import uuid
+from typing import TYPE_CHECKING
 
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client
-from playwright.sync_api import Browser, BrowserContext, Page
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Browser, BrowserContext, Page
 
 # Allow Django ORM access from async Playwright threads.
 os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
@@ -39,20 +42,19 @@ STRONG_ALT_PASSWORD = os.environ.get("E2E_ALT_PASSWORD") or _generate_password()
 OTHER_USER_PASSWORD = os.environ.get("E2E_OTHER_PASSWORD") or _generate_password()
 
 
-@pytest.fixture()
+@pytest.fixture
 def test_user(db) -> User:
     """Create and return a standard test user."""
-    user = User.objects.create_user(
+    return User.objects.create_user(
         username=TEST_USERNAME,
         email=TEST_EMAIL,
         first_name=TEST_FIRST_NAME,
         last_name=TEST_LAST_NAME,
         password=TEST_PASSWORD,
     )
-    return user
 
 
-@pytest.fixture()
+@pytest.fixture
 def auth_page(page: Page, live_server, test_user) -> Page:
     """Return a Playwright ``Page`` already authenticated via cookie injection.
 

@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "catchment_simulation"
-version = "0.0.7"
+version = "0.1.0"
 description = "Collection of calculation methods for simulating subcatchment features from Storm Water Management Model"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     {name = "Rafal Buczynski", email = "rafal.buczynski@sd.pb.edu.pl"}
 ]
@@ -15,31 +16,33 @@ requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Hydrology",
 ]
 keywords = ["swmm", "hydrology", "simulation", "catchment", "stormwater"]
 dependencies = [
-    "pandas>=1.3.5",
-    "numpy>=1.21.6",
+    "pandas>=2.2.2",
+    "numpy>=1.26",
     "swmmio>=0.6.0",
-    "pyswmm>=1.2.0",
-    "pydantic>=2.0",
+    "pyswmm>=1.5.0",
+    "pydantic>=2.1",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-django>=4.5",
-    "ruff>=0.1.0",
+    "ruff==0.16.9",
+    "pytest-xdist>=3.6",
     "mypy>=1.0",
+    "pandas-stubs>=2.2",
     "hypothesis>=6.60",
     "pre-commit>=3.0",
 ]
@@ -74,34 +77,86 @@ e2e = [
 Homepage = "https://github.com/BuczynskiRafal/catchments_simulation"
 Documentation = "https://catchments-simulation.readthedocs.io"
 Repository = "https://github.com/BuczynskiRafal/catchments_simulation"
+Changelog = "https://github.com/BuczynskiRafal/catchments_simulation/blob/main/CHANGELOG.md"
+Issues = "https://github.com/BuczynskiRafal/catchments_simulation/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["catchment_simulation*"]
 
 [tool.setuptools.package-data]
-catchment_simulation = ["py.typed"]
+catchment_simulation = ["py.typed", "data/*.inp"]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B"]
-ignore = ["E501"]
+select = [
+    "E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "PERF", "C4", "RET", "PT", "NPY", "PD",
+    "TC", "D",
+]
+ignore = [
+    "E501",  # line length is the formatter's job; long strings and URLs stay unbroken
+]
+# The web app's copy uses typographic characters on purpose ("model flow units × s",
+# "didn’t match"); the tests and page objects match that text.
+allowed-confusables = ["×", "’"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.flake8-type-checking]
+# pydantic resolves field annotations at runtime, so their imports must stay real.
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
+[tool.ruff.lint.per-file-ignores]
+# Docstrings are required for the published library only, not for tests, the web app or docs.
+"tests/**" = ["D"]
+"docs/**" = ["D"]
+# The web app hands str paths to and from Django storage, the session and pyswmm, so
+# os.path is the native type there; moving it to pathlib is a refactor of its own.
+"cs_app/**" = ["D", "PTH"]
+# Django declares form options (Meta.fields, labels, error_messages) as mutable class
+# attributes and copies them; migrations are generated.
+"cs_app/**/forms.py" = ["RUF012"]
+"cs_app/**/migrations/*.py" = ["RUF012"]
 
 [tool.mypy]
 python_version = "3.10"
 strict = true
+mypy_path = ["cs_app"]
 
 [[tool.mypy.overrides]]
+# swmmio, pyswmm, and Django web stack packages without bundled PEP 561 stubs.
 module = [
     "swmmio.*",
     "pyswmm.*",
-    "pandas.*",
-    "numpy.*",
+    "django.*",
+    "crispy_forms.*",
+    "dj_database_url.*",
+    "dotenv.*",
+    "whitenoise.*",
+    "playwright.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "cs_app.*",
+    "main.*",
+    "register.*",
+]
+implicit_reexport = true
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+disallow_untyped_decorators = false
+disallow_any_generics = false
+disallow_subclassing_any = false
+warn_return_any = false
+strict_optional = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -111,4 +166,8 @@ markers = [
 filterwarnings = [
     "ignore:builtin type Swig.*:DeprecationWarning",
     "ignore:builtin type swigvarlink:DeprecationWarning",
+    # Upstream: swmmio's replace_inp_section passes copy= to DataFrame.infer_objects, which
+    # pandas 3 deprecates with a Pandas4Warning. Matching its DeprecationWarning base class
+    # keeps the filter importable on pandas 2, where the warning class does not exist.
+    "ignore:The copy keyword is deprecated:DeprecationWarning:swmmio",
 ]

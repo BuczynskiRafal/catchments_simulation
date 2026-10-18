@@ -4,6 +4,7 @@ This module contains the UserProfile model for the web application.
 The UserProfile model extends the default Django User model with additional
 fields, such as a biography.
 """
+
 from django.db import models
 
 

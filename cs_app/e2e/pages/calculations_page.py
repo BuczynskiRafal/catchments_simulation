@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from playwright.sync_api import Locator
+from typing import TYPE_CHECKING
 
 from .base_page import BasePage
 from .upload_component import UploadComponent
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Locator
 
 
 class CalculationsPage(BasePage):

@@ -12,7 +12,7 @@ from .pages.about_page import AboutPage
 pytestmark = pytest.mark.e2e
 
 
-@pytest.fixture()
+@pytest.fixture
 def about(page: Page, live_server) -> AboutPage:
     ap = AboutPage(page, live_server.url)
     ap.navigate_to()

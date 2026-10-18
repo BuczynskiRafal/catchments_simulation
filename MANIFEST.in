@@ -1,0 +1,15 @@
+# The sdist carries the library, its tests (with their fixtures) and the
+# project metadata, so downstream packagers can run the test suite from it.
+# The Django app, the docs and the CI configuration stay out.
+include LICENSE README.md CHANGELOG.md CITATION.cff pyproject.toml
+graft src
+graft tests
+
+prune cs_app
+prune docs
+prune img
+prune .github
+exclude audit*.md
+
+# SWMM writes .rpt/.out next to every model it runs; never ship run output.
+global-exclude *.py[cod] .DS_Store *.rpt *.out

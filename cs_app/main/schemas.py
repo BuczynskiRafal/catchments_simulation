@@ -13,7 +13,7 @@ class ContactMessage(BaseModel):
     Replaces the untyped ``dict[str, Any]`` that was passed to ``send_message()``.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid", frozen=True)
 
     email: EmailStr = Field(..., description="Sender email address")
     title: str = Field(..., min_length=1, max_length=200, description="Message subject")

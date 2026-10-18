@@ -28,10 +28,30 @@ class RegisterForm(UserCreationForm):
             "password2",  # Password confirmation field, required by UserCreationForm
         ]
 
+    def clean_username(self) -> str | None:
+        """Forbid '@' in usernames and reject usernames that match an existing email."""
+        username = super().clean_username()
+        if not username:
+            return username
+        if "@" in username:
+            raise forms.ValidationError(
+                "Enter a username without '@' so it cannot be confused with an email address.",
+                code="username_contains_at",
+            )
+        if User.objects.filter(email__iexact=username).exists():
+            raise forms.ValidationError(
+                "This username conflicts with an existing account.",
+                code="duplicate_username",
+            )
+        return username
+
     def clean_email(self) -> str:
-        """Reject an email address already used by another account, ignoring case."""
+        """Reject an email address already used by another account or username, ignoring case."""
         email = self.cleaned_data["email"]
-        if User.objects.filter(email__iexact=email).exists():
+        if (
+            User.objects.filter(email__iexact=email).exists()
+            or User.objects.filter(username__iexact=email).exists()
+        ):
             raise forms.ValidationError(
                 "An account with this email already exists. Log in instead.",
                 code="duplicate_email",

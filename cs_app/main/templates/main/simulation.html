@@ -6,8 +6,8 @@
 {% block head_scripts %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
         integrity="sha384-cCVCZkAjYNxaYKbM8lsArLznDF/SvMFr1jcZrvOpSTCa0W40ZAdLzHCEulnUa5i7"
-        crossorigin="anonymous"></script>
-<script src="{% static 'main/js/charts.js' %}"></script>
+        crossorigin="anonymous" defer></script>
+<script src="{% static 'main/js/charts.js' %}" defer></script>
 {% endblock %}
 
 {% block style %}
@@ -42,7 +42,7 @@
             </div>
             {# The header sits outside the form so async error summaries (prepended to the form) appear below it. #}
             <form id="simulation-form" method="post" action="{% url 'main:simulation' %}"
-                  data-max-steps="{{ form.MAX_SWEEP_STEPS }}"
+                  data-max-runs="{{ form.MAX_SWEEP_RUNS }}"
                   data-predefined-methods="{{ form.PREDEFINED_METHODS|join:' ' }}">
                 {% csrf_token %}
                 {% if form.non_field_errors %}

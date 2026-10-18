@@ -1,6 +1,6 @@
 /*
  * CS.format.number(value, digits) — locale-stable display of numeric results.
- * CS.format.sweepRange(start, stop, step, maxSteps) — the live run-count hint of a
+ * CS.format.sweepRange(start, stop, step, maxRuns) — the live run-count hint of a
  * parameter sweep form (simulation and timeseries pages).
  */
 (function (CS) {
@@ -42,7 +42,7 @@
          *
          * @returns {{text: string, warning: boolean}}
          */
-        sweepRange: function (start, stop, step, maxSteps) {
+        sweepRange: function (start, stop, step, maxRuns) {
             if (![start, stop, step].every(Number.isFinite)) {
                 return { text: "Enter start, stop and step to see the number of runs.", warning: false };
             }
@@ -52,14 +52,15 @@
             if (start > stop) {
                 return { text: "Stop must be greater than or equal to start.", warning: true };
             }
-            // The same values as the package's np.arange(start, stop + step / 2, step).
-            var runs = Math.ceil((stop - start + step / 2) / step);
+            // The count of the package's build_range(start, stop, step): start, start + step, …
+            // up to stop, never past it (1e-9 absorbs floating-point noise at the end).
+            var runs = Math.floor((stop - start) / step + 1e-9) + 1;
             var summary = runs + (runs === 1 ? " run" : " runs") + " · " + parameter(start) + " → " +
                 parameter(stop) + ", step " + parameter(step);
-            // The forms' own limit: (stop - start) / step < max steps.
-            if ((stop - start) / step >= maxSteps) {
+            // The forms' own limit on the number of runs.
+            if (runs > maxRuns) {
                 return {
-                    text: summary + ". That is over the limit of " + maxSteps +
+                    text: summary + ". That is over the limit of " + maxRuns +
                         " runs: increase the step or narrow the range.",
                     warning: true,
                 };

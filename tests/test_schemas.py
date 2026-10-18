@@ -1,8 +1,14 @@
 """Tests for Pydantic schemas in the catchment_simulation package."""
 
+import inspect
+import math
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
+from catchment_simulation import FeaturesSimulation
+from catchment_simulation.features import FEATURES
 from catchment_simulation.schemas import (
     SimulationMethodParams,
     SimulationParams,
@@ -36,7 +42,7 @@ class TestSimulationParams:
             SimulationParams(start=0, stop=10, step=-5)
 
     def test_start_greater_than_stop_rejected(self):
-        with pytest.raises(ValidationError, match="start .* must be <= stop"):
+        with pytest.raises(ValidationError, match=r"start .* must be <= stop"):
             SimulationParams(start=100, stop=10, step=1)
 
     def test_float_values_accepted(self):
@@ -290,7 +296,7 @@ class TestSimulationMethodParams:
             )
 
     def test_start_greater_than_stop_rejected(self):
-        with pytest.raises(ValidationError, match="start .* must be <= stop"):
+        with pytest.raises(ValidationError, match=r"start .* must be <= stop"):
             SimulationMethodParams(
                 method_name="simulate_area",
                 start=50,
@@ -353,11 +359,65 @@ class TestSimulationMethodParams:
 
     def test_predefined_methods_constant(self):
         """Test that PREDEFINED_METHODS contains expected methods."""
-        assert SimulationMethodParams.PREDEFINED_METHODS == frozenset(
-            {
-                "simulate_n_imperv",
-                "simulate_n_perv",
-                "simulate_s_imperv",
-                "simulate_s_perv",
-            }
-        )
+        predefined = SimulationMethodParams.PREDEFINED_METHODS
+        assert predefined == {
+            "simulate_n_imperv",
+            "simulate_n_perv",
+            "simulate_s_imperv",
+            "simulate_s_perv",
+        }
+
+
+class TestConsistencyWithLibrary:
+    """The web-form schemas must describe the library they front."""
+
+    METHOD_NAMES = get_args(SimulationMethodParams.model_fields["method_name"].annotation)
+
+    def test_every_method_name_is_a_simulation_method(self):
+        for name in self.METHOD_NAMES:
+            assert callable(getattr(FeaturesSimulation, name)), name
+
+    def test_predefined_methods_are_exactly_the_methods_without_a_range(self):
+        without_range = {
+            name
+            for name in self.METHOD_NAMES
+            if not {"start", "stop", "step"}
+            <= set(inspect.signature(getattr(FeaturesSimulation, name)).parameters)
+        }
+        assert without_range == SimulationMethodParams.PREDEFINED_METHODS
+
+    @pytest.mark.parametrize(
+        ("field", "feature"),
+        [
+            ("area", "Area"),
+            ("slope", "PercSlope"),
+            ("imperviousness", "PercImperv"),
+            ("width", "Width"),
+            ("n_imperv", "N-Imperv"),
+            ("n_perv", "N-Perv"),
+            ("s_imperv", "S-Imperv"),
+            ("s_perv", "S-Perv"),
+            ("pct_zero", "PctZero"),
+        ],
+    )
+    def test_subcatchment_bounds_agree_with_feature_registry(self, field, feature):
+        valid = {
+            "area": 10.0,
+            "slope": 5.0,
+            "imperviousness": 50.0,
+            "width": 100.0,
+            "n_imperv": 0.012,
+            "n_perv": 0.15,
+            "s_imperv": 1.27,
+            "s_perv": 5.08,
+            "pct_zero": 25.0,
+        }
+        spec = FEATURES[feature]
+        bounds = [b for b in (spec.minimum, spec.maximum) if math.isfinite(b)]
+        for value in [b + delta for b in bounds for delta in (-1e-6, 0.0, 1e-6)]:
+            try:
+                SubcatchmentParams(**{**valid, field: value})
+                accepted = True
+            except ValidationError:
+                accepted = False
+            assert accepted == spec.contains(value), (field, value)

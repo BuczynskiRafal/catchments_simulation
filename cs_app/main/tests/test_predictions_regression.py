@@ -40,9 +40,9 @@ class TestMLPRegression:
         for case in reference_data["cases"]:
             x = np.array([case["input"]], dtype=np.float32)
             prediction = mlp_model.predict(x).flatten()[0]
-            assert prediction == pytest.approx(
-                case["expected"], abs=TOLERANCE
-            ), f"Failed for {case['label']}: got {prediction}, expected {case['expected']}"
+            assert prediction == pytest.approx(case["expected"], abs=TOLERANCE), (
+                f"Failed for {case['label']}: got {prediction}, expected {case['expected']}"
+            )
 
     def test_batch_predictions_match_reference(self, mlp_model, reference_data):
         inputs = np.array([c["input"] for c in reference_data["cases"]], dtype=np.float32)

@@ -1,5 +1,6 @@
-Schemas Module
-===============
+Validation schemas
+==================
+
 .. automodule:: catchment_simulation.schemas
    :members:
    :undoc-members:

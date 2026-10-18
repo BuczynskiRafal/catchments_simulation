@@ -12,6 +12,14 @@ views module
    :undoc-members:
    :show-inheritance:
 
+backends module
+-------------------------------------
+
+.. automodule:: register.backends
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 urls module
 -------------------------------------
 

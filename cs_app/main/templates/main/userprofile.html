@@ -20,9 +20,9 @@
 
     <section class="cs-card profile-card" aria-labelledby="profile-name">
         <div class="profile-card__identity">
-            <span class="profile-card__avatar" aria-hidden="true">{{ owner.get_full_name|default:owner.get_username|first|upper }}</span>
+            <span class="profile-card__avatar" aria-hidden="true">{% if user == owner %}{{ owner.get_full_name|default:owner.get_username|first|upper }}{% else %}{{ owner.get_username|first|upper }}{% endif %}</span>
             <div>
-                <h2 class="profile-card__name" id="profile-name">{{ owner.get_full_name|default:owner.get_username }}</h2>
+                <h2 class="profile-card__name" id="profile-name">{% if user == owner %}{{ owner.get_full_name|default:owner.get_username }}{% else %}{{ owner.get_username }}{% endif %}</h2>
                 <p class="profile-card__meta">
                     <span class="cs-mono">@{{ owner.get_username }}</span>
                     <span>Member since {{ owner.date_joined|date:"F Y" }}</span>

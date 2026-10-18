@@ -91,3 +91,99 @@ class TestContactMessage:
     def test_from_dict_missing_required_field(self):
         with pytest.raises(ValidationError):
             ContactMessage.model_validate({"email": "user@example.com", "title": "Subject"})
+
+    def test_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            ContactMessage.model_validate(
+                {
+                    "email": "user@example.com",
+                    "title": "Subject",
+                    "content": "Body",
+                    "unexpected": "field",
+                }
+            )
+
+    def test_instance_is_frozen(self):
+        msg = ContactMessage(email="user@example.com", title="Subject", content="Body")
+        with pytest.raises(ValidationError):
+            msg.title = "Mutated"
+
+
+class TestSendMessageService:
+    """Tests for main.services.send_message email delivery and relay protection."""
+
+    def test_send_message_uses_default_from_and_reply_to(self, mailoutbox, settings):
+        from main.services import send_message
+
+        settings.DEFAULT_FROM_EMAIL = "noreply@example.org"
+        settings.CONTACT_RECIPIENT_EMAIL = "owner@example.org"
+        settings.CONTACT_ALLOW_SENDER_COPY = False
+
+        ok = send_message(
+            {
+                "email": "visitor@example.com",
+                "title": "Inquiry",
+                "content": "Hello!",
+                "send_to_me": True,
+            }
+        )
+
+        assert ok is True
+        assert len(mailoutbox) == 1
+        sent = mailoutbox[0]
+        assert sent.from_email == "noreply@example.org"
+        assert sent.to == ["owner@example.org"]
+        assert sent.reply_to == ["visitor@example.com"]
+        assert "From: visitor@example.com" in sent.body
+
+    def test_send_message_allows_sender_copy_when_explicitly_enabled(self, mailoutbox, settings):
+        from main.services import send_message
+
+        settings.DEFAULT_FROM_EMAIL = "noreply@example.org"
+        settings.CONTACT_RECIPIENT_EMAIL = "owner@example.org"
+        settings.CONTACT_ALLOW_SENDER_COPY = True
+
+        ok = send_message(
+            {
+                "email": "visitor@example.com",
+                "title": "Inquiry",
+                "content": "Copy me please.",
+                "send_to_me": True,
+            }
+        )
+
+        assert ok is True
+        assert len(mailoutbox) == 1
+        assert mailoutbox[0].to == ["owner@example.org", "visitor@example.com"]
+
+    def test_send_message_returns_false_when_no_recipient_configured(self, settings, caplog):
+        from main.services import send_message
+
+        settings.CONTACT_RECIPIENT_EMAIL = ""
+        settings.DEFAULT_FROM_EMAIL = ""
+
+        with caplog.at_level("WARNING"):
+            ok = send_message(
+                {"email": "visitor@example.com", "title": "Subject", "content": "Body"}
+            )
+
+        assert ok is False
+        assert "No recipients configured" in caplog.text
+
+    def test_send_message_logs_exception_on_smtp_failure(self, monkeypatch, caplog):
+        from smtplib import SMTPException
+
+        from main import services
+
+        def broken_send(self, fail_silently=False):
+            raise SMTPException("SMTP down")
+
+        monkeypatch.setattr(services.EmailMessage, "send", broken_send)
+
+        with caplog.at_level("ERROR"):
+            ok = services.send_message(
+                {"email": "visitor@example.com", "title": "Subject", "content": "Body"}
+            )
+
+        assert ok is False
+        assert "Failed to send contact form message" in caplog.text

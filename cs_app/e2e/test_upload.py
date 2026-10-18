@@ -166,6 +166,38 @@ class TestModelEvents:
         assert sp.get_catchment_options() == [""]
 
 
+class TestParameterUnitLabels:
+    """The sweep parameters are relabelled in the units of the model loaded, without a reload."""
+
+    @pytest.mark.parametrize(
+        ("page_class", "select_id", "area", "width"),
+        [
+            (SimulationPage, "id_option", "simulate_area", "simulate_width"),
+            (TimeseriesPage, "id_feature", "Area", "Width"),
+        ],
+    )
+    def test_us_model_relabels_the_parameters_and_removing_it_restores_si(
+        self, auth_page: Page, live_server, tmp_path, page_class, select_id, area, width
+    ) -> None:
+        with open(SAMPLE_INP_PATH, encoding="utf-8") as sample:
+            text = sample.read()
+        us_model = tmp_path / "us_model.inp"
+        us_model.write_text(text.replace("FLOW_UNITS           CMS", "FLOW_UNITS CFS"))
+        tool = page_class(auth_page, live_server.url)
+        tool.navigate_to()
+        area_option = auth_page.locator(f'#{select_id} option[value="{area}"]')
+        width_option = auth_page.locator(f'#{select_id} option[value="{width}"]')
+        expect(area_option).to_have_text("Area (ha)")
+
+        tool.upload.upload_file(str(us_model))
+        expect(area_option).to_have_text("Area (acre)")
+        expect(width_option).to_have_text("Width (ft)")
+
+        tool.upload.clear_upload()
+        expect(area_option).to_have_text("Area (ha)")
+        expect(width_option).to_have_text("Width (m)")
+
+
 class TestUploadZoneKeyboard:
     """The drop target opens the file dialog from the keyboard."""
 

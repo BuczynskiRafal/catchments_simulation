@@ -8,6 +8,7 @@ Run views (simulation, timeseries, calculations) answer requests sent with
 import json
 import os
 import re
+import uuid
 from types import SimpleNamespace
 
 import numpy as np
@@ -18,6 +19,7 @@ from django.core import mail
 from django.core.cache import cache
 from django.urls import reverse
 
+from catchment_simulation import FeaturesSimulation, build_range
 from main.models import UserProfile
 from main.views import (
     CALC_RESULT_TOKEN_SESSION_KEY,
@@ -43,7 +45,7 @@ SIMULATION_POST = {
 TIMESERIES_SINGLE_POST = {"mode": "single", "catchment_name": "S1"}
 TIMESERIES_SWEEP_POST = {
     "mode": "sweep",
-    "feature": "PercSlope",
+    "feature": "PercImperv",
     "start": "0",
     "stop": "20",
     "step": "5",
@@ -69,47 +71,44 @@ def _timeseries_frame() -> pd.DataFrame:
 class DummyFeaturesSimulation:
     """Fast stand-in for FeaturesSimulation covering the methods the views call."""
 
-    TIMESERIES_KEYS = ("rainfall", "runoff", "infiltration_loss", "evaporation_loss", "runon")
+    TIMESERIES_KEYS = FeaturesSimulation.TIMESERIES_KEYS
 
     def __init__(self, subcatchment_id, raw_file):
         self.subcatchment_id = subcatchment_id
         self.raw_file = raw_file
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
     def simulate_percent_slope(self, start, stop, step):
-        return pd.DataFrame({"PercSlope": [start, stop], "runoff": [1.0, 2.0]})
+        # The package's layout: the swept feature first, then every RESULT_KEYS column.
+        values = build_range(start, stop, step)
+        frame = pd.DataFrame({"PercSlope": values})
+        for offset, key in enumerate(FeaturesSimulation.RESULT_KEYS, start=1):
+            frame[key] = [offset * (index + 1.0) for index in range(len(values))]
+        return frame
 
     def calculate_timeseries(self):
         return _timeseries_frame()
 
     def simulate_subcatchment_timeseries(self, feature, start, stop, step):
-        values = np.arange(start, stop + step / 2, step)
-        return {float(value): _timeseries_frame() for value in values}
+        return {value: _timeseries_frame() for value in build_range(start, stop, step)}
 
 
 class InvalidInputFeaturesSimulation(DummyFeaturesSimulation):
-    def __enter__(self):
+    def __init__(self, subcatchment_id, raw_file):
         raise ValueError("Expected numeric value in slope sheet.")
 
 
 class CrashingFeaturesSimulation(DummyFeaturesSimulation):
-    def __enter__(self):
+    def __init__(self, subcatchment_id, raw_file):
         raise RuntimeError("boom")
 
 
 @pytest.fixture
-def run_client(client, user):
-    """Logged-in client whose session points at the bundled example model."""
+def run_client(client, user, user_model):
+    """Logged-in client whose session points at a copy of the sample model."""
     client.force_login(user)
-    uploaded_file_path = os.path.join(settings.BASE_DIR, "data", "example.inp")
     session = client.session
-    session["uploaded_file_path"] = uploaded_file_path
-    session["_subcatchment_ids_file"] = uploaded_file_path
+    session["uploaded_file_path"] = user_model
+    session["_subcatchment_ids_file"] = user_model
     session["_subcatchment_ids"] = ["S1"]
     session.save()
     return client
@@ -439,7 +438,7 @@ def test_timeseries_ajax_sweep_returns_results_fragment(run_client, fake_simulat
     assert '"mode": "sweep"' in content
     assert "Time to peak</p>" not in content, "a sweep has a summary table, not metric tiles"
     assert 'data-ts-table="sweep"' in content
-    assert run_client.session["ts_form_state"]["feature"] == "PercSlope"
+    assert run_client.session["ts_form_state"]["feature"] == "PercImperv"
 
 
 @pytest.mark.django_db
@@ -459,9 +458,9 @@ def test_timeseries_sweep_summary_and_series_are_rendered_by_the_server(
     assert "Peak runoff [CMS]" in table.group(0)
     assert "Runoff volume [m³]" in table.group(0)
     # The swept parameter reads as on the simulation page, with its unit, not as the SWMM key.
-    assert '<th scope="col" class="cs-num">Percent Slope [%]</th>' in table.group(0)
-    assert "Timeseries sweep: Percent Slope for S1" in content
-    assert "PercSlope" not in content
+    assert '<th scope="col" class="cs-num">Impervious Area [%]</th>' in table.group(0)
+    assert "Timeseries sweep: Impervious Area for S1" in content
+    assert "PercImperv" not in content
     assert 'data-sort-value="3600.0">1 h</td>' in table.group(0)
     options = re.findall(r'<option value="(\w+)"', content)
     assert options == ["runoff", "infiltration_loss", "evaporation_loss", "runon"]
@@ -707,6 +706,43 @@ def test_calculations_ajax_rejects_out_of_bounds_path(client, user):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "post"),
+    [
+        ("main:simulation", SIMULATION_POST),
+        ("main:timeseries", TIMESERIES_SINGLE_POST),
+        ("main:calculations", {}),
+    ],
+)
+def test_every_run_refuses_a_model_outside_the_users_upload_dir(
+    client, user, monkeypatch, url_name, post
+):
+    """Each run checks the session's model path, so none runs another user's model."""
+    other_user = type(user).objects.create_user(username="other", password=uuid.uuid4().hex)
+    other_dir = _user_upload_dir(other_user.id)
+    os.makedirs(other_dir)
+    other_model = os.path.join(other_dir, "example.inp")
+    with open(other_model, "w", encoding="utf-8") as model_file:
+        model_file.write("[TITLE]\n[OPTIONS]\n")
+
+    def must_not_run(*_args, **_kwargs):
+        raise AssertionError("the model must not run")
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", must_not_run)
+    monkeypatch.setattr("main.views._compare_swmm_and_ann", must_not_run)
+    client.force_login(user)
+    session = client.session
+    session["uploaded_file_path"] = other_model
+    session["_subcatchment_ids_file"] = other_model
+    session["_subcatchment_ids"] = ["S1"]
+    session.save()
+
+    response = client.post(reverse(url_name), post, **AJAX)
+
+    _assert_json_error(response, 400, "Invalid file path detected.")
+
+
+@pytest.mark.django_db
 def test_calculations_ajax_oversized_result_returns_413(
     calc_client, fake_calculations, monkeypatch
 ):
@@ -721,12 +757,31 @@ def test_calculations_ajax_oversized_result_returns_413(
 
 
 @pytest.mark.django_db
-def test_calculations_ajax_failure_returns_500(calc_client, monkeypatch):
+def test_calculations_ajax_swmm_failure_returns_400(calc_client, monkeypatch):
+    """A model SWMM cannot open is the user's to fix; the report (empty here) has no errors."""
+
     def failing_simulation(_path):
         raise RuntimeError("swmm crashed")
 
     monkeypatch.setattr("main.views.Simulation", failing_simulation)
+    monkeypatch.setattr("main.views.PySWMM", lambda: SimpleNamespace(swmm_close=lambda: None))
     monkeypatch.setattr("main.views._cleanup_swmm_side_files", lambda _path: None)
+
+    response = calc_client.post(reverse("main:calculations"), **AJAX)
+
+    _assert_json_error(
+        response, 400, "SWMM could not run the model. Open the model in SWMM to find the problem."
+    )
+
+
+@pytest.mark.django_db
+def test_calculations_ajax_unexpected_failure_returns_500(
+    calc_client, fake_calculations, monkeypatch
+):
+    def failing_prediction(_model):
+        raise RuntimeError("network weights missing")
+
+    monkeypatch.setattr("main.views.predict_runoff", failing_prediction)
 
     response = calc_client.post(reverse("main:calculations"), **AJAX)
 

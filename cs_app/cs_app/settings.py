@@ -44,10 +44,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "import_export",
     "crispy_forms",
     "crispy_bootstrap5",
-    "storages",
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
 ]
@@ -57,6 +55,7 @@ MIDDLEWARE = [
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "main.middleware.RequestBodySizeLimitMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -83,8 +82,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "cs_app.wsgi.application"
 
-DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
-
 
 db_url = os.environ.get("DATABASE_URL")
 if not db_url:
@@ -94,10 +91,10 @@ DATABASES = {
     "default": dj_database_url.parse(db_url, conn_max_age=600),
 }
 
-# Analysis results are kept in the cache between page visits. The file backend survives
-# a server restart (runserver's autoreload, a deploy) and is shared by every worker
-# process on the host; the default in-memory cache is neither. A deployment running
-# several hosts needs a shared backend instead (Redis, database).
+# Analysis results are kept in the cache between page visits. FileBasedCache is shared
+# across Gunicorn worker processes on the same host/container and survives dev autoreloads
+# (but is ephemeral across container redeploys unless backed by a persistent volume).
+# Multi-instance deployments require a shared external backend (e.g. Redis or database).
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
@@ -151,6 +148,7 @@ STATICFILES_DIRS = [
 
 if DEBUG:
     STATIC_ROOT = os.path.join(BASE_DIR, "static_dev")
+    _STATICFILES_BACKEND = "django.contrib.staticfiles.storage.StaticFilesStorage"
 else:
     # Tell Django to copy statics to the `staticfiles` directory
     # in your application directory on Render.
@@ -158,11 +156,30 @@ else:
 
     # Turn on WhiteNoise storage backend that takes care of compressing static files
     # and creating unique names for each version so they can safely be cached forever.
-    STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    _STATICFILES_BACKEND = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": _STATICFILES_BACKEND,
+    },
+}
 
 STATIC_URL = "/static/"
 
 # Production Security Settings (Fail-Closed)
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if RENDER_EXTERNAL_HOSTNAME:
+    _render_origin = f"https://{RENDER_EXTERNAL_HOSTNAME}"
+    if _render_origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_render_origin)
+
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
 # Secure cookies unless DEBUG: the dev server speaks plain HTTP, and browsers
 # that drop Secure cookies there (Safari) would reject every POST with a CSRF 403.
@@ -180,5 +197,72 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = (
 )
 SECURE_HSTS_PRELOAD = os.environ.get("SECURE_HSTS_PRELOAD", "False").lower() == "true"
 
-if os.environ.get("USE_X_FORWARDED_PROTO", "False").lower() == "true":
+# Behind a TLS-terminating reverse proxy (Render, nginx), honour X-Forwarded-Proto by
+# default in production so SECURE_SSL_REDIRECT=True does not loop on 301 redirects.
+_USE_X_FORWARDED_PROTO_DEFAULT = "False" if DEBUG else "True"
+if os.environ.get("USE_X_FORWARDED_PROTO", _USE_X_FORWARDED_PROTO_DEFAULT).lower() in (
+    "true",
+    "1",
+    "yes",
+):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# Email Configuration
+EMAIL_BACKEND = os.environ.get(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend"
+    if DEBUG
+    else "django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() in ("true", "1", "yes")
+EMAIL_TIMEOUT = int(os.environ.get("EMAIL_TIMEOUT", "10"))
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@catchment-simulation.local")
+CONTACT_RECIPIENT_EMAIL = os.environ.get("CONTACT_RECIPIENT_EMAIL", "buczynski.rafal@icloud.com")
+CONTACT_ALLOW_SENDER_COPY = os.environ.get("CONTACT_ALLOW_SENDER_COPY", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# Logging Configuration
+LOG_LEVEL = os.environ.get("DJANGO_LOG_LEVEL", "INFO").upper()
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": LOG_LEVEL,
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "main": {
+            "handlers": ["console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "register": {
+            "handlers": ["console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+    },
+}

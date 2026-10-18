@@ -1,7 +1,11 @@
 .git
 .venv
+.env
+**/.env
+**/.env.*
 __pycache__/
 *.py[cod]
+*.bak
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -11,6 +15,12 @@ cs_app/db.sqlite3
 cs_app/media/
 cs_app/.cache/
 cs_app/data/db/
+cs_app/staticfiles/
+cs_app/static_dev/
+cs_app/uploaded_files/
 docs/_build/
 output_files/
 uploaded_files/
+test-results/
+playwright-report/
+audit*.md

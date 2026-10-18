@@ -4,6 +4,8 @@ Provides strict runtime validation of simulation parameters and subcatchment dat
 ensuring physically meaningful values before any computation begins.
 """
 
+from __future__ import annotations
+
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, PositiveFloat, model_validator
@@ -21,7 +23,8 @@ class SimulationParams(BaseModel):
     step: float = Field(gt=0, description="Step size (> 0)")
 
     @model_validator(mode="after")
-    def start_le_stop(self) -> "SimulationParams":
+    def start_le_stop(self) -> SimulationParams:
+        """Reject a range whose start lies above its stop."""
         if self.start > self.stop:
             raise ValueError(f"start ({self.start}) must be <= stop ({self.stop})")
         return self
@@ -92,7 +95,8 @@ class SimulationMethodParams(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_method_params(self) -> "SimulationMethodParams":
+    def validate_method_params(self) -> SimulationMethodParams:
+        """Require start, stop and step for range methods and forbid them for the others."""
         if self.method_name in self.PREDEFINED_METHODS:
             if any(v is not None for v in (self.start, self.stop, self.step)):
                 raise ValueError(
@@ -100,8 +104,8 @@ class SimulationMethodParams(BaseModel):
                     f"and does not accept start/stop/step parameters"
                 )
         else:
-            if any(v is None for v in (self.start, self.stop, self.step)):
+            if self.start is None or self.stop is None or self.step is None:
                 raise ValueError(f"'{self.method_name}' requires start, stop, and step parameters")
-            if self.start > self.stop:  # type: ignore[operator]
+            if self.start > self.stop:
                 raise ValueError(f"start ({self.start}) must be <= stop ({self.stop})")
         return self

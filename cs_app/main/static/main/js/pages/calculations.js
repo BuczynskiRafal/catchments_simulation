@@ -55,14 +55,20 @@
         CS.clipboard.copy(CS.table.toCSV(table), "Comparison table copied as CSV.");
     });
 
-    var output = document.getElementById("calculations-output");
-    initResults(output);
-    CS.asyncForm({
-        form: document.getElementById("calculations-form"),
-        submitButton: document.getElementById("run-calculations-button"),
-        target: output,
-        loadingEl: document.getElementById("calculations-loading-state"),
-        successMessage: "Comparison finished.",
-        onSuccess: initResults,
+    document.addEventListener("DOMContentLoaded", function () {
+        var output = document.getElementById("calculations-output");
+        var form = document.getElementById("calculations-form");
+        if (!output || !form) {
+            return;
+        }
+        initResults(output);
+        CS.asyncForm({
+            form: form,
+            submitButton: document.getElementById("run-calculations-button"),
+            target: output,
+            loadingEl: document.getElementById("calculations-loading-state"),
+            successMessage: "Comparison finished.",
+            onSuccess: initResults,
+        });
     });
 })(window.CS);

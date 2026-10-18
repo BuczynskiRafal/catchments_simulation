@@ -17,8 +17,9 @@ def resolve_username(identifier: str) -> str:
     """
     Map a login identifier to the username of the account it names.
 
-    Tried in order: the exact username, then the username and the email
-    address compared case-insensitively. A case-insensitive match counts only
+    Tried in order: the exact username, then (when the identifier contains ``@``)
+    the email address compared case-insensitively, and finally the username
+    compared case-insensitively. A case-insensitive match counts only
     when exactly one account has it; an ambiguous identifier is returned
     unchanged, so it matches no account rather than an arbitrary one.
 
@@ -38,9 +39,10 @@ def resolve_username(identifier: str) -> str:
     if users.filter(**{username_field: identifier}).exists():
         return identifier
 
-    lookups = [f"{username_field}__iexact"]
     if "@" in identifier:
-        lookups.append(f"{UserModel.get_email_field_name()}__iexact")
+        lookups = [f"{UserModel.get_email_field_name()}__iexact", f"{username_field}__iexact"]
+    else:
+        lookups = [f"{username_field}__iexact"]
     for lookup in lookups:
         matches = list(users.filter(**{lookup: identifier})[:2])
         if len(matches) == 1:

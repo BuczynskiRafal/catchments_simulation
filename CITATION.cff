@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+title: "catchment-simulation: sensitivity sweeps of SWMM subcatchment features"
+abstract: >-
+  A Python package that runs an EPA SWMM model repeatedly, each time with one
+  feature of one subcatchment set to a different value, and collects that
+  subcatchment's runoff statistics or hydrographs for sensitivity analysis.
+authors:
+  - given-names: "Rafał"
+    family-names: "Buczyński"
+    email: rafal.buczynski@sd.pb.edu.pl
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/BuczynskiRafal/catchments_simulation"
+url: "https://catchments-simulation.readthedocs.io"
+keywords:
+  - SWMM
+  - hydrology
+  - stormwater
+  - catchment
+  - subcatchment
+  - sensitivity analysis
+  - simulation

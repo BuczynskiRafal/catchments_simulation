@@ -9,14 +9,116 @@ Each form class is built with the help of the Django Forms library and the
 Crispy Forms package.
 """
 
+import math
+
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Submit
 from django import forms
+
+from catchment_simulation.exceptions import InvalidParameterError
+from catchment_simulation.features import FEATURES, MAX_RUNS, FeatureSpec, build_range
 
 from .models import UserProfile
 
 # Same wording as the live range hint on the simulation and timeseries pages.
 STOP_BEFORE_START_MESSAGE = "Stop must be greater than or equal to start."
+
+# A page request runs every value of a sweep in turn, so the site allows far fewer
+# runs than the package does; the run count itself comes from build_range.
+MAX_SWEEP_RUNS = min(100, MAX_RUNS)
+TOO_MANY_RUNS_MESSAGE = (
+    f"Too many runs (max {MAX_SWEEP_RUNS}). Increase the step or narrow the range."
+)
+
+# FeaturesSimulation sweep method -> the SWMM column it varies (and names its result after).
+METHOD_FEATURES = {
+    "simulate_percent_slope": "PercSlope",
+    "simulate_area": "Area",
+    "simulate_width": "Width",
+    "simulate_percent_impervious": "PercImperv",
+    "simulate_percent_zero_imperv": "PctZero",
+    "simulate_curb_length": "CurbLength",
+    "simulate_n_imperv": "N-Imperv",
+    "simulate_n_perv": "N-Perv",
+    "simulate_s_imperv": "S-Imperv",
+    "simulate_s_perv": "S-Perv",
+}
+
+
+# Parameter labels name the unit of the swept value: "{area}", "{length}" and "{storage}"
+# are filled in with the session model's units (main.views._unit_labels), and with SI units
+# when no model is loaded.
+SI_UNITS = {"area": "ha", "length": "m", "storage": "mm"}
+
+
+def _resolve_units(units: dict[str, str] | None) -> dict[str, str]:
+    if not units:
+        return SI_UNITS
+    default_storage = "in" if units.get("area") == "acre" or units.get("length") == "ft" else "mm"
+    return {**SI_UNITS, "storage": default_storage, **units}
+
+
+def _unit_choices(choices, units):
+    """*choices*, flat or grouped, with their labels filled in for *units*."""
+    resolved = _resolve_units(units)
+    return [
+        (
+            value,
+            _unit_choices(label, resolved)
+            if isinstance(label, tuple)
+            else label.format_map(resolved),
+        )
+        for value, label in choices
+    ]
+
+
+def _flat_choices(choices):
+    for value, label in choices:
+        if isinstance(label, (list, tuple)):
+            yield from label
+        else:
+            yield value, label
+
+
+def _describe_bounds(spec: FeatureSpec) -> str:
+    """The physical range of a feature in words, e.g. "greater than 0 and at most 100"."""
+    lower = f"at least {spec.minimum:g}" if spec.min_inclusive else f"greater than {spec.minimum:g}"
+    if math.isinf(spec.maximum):
+        return lower
+    if spec.min_inclusive:
+        return f"between {spec.minimum:g} and {spec.maximum:g}"
+    return f"{lower} and at most {spec.maximum:g}"
+
+
+def _clean_sweep_range(form: forms.Form, feature: str, label: str) -> None:
+    """
+    Check start/stop/step the way catchment_simulation will: the values come from
+    build_range, their count must stay within MAX_SWEEP_RUNS and the first and last
+    value must lie in the feature's physical range (FEATURES), so every value does.
+    """
+    start, stop, step = (form.cleaned_data.get(field) for field in ("start", "stop", "step"))
+    if start is None or stop is None or step is None:
+        return  # reported by the field itself
+    for field_name, val in (("start", start), ("stop", stop), ("step", step)):
+        if not math.isfinite(val):
+            form.add_error(field_name, "Enter a finite number.")
+            return
+    if start > stop:
+        form.add_error("stop", STOP_BEFORE_START_MESSAGE)
+        return
+    try:
+        values = build_range(start, stop, step, max_runs=MAX_SWEEP_RUNS)
+    except InvalidParameterError:
+        # The fields guarantee finite values, 0 <= start <= stop and step > 0 (at least
+        # 0.1), so the run count is all that build_range can still reject.
+        form.add_error("step", TOO_MANY_RUNS_MESSAGE)
+        return
+    spec = FEATURES[feature]  # type: ignore[index]
+    message = f"{label} must be {_describe_bounds(spec)}."
+    if not spec.contains(values[0]):
+        form.add_error("start", message)
+    if not spec.contains(values[-1]):
+        form.add_error("stop", message)
 
 
 class ContactForm(forms.Form):
@@ -93,12 +195,15 @@ class SimulationForm(forms.Form):
     Supports both range-based methods (requiring start/stop/step) and
     predefined methods (using literature values, no range parameters).
 
-    Attributes:
-        option: A choice field for selecting the parameter to simulate.
-        start: An integer field for the starting value of the parameter range.
-        stop: An integer field for the ending value of the parameter range.
-        step: An integer field for the step size in the parameter range.
-        catchment_name: A field for the name of the catchment.
+    Attributes
+    ----------
+    option
+        The parameter to simulate.
+    start, stop, step
+        The parameter range. It must give at most ``MAX_SWEEP_RUNS`` values,
+        each within the physical range of the swept feature.
+    catchment_name
+        The name of the subcatchment.
     """
 
     OPTIONS = (
@@ -106,11 +211,11 @@ class SimulationForm(forms.Form):
             "Range-based Parameters",
             (
                 ("simulate_percent_slope", "Slope (%)"),
-                ("simulate_area", "Area (ha)"),
-                ("simulate_width", "Width (m)"),
+                ("simulate_area", "Area ({area})"),
+                ("simulate_width", "Width ({length})"),
                 ("simulate_percent_impervious", "Impervious (%)"),
                 ("simulate_percent_zero_imperv", "Zero-Imperv (%)"),
-                ("simulate_curb_length", "Curb Length (m)"),
+                ("simulate_curb_length", "Curb Length ({length})"),
             ),
         ),
         (
@@ -118,8 +223,8 @@ class SimulationForm(forms.Form):
             (
                 ("simulate_n_imperv", "Manning's n - Impervious"),
                 ("simulate_n_perv", "Manning's n - Pervious"),
-                ("simulate_s_imperv", "Depression Storage - Impervious"),
-                ("simulate_s_perv", "Depression Storage - Pervious"),
+                ("simulate_s_imperv", "Depression Storage - Impervious ({storage})"),
+                ("simulate_s_perv", "Depression Storage - Pervious ({storage})"),
             ),
         ),
     )
@@ -133,36 +238,36 @@ class SimulationForm(forms.Form):
         }
     )
 
-    MAX_SWEEP_STEPS = 100
+    MAX_SWEEP_RUNS = MAX_SWEEP_RUNS
 
     option = forms.ChoiceField(
         label="Parameter to vary",
         choices=OPTIONS,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
-    start = forms.IntegerField(
+    start = forms.FloatField(
         label="Start",
         min_value=0,
         max_value=10000,
         initial=1,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
-    stop = forms.IntegerField(
+    stop = forms.FloatField(
         label="Stop",
         min_value=0,
         max_value=10000,
         initial=10,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
-    step = forms.IntegerField(
+    step = forms.FloatField(
         label="Step",
-        min_value=1,
+        min_value=0.1,
         max_value=10000,
         initial=1,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     catchment_name = forms.CharField(
         label="Subcatchment",
@@ -174,10 +279,11 @@ class SimulationForm(forms.Form):
 
     RANGE_FIELDS = ("start", "stop", "step")
 
-    def __init__(self, *args, catchment_choices=None, **kwargs):
+    def __init__(self, *args, catchment_choices=None, units=None, **kwargs):
         super().__init__(*args, **kwargs)
         if catchment_choices is not None:
             self.fields["catchment_name"].widget.choices = catchment_choices
+        self.fields["option"].choices = _unit_choices(self.OPTIONS, units or SI_UNITS)
 
     def clean(self):
         cleaned_data = super().clean()
@@ -191,19 +297,14 @@ class SimulationForm(forms.Form):
         for field in self.RANGE_FIELDS:
             if cleaned_data.get(field) is None and field not in self.errors:
                 self.add_error(field, "This field is required for the selected method.")
-        start = cleaned_data.get("start")
-        stop = cleaned_data.get("stop")
-        step = cleaned_data.get("step")
-        if start is not None and stop is not None and start > stop:
-            self.add_error("stop", STOP_BEFORE_START_MESSAGE)
-        if start is not None and stop is not None and step and step > 0:
-            if (stop - start) / step >= self.MAX_SWEEP_STEPS:
-                self.add_error(
-                    "step",
-                    f"Too many steps (max {self.MAX_SWEEP_STEPS}). "
-                    "Increase step size or reduce range.",
-                )
+        option = cleaned_data.get("option")
+        if option in METHOD_FEATURES:
+            _clean_sweep_range(self, METHOD_FEATURES[option], self.option_label(option))
         return cleaned_data
+
+    def option_label(self, option: str) -> str:
+        """The label the option list shows for a method, e.g. "Area (ha)"."""
+        return dict(_flat_choices(self.fields["option"].choices)).get(option, option)
 
 
 class TimeseriesForm(forms.Form):
@@ -226,10 +327,10 @@ class TimeseriesForm(forms.Form):
 
     FEATURE_CHOICES = (
         ("PercSlope", "Slope (%)"),
-        ("Area", "Area (ha)"),
-        ("Width", "Width (m)"),
+        ("Area", "Area ({area})"),
+        ("Width", "Width ({length})"),
         ("PercImperv", "Impervious (%)"),
-        ("CurbLength", "Curb Length (m)"),
+        ("CurbLength", "Curb Length ({length})"),
     )
 
     # Rendered as a segmented control (radios + button labels) by timeseries.html.
@@ -239,9 +340,11 @@ class TimeseriesForm(forms.Form):
         initial="single",
         widget=forms.RadioSelect(attrs={"class": "btn-check", "autocomplete": "off"}),
     )
+    # Percent impervious takes the whole default range 0-100 (a slope of 0 is not physical).
     feature = forms.ChoiceField(
         label="Parameter to vary",
         choices=FEATURE_CHOICES,
+        initial="PercImperv",
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
@@ -251,7 +354,7 @@ class TimeseriesForm(forms.Form):
         max_value=10000,
         initial=0,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     stop = forms.FloatField(
         label="Stop",
@@ -259,14 +362,15 @@ class TimeseriesForm(forms.Form):
         max_value=10000,
         initial=100,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     step = forms.FloatField(
         label="Step",
         min_value=0.1,
+        max_value=10000,
         initial=10,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     catchment_name = forms.CharField(
         label="Subcatchment",
@@ -276,12 +380,13 @@ class TimeseriesForm(forms.Form):
         ),
     )
 
-    def __init__(self, *args, catchment_choices=None, **kwargs):
+    def __init__(self, *args, catchment_choices=None, units=None, **kwargs):
         super().__init__(*args, **kwargs)
         if catchment_choices is not None:
             self.fields["catchment_name"].widget.choices = catchment_choices
+        self.fields["feature"].choices = _unit_choices(self.FEATURE_CHOICES, units or SI_UNITS)
 
-    MAX_SWEEP_STEPS = 100
+    MAX_SWEEP_RUNS = MAX_SWEEP_RUNS
     SWEEP_FIELDS = ("feature", "start", "stop", "step")
 
     def clean(self):
@@ -296,16 +401,20 @@ class TimeseriesForm(forms.Form):
         for field in self.SWEEP_FIELDS:
             if cleaned_data.get(field) in (None, "") and field not in self.errors:
                 self.add_error(field, "Required for parameter sweep mode.")
-        start = cleaned_data.get("start")
-        stop = cleaned_data.get("stop")
-        step = cleaned_data.get("step")
-        if start is not None and stop is not None and start > stop:
-            self.add_error("stop", STOP_BEFORE_START_MESSAGE)
-        if start is not None and stop is not None and step and step > 0:
-            if (stop - start) / step >= self.MAX_SWEEP_STEPS:
-                self.add_error(
-                    "step",
-                    f"Too many steps (max {self.MAX_SWEEP_STEPS}). "
-                    "Increase step size or reduce range.",
-                )
+        feature = cleaned_data.get("feature")
+        if feature:
+            _clean_sweep_range(self, feature, dict(self.fields["feature"].choices)[feature])
         return cleaned_data
+
+
+def parameter_labels(units=None) -> dict[str, str]:
+    """
+    The labels of the parameters both tool pages sweep, by option value (a sweep
+    method or a feature name), for *units*; the upload zone relabels the options
+    with them when the model changes.
+    """
+    units = units or SI_UNITS
+    return {
+        **dict(_flat_choices(_unit_choices(SimulationForm.OPTIONS, units))),
+        **dict(_unit_choices(TimeseriesForm.FEATURE_CHOICES, units)),
+    }

@@ -7,12 +7,14 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import uuid
 from codecs import getincrementaldecoder
 from contextlib import suppress
 from copy import deepcopy
 from functools import lru_cache, wraps
-from io import BytesIO, StringIO
+from io import StringIO
+from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -26,8 +28,8 @@ from django.contrib.auth.views import redirect_to_login
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadhandler import FileUploadHandler, StopUpload
+from django.db import connection
 from django.http import (
-    FileResponse,
     HttpRequest,
     HttpResponse,
     HttpResponseForbidden,
@@ -42,21 +44,114 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from pydantic import ValidationError as PydanticValidationError
 from pyswmm import Simulation
+from pyswmm.swmm5 import PySWMM
 
-from catchment_simulation.analysis import runoff_volume, time_to_peak
+try:
+    from pyswmm.errors import MultiSimulationError
+
+    _ENGINE_BUSY_ERRORS: tuple[type[Exception], ...] = (MultiSimulationError,)
+except ImportError:  # pyswmm 1.5, which a plain install of swmmio 0.8 gets, lacks it
+    _ENGINE_BUSY_ERRORS = ()
+
 from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+from catchment_simulation.exceptions import (
+    InvalidParameterError,
+    SimulationError,
+    SubcatchmentNotFoundError,
+    UnknownFeatureError,
+)
 from catchment_simulation.schemas import SimulationMethodParams
-from main.forms import ContactForm, SimulationForm, TimeseriesForm, UserProfileForm
+from main.exports import (
+    EXCEL_CONTENT_TYPE as EXCEL_CONTENT_TYPE,
+)
+from main.exports import (
+    _excel_attachment_response,
+    _safe_download_filename,
+    _timeseries_payload_to_csv_df,
+)
+from main.exports import (
+    _normalize_sheet_name as _normalize_sheet_name,
+)
+from main.forms import (
+    METHOD_FEATURES,
+    ContactForm,
+    SimulationForm,
+    TimeseriesForm,
+    UserProfileForm,
+    parameter_labels,
+)
 from main.predictor import predict_runoff
 from main.schemas import ContactMessage
 from main.services import send_message
+from main.units import (
+    _M3_TO_FT3 as _M3_TO_FT3,
+)
+from main.units import (
+    _US_GALLON_FT3 as _US_GALLON_FT3,
+)
+from main.units import (
+    ANN_RUNOFF_FACTORS as ANN_RUNOFF_FACTORS,
+)
+from main.units import (
+    REPORT_RUNOFF_FACTORS as REPORT_RUNOFF_FACTORS,
+)
+from main.units import (
+    RUNOFF_VOLUME_FACTORS as RUNOFF_VOLUME_FACTORS,
+)
+from main.units import (
+    SI_FLOW_UNITS as SI_FLOW_UNITS,
+)
+from main.units import (
+    _ann_runoff_factor as _ann_runoff_factor,
+)
+from main.units import (
+    _build_simulation_axis_labels as _build_simulation_axis_labels,
+)
+from main.units import (
+    _build_timeseries_axis_labels as _build_timeseries_axis_labels,
+)
+from main.units import (
+    _extract_options_flow_units,
+)
+from main.units import (
+    _format_duration as _format_duration,
+)
+from main.units import (
+    _format_parameter_value as _format_parameter_value,
+)
+from main.units import (
+    _hydrograph_metrics as _hydrograph_metrics,
+)
+from main.units import (
+    _hydrograph_summary as _hydrograph_summary,
+)
+from main.units import (
+    _is_finite_number as _is_finite_number,
+)
+from main.units import (
+    _normalize_flow_units as _normalize_flow_units,
+)
+from main.units import (
+    _report_runoff_unit as _report_runoff_unit,
+)
+from main.units import (
+    _runoff_volume_unit as _runoff_volume_unit,
+)
+from main.units import (
+    _timeseries_records as _timeseries_records,
+)
+from main.units import (
+    _unit_labels as _unit_labels,
+)
+from main.units import (
+    _unit_system as _unit_system,
+)
 
 logger = logging.getLogger(__name__)
 SIM_FORM_STATE_SESSION_KEY = "sim_form_state"
 TS_FORM_STATE_SESSION_KEY = "ts_form_state"
 SIM_FORM_STATE_FIELDS = ("option", "start", "stop", "step", "catchment_name")
 TS_FORM_STATE_FIELDS = ("mode", "feature", "start", "stop", "step", "catchment_name")
-EXCEL_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SIM_RESULT_TOKEN_SESSION_KEY = "sim_result_token"
 TS_RESULT_TOKEN_SESSION_KEY = "ts_result_token"
 CALC_RESULT_TOKEN_SESSION_KEY = "calc_result_token"
@@ -72,8 +167,6 @@ MAX_RESULT_CACHE_BYTES = 2 * 1024 * 1024
 UPLOAD_SUBDIR = "uploaded_files"
 # SHA-256 of the session model's content: loading the same model again keeps its results.
 MODEL_DIGEST_SESSION_KEY = "uploaded_file_sha256"
-SI_FLOW_UNITS = frozenset({"CMS", "LPS", "MLD"})
-US_FLOW_UNITS = frozenset({"CFS", "GPM", "MGD"})
 SIMULATION_TEMPLATE = "main/simulation.html"
 SIMULATION_RESULTS_TEMPLATE = "main/partials/_simulation_results.html"
 TIMESERIES_TEMPLATE = "main/timeseries.html"
@@ -83,6 +176,19 @@ CALCULATIONS_RESULTS_TEMPLATE = "main/partials/_calculations_results.html"
 AUTH_REQUIRED_MESSAGE = "Authentication required."
 FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
+SUBCATCHMENT_NOT_FOUND_MESSAGE = "Selected catchment was not found in the uploaded model."
+SWMM_FAILED_MESSAGE = "SWMM could not run the model"
+ENGINE_BUSY_MESSAGE = "Another simulation is currently running. Please retry in a moment."
+NO_RUNOFF_SUMMARY_MESSAGE = (
+    "SWMM computed no subcatchment runoff for this model: its report has no Subcatchment "
+    "Runoff Summary. Check that IGNORE_RAINFALL is not set to YES."
+)
+# SWMM can report an error for every bad line of the model; the page shows the first few.
+MAX_REPORTED_SWMM_ERRORS = 5
+# The sweep outputs the simulation page charts, tabulates and exports, in this order: the
+# volumes and the peak flow of FeaturesSimulation.RESULT_KEYS. Precipitation (a depth,
+# the same in every run) and runon (a volume from upstream subcatchments) are left out.
+SIMULATION_OUTPUT_COLUMNS = ("runoff", "peak_runoff_rate", "infiltration", "evaporation")
 SIM_SESSION_DEFAULTS = {
     "show_download_button": False,
     "chart_config": None,
@@ -100,6 +206,14 @@ class ResultPayloadTooLargeError(ValueError):
 
 class InputValidationError(ValueError):
     """Raised for user-correctable input issues."""
+
+
+class RunFailure(NamedTuple):
+    """How a failed run is reported: the message, the HTTP status and the form field it concerns."""
+
+    message: str
+    status: int
+    field: str | None = None
 
 
 def _is_ajax(request: HttpRequest) -> bool:
@@ -120,32 +234,107 @@ def _form_invalid_json(form: forms.Form) -> JsonResponse:
 
 
 def _run_failed(
-    request: HttpRequest, message: str, status: int, template: str, context: dict
+    request: HttpRequest, failure: RunFailure, template: str, context: dict
 ) -> HttpResponse:
     """
     Report a failed run: JSON for async requests, flash message + page otherwise.
 
-    The async path must not touch ``messages`` - they would surface on the
-    next full page load.
+    A failure that concerns a field of the page's form (``context["form"]``) is
+    also shown on that field. The async path must not touch ``messages`` - they
+    would surface on the next full page load.
     """
+    form = context.get("form")
+    field = failure.field if form is not None and failure.field in form.fields else None
     if _is_ajax(request):
-        return _json_error(message, status)
-    messages.error(request, message)
+        field_errors = {field: [failure.message]} if field else None
+        return _json_error(failure.message, failure.status, field_errors)
+    if field:
+        form.add_error(field, failure.message)
+    messages.error(request, failure.message)
     return render(request, template, context)
 
 
 def _classify_run_error(
     error: Exception, tool: str, too_large_message: str, failed_message: str
-) -> tuple[str, int]:
-    """Log a failed run and return the user-facing message and HTTP status for it."""
+) -> RunFailure:
+    """Log a failed run and return how to report it to the user."""
     if isinstance(error, ResultPayloadTooLargeError):
-        return too_large_message, 413
+        return RunFailure(too_large_message, 413)
+    library_failure = _library_error_failure(error)
+    if library_failure:
+        logger.warning("%s rejected the model or parameters", tool, exc_info=True)
+        return library_failure
     input_error = _coerce_input_validation_error(error)
     if input_error:
         logger.warning("%s input validation failed", tool, exc_info=True)
-        return _format_input_error_message(input_error), 400
+        return RunFailure(_format_input_error_message(input_error), 400)
     logger.exception("%s failed", tool)
-    return failed_message, 500
+    return RunFailure(failed_message, 500)
+
+
+# Directories of an absolute path ("/srv/media/uploads/7/", "C:\\models\\"), which a SWMM
+# error line may contain and the page must not show.
+_PATH_DIRECTORIES = re.compile(r"(?<![\w.])(?:[A-Za-z]:)?[\\/](?:[^\s\\/]+[\\/])+")
+_EXTERNAL_FILE_ORACLE_ERROR = re.compile(
+    r"ERROR\s+(?:30[34]|319|320|33[6789]|34[12]|35[1234]|36[13])\b[^\n]*",
+    re.IGNORECASE,
+)
+
+
+def _hide_directories(line: str) -> str:
+    """
+    Drop the directories from the file paths in a SWMM error line, keeping the file names.
+
+    The server's own roots go first, with every directory below them, so a root
+    with a space in it is hidden too; any other absolute path loses its directories.
+    External-file open/read errors (ERROR 361/363) are collapsed to a uniform message
+    so they cannot be used as a file-existence oracle.
+    """
+    if _EXTERNAL_FILE_ORACLE_ERROR.search(line):
+        return _EXTERNAL_FILE_ORACLE_ERROR.sub(
+            "ERROR 361: external files are not supported in uploaded models.", line
+        )
+    roots = {settings.MEDIA_ROOT, str(settings.BASE_DIR), tempfile.gettempdir()}
+    roots |= {os.path.realpath(root) for root in roots}
+    for root in sorted(roots, key=len, reverse=True):
+        root = root.rstrip("\\/")
+        if root:
+            line = re.sub(re.escape(root) + r"[\\/](?:[^\s\\/]+[\\/])*", "", line)
+    return _PATH_DIRECTORIES.sub("", line)
+
+
+def _simulation_error_message(error: SimulationError) -> str:
+    """The SWMM ERROR lines of a failed run, without server paths and at most a few of them."""
+    lines = [_hide_directories(line) for line in error.report_errors]
+    if not lines:
+        return f"{SWMM_FAILED_MESSAGE}. Open the model in SWMM to find the problem."
+    shown = lines[:MAX_REPORTED_SWMM_ERRORS]
+    message = f"{SWMM_FAILED_MESSAGE}: {' '.join(shown)}"
+    if len(lines) > len(shown):
+        message += f" (and {len(lines) - len(shown)} more errors)"
+    return message
+
+
+def _library_error_failure(error: Exception) -> RunFailure | None:
+    """
+    Report an error of catchment_simulation by its type: invalid input is the user's
+    to correct (400), and so is a model SWMM cannot run, whose report errors are shown.
+    """
+    if _ENGINE_BUSY_ERRORS and (
+        isinstance(error, _ENGINE_BUSY_ERRORS)
+        or (isinstance(error, SimulationError) and isinstance(error.__cause__, _ENGINE_BUSY_ERRORS))
+    ):
+        return RunFailure(ENGINE_BUSY_MESSAGE, 503)
+    if isinstance(error, SubcatchmentNotFoundError):
+        return RunFailure(SUBCATCHMENT_NOT_FOUND_MESSAGE, 400, "catchment_name")
+    if isinstance(error, UnknownFeatureError):
+        return RunFailure(str(error), 400, "feature")
+    if isinstance(error, InvalidParameterError):
+        # The package names the parameter, the value and the allowed range.
+        return RunFailure(str(error), 400)
+    if isinstance(error, SimulationError):
+        return RunFailure(_simulation_error_message(error), 400)
+    return None
 
 
 def ajax_login_required(view_func):
@@ -189,10 +378,6 @@ HOME_SWEEPS = {
 }
 
 
-def _is_finite_number(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and np.isfinite(value)
-
-
 def _read_data_records(filename: str) -> list[dict]:
     """Read a non-empty JSON list of objects from the data directory."""
     with open(os.path.join(HOME_DATA_DIR, filename), encoding="utf-8") as file:
@@ -224,16 +409,6 @@ def _load_hydrograph_json() -> list[dict]:
         plotted = dict(zip(HOME_HYDROGRAPH_FIELDS, values, strict=True))
         records.append({"datetime": row["datetime"], **plotted})
     return records
-
-
-def _hydrograph_summary(records: list[dict], volume_factor: float) -> dict:
-    """Headline numbers of the example event, computed like a timeseries run's metrics."""
-    frame = pd.DataFrame(records)
-    frame.index = pd.to_datetime(frame.pop("datetime"))
-    return {
-        "peak_rainfall": float(frame["rainfall"].max()),
-        **_hydrograph_metrics(frame, volume_factor),
-    }
 
 
 def _build_home_data() -> dict:
@@ -335,36 +510,6 @@ def _load_cached_result(scope: str, user_id: int, token: str | None) -> dict | N
     return payload
 
 
-def _safe_download_filename(name: str | None, fallback: str, extension: str = ".xlsx") -> str:
-    """Sanitize user-facing filenames used in Content-Disposition."""
-    candidate = os.path.basename(name or "").strip()
-    if not candidate:
-        candidate = fallback
-    candidate = re.sub(r'[\r\n"]+', "_", candidate)
-    base_name = os.path.splitext(candidate)[0] or os.path.splitext(fallback)[0] or "results"
-    if not extension:
-        normalized_extension = ""
-    else:
-        normalized_extension = extension if extension.startswith(".") else f".{extension}"
-    safe_name = f"{base_name}{normalized_extension}"
-    return safe_name[:150]
-
-
-def _normalize_sheet_name(raw_name: str, used_names: set[str]) -> str:
-    """Create Excel-safe unique sheet names (<=31 chars)."""
-    sanitized = "".join("_" if char in r"[]:*?/\\" else char for char in (raw_name or "sheet"))
-    sanitized = sanitized.strip() or "sheet"
-    base = sanitized[:31]
-    candidate = base
-    suffix = 1
-    while candidate.lower() in used_names:
-        suffix_text = f"_{suffix}"
-        candidate = f"{base[: 31 - len(suffix_text)]}{suffix_text}"
-        suffix += 1
-    used_names.add(candidate.lower())
-    return candidate
-
-
 def _is_valid_result_token(token: str | None) -> bool:
     return bool(token and re.fullmatch(r"[0-9a-f]{32}", token))
 
@@ -374,12 +519,58 @@ def _user_upload_dir(user_id: int) -> str:
     return os.path.join(settings.MEDIA_ROOT, UPLOAD_SUBDIR, str(user_id))
 
 
-def _safe_remove_file(path: str | None) -> None:
-    """Best-effort file removal safe for concurrent requests."""
+def _is_in_user_upload_dir(path: str | None, user_id: int | None) -> bool:
+    """Return True when path resolves inside the given user's upload directory."""
+    if not path or user_id is None:
+        return False
+    user_dir = os.path.realpath(_user_upload_dir(user_id))
+    try:
+        common_path = os.path.commonpath([os.path.realpath(path), user_dir])
+    except ValueError:
+        return False
+    return common_path == user_dir
+
+
+def _safe_remove_file(path: str | None, user_id: int | None = None) -> None:
+    """Best-effort file removal scoped to the user's upload directory."""
     if not path:
+        return
+    if user_id is not None and not _is_in_user_upload_dir(path, user_id):
+        logger.warning("Refusing to remove file outside user upload dir: %s", path)
         return
     with suppress(OSError):
         os.remove(path)
+
+
+def _atomic_write_chunks(chunks, target_path: str) -> None:
+    """Write uploaded byte chunks to target_path atomically via a temporary sibling file."""
+    target_dir = os.path.dirname(target_path)
+    os.makedirs(target_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".upload-", suffix=".tmp", dir=target_dir)
+    try:
+        with os.fdopen(fd, "wb") as destination:
+            for chunk in chunks:
+                destination.write(chunk)
+        os.replace(tmp_path, target_path)
+    except BaseException:
+        with suppress(OSError):
+            os.remove(tmp_path)
+        raise
+
+
+def _atomic_copy_file(source_path: str, target_path: str) -> None:
+    """Copy source_path to target_path atomically via a temporary sibling file."""
+    target_dir = os.path.dirname(target_path)
+    os.makedirs(target_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".sample-", suffix=".tmp", dir=target_dir)
+    os.close(fd)
+    try:
+        shutil.copyfile(source_path, tmp_path)
+        os.replace(tmp_path, target_path)
+    except BaseException:
+        with suppress(OSError):
+            os.remove(tmp_path)
+        raise
 
 
 def _file_too_large_message() -> str:
@@ -428,12 +619,12 @@ def _coerce_input_validation_error(error: Exception) -> InputValidationError | N
     if isinstance(error, UnicodeDecodeError):
         return InputValidationError("encoding")
 
+    if isinstance(error, KeyError) and "subarea" in str(error).lower():
+        return InputValidationError("missing_subareas")
+
     if isinstance(error, ValueError):
+        # swmmio and pandas give no specific type for a number they cannot parse in the model.
         lowered = str(error).lower()
-        if "subcatchment" in lowered and "not found" in lowered:
-            return InputValidationError("subcatchment")
-        if "must be <=" in lowered:
-            return InputValidationError("range")
         if "could not convert string to float" in lowered:
             return InputValidationError("non_numeric")
         if "expected numeric" in lowered:
@@ -450,30 +641,47 @@ def _format_input_error_message(error: InputValidationError) -> str:
         return "Invalid file path detected."
     if code == "no_subcatchments":
         return "The model has no subcatchments to compare."
+    if code == "missing_subareas":
+        return "The model is missing required [SUBCATCHMENTS] or [SUBAREAS] columns."
+    if code == "no_runoff_summary":
+        return NO_RUNOFF_SUMMARY_MESSAGE
     if code == "missing_file":
         return "Input file is missing. Please upload the model again."
     if code == "encoding":
         return "Input file encoding is not supported."
-    if code == "subcatchment":
-        return "Selected catchment was not found in the uploaded model."
-    if code == "range":
-        return "Invalid range values. Ensure start is less than or equal to stop."
     if code == "non_numeric":
         return "Input file contains non-numeric values where numbers are required."
     return "Input file error. Please validate your model and selected parameters."
 
 
 def _uploaded_model_path(request: HttpRequest) -> str:
-    """Return the path of the model loaded in this session; there is no default model."""
+    """
+    Return the path of the model loaded in this session; there is no default model.
+
+    Only the upload views store the path, always inside the user's upload directory;
+    checking it again keeps every run on the user's own files, whatever the session holds.
+    """
     path = request.session.get("uploaded_file_path")
     if not path:
         raise InputValidationError("no_model")
+    _check_in_user_upload_dir(path, request.user.id)
     return path
 
 
 def main_view(request: HttpRequest) -> HttpResponse:
     """Home page; ``home`` is None when the precomputed example data cannot be loaded."""
     return render(request, "main/main_view.html", {"home": _load_home_data()})
+
+
+@require_GET
+def healthz(request: HttpRequest) -> JsonResponse:
+    """Liveness and readiness probe for Docker and Render health checks."""
+    try:
+        connection.ensure_connection()
+    except Exception:
+        logger.exception("Healthcheck failed: database connection error")
+        return JsonResponse({"status": "error", "detail": "database"}, status=503)
+    return JsonResponse({"status": "ok"}, status=200)
 
 
 def about(request: HttpRequest) -> HttpResponse:
@@ -541,6 +749,7 @@ MIN_SWMM_SECTION_MATCHES = 2
 SWMM_SECTION_HEADERS = frozenset(
     {"[TITLE]", "[OPTIONS]", "[RAINGAGES]", "[SUBCATCHMENTS]", "[SUBAREAS]"}
 )
+FORBIDDEN_SWMM_SECTION_PREFIXES = ("[FILE", "[BACK")
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -553,25 +762,76 @@ def _sanitize_filename(filename: str) -> str:
     return sanitized[:100] if sanitized else "uploaded_file"
 
 
+def _is_forbidden_inp_directive(section: str, stripped_line: str) -> bool:
+    """Return True when an INP section header or data row references an external server file."""
+    if not stripped_line:
+        return False
+    if stripped_line.startswith("["):
+        header_tokens = stripped_line.upper().split()
+        # Reject malformed section headers (missing closing ']' or extra tokens after ']')
+        # and forbidden external-file sections ([FILES], [BACKDROP] and their SWMM 4-char prefixes).
+        if len(header_tokens) != 1 or not header_tokens[0].endswith("]"):
+            return True
+        return header_tokens[0].startswith(FORBIDDEN_SWMM_SECTION_PREFIXES)
+
+    tokens = stripped_line.upper().split()
+    if not tokens:
+        return False
+    if section.startswith(("[TIME", "[RAING", "[PATTE")):
+        return any(tok.startswith("FILE") for tok in tokens[1:])
+    if section.startswith(("[TEMP", "[EVAP")):
+        return any(tok.startswith("FILE") for tok in tokens[:2])
+    if section.startswith("[LID_U"):
+        # In SWMM [LID_USAGE], optional 9th column (index 8) is a detailed report file path.
+        return (len(tokens) >= 9 and tokens[8] not in ("*", '""', "''")) or ('"' in stripped_line)
+    return False
+
+
+def _scan_inp_lines(
+    lines: list[str],
+    matched_sections: set[str],
+    current_section: str,
+) -> tuple[bool, str]:
+    """Validate a batch of decoded INP lines; return (is_valid, updated_section)."""
+    for line in lines:
+        if "\x00" in line or len(line) > UPLOAD_VALIDATION_MAX_LINE_BUFFER:
+            return False, current_section
+        stripped = line.split(";", 1)[0].strip()
+        if not stripped:
+            continue
+        if stripped.startswith("["):
+            if _is_forbidden_inp_directive(current_section, stripped):
+                return False, current_section
+            current_section = stripped.upper()
+            if current_section in SWMM_SECTION_HEADERS:
+                matched_sections.add(current_section)
+        elif _is_forbidden_inp_directive(current_section, stripped):
+            return False, current_section
+    return True, current_section
+
+
 def _validate_inp_file_content(file_content: bytes) -> bool:
-    """Check in-memory bytes for SWMM section headers. Handles BOM and mixed line endings."""
+    """Check in-memory bytes for SWMM section headers and forbidden external-file directives."""
     try:
         if file_content.startswith(b"\xef\xbb\xbf"):
             file_content = file_content[3:]
-        elif file_content.startswith(b"\xff\xfe") or file_content.startswith(b"\xfe\xff"):
-            file_content = file_content[2:]
-
-        try:
             content_str = file_content.decode("utf-8")
-        except UnicodeDecodeError:
-            content_str = file_content.decode("latin-1")
+        elif file_content.startswith(b"\xff\xfe"):
+            content_str = file_content[2:].decode("utf-16-le")
+        elif file_content.startswith(b"\xfe\xff"):
+            content_str = file_content[2:].decode("utf-16-be")
+        else:
+            try:
+                content_str = file_content.decode("utf-8")
+            except UnicodeDecodeError:
+                content_str = file_content.decode("latin-1")
 
-        content_upper = content_str.replace("\r\n", "\n").replace("\r", "\n").upper()
-
-        # Check for common SWMM section headers
-        swmm_sections = ["[TITLE]", "[OPTIONS]", "[RAINGAGES]", "[SUBCATCHMENTS]", "[SUBAREAS]"]
-        return any(section in content_upper for section in swmm_sections)
+        normalized = content_str.replace("\r\n", "\n").replace("\r", "\n")
+        matched_sections: set[str] = set()
+        valid, _ = _scan_inp_lines(normalized.split("\n"), matched_sections, "")
+        return valid and len(matched_sections) >= 1
     except Exception:
+        logger.debug("Failed to validate in-memory INP file content", exc_info=True)
         return False
 
 
@@ -587,12 +847,13 @@ def _detect_inp_encoding_prefix(prefix: bytes) -> tuple[str, int]:
 
 
 def _validate_inp_file_stream(
-    uploaded_file: object, chunk_size: int = UPLOAD_VALIDATION_CHUNK_SIZE
+    uploaded_file: Any, chunk_size: int = UPLOAD_VALIDATION_CHUNK_SIZE
 ) -> bool:
-    """Validate SWMM INP headers without loading the entire file into memory."""
+    """Validate SWMM INP headers and reject external file directives across the full stream."""
     decoder = None
     pending = ""
     matched_sections: set[str] = set()
+    current_section = ""
     try:
         for chunk in uploaded_file.chunks(chunk_size):
             if decoder is None:
@@ -602,29 +863,27 @@ def _validate_inp_file_stream(
 
             pending += decoder.decode(chunk, final=False)
             pending = pending.replace("\r\n", "\n").replace("\r", "\n")
+            if "\n" not in pending and len(pending) > UPLOAD_VALIDATION_MAX_LINE_BUFFER:
+                return False
             lines = pending.split("\n")
-            pending = lines.pop()[-UPLOAD_VALIDATION_MAX_LINE_BUFFER:] if lines else pending
+            pending = lines.pop() if lines else pending
 
-            for line in lines:
-                normalized_line = line.strip().upper()
-                if normalized_line in SWMM_SECTION_HEADERS:
-                    matched_sections.add(normalized_line)
-                    if len(matched_sections) >= MIN_SWMM_SECTION_MATCHES:
-                        return True
+            valid, current_section = _scan_inp_lines(lines, matched_sections, current_section)
+            if not valid:
+                return False
 
         if decoder is None:
             return False
 
         pending += decoder.decode(b"", final=True)
         pending = pending.replace("\r\n", "\n").replace("\r", "\n")
-        for line in pending.split("\n"):
-            normalized_line = line.strip().upper()
-            if normalized_line in SWMM_SECTION_HEADERS:
-                matched_sections.add(normalized_line)
-                if len(matched_sections) >= MIN_SWMM_SECTION_MATCHES:
-                    return True
+        valid, current_section = _scan_inp_lines(
+            pending.split("\n"), matched_sections, current_section
+        )
+        if not valid:
+            return False
 
-        return False
+        return len(matched_sections) >= MIN_SWMM_SECTION_MATCHES
     except (OSError, UnicodeError, AttributeError):
         logger.warning("Failed to validate uploaded INP file stream", exc_info=True)
         return False
@@ -664,6 +923,8 @@ def _forget_model_state(request: HttpRequest) -> None:
         MODEL_DIGEST_SESSION_KEY,
         "_subcatchment_ids",
         "_subcatchment_ids_file",
+        "_flow_units",
+        "_flow_units_file",
     ):
         request.session.pop(key, None)
     for scope, session_key in RESULT_SESSION_KEYS:
@@ -750,7 +1011,10 @@ def upload(request: HttpRequest) -> HttpResponse:
         return _upload_too_large(request)
 
     request.upload_handlers.insert(0, BodySizeLimitUploadHandler(request, MAX_UPLOAD_BODY_SIZE))
-    return _store_upload(request)
+    response = _store_upload(request)
+    if getattr(request, "_upload_body_too_large", False):
+        return _upload_too_large(request)
+    return response
 
 
 @csrf_protect
@@ -791,17 +1055,10 @@ def _store_upload(request: HttpRequest) -> HttpResponse:
     user_dir = _user_upload_dir(request.user.id)
     file_path = os.path.join(user_dir, safe_filename + file_extension)
 
-    # Remove previous uploaded file from disk
     old_path = request.session.get("uploaded_file_path")
+    _atomic_write_chunks(uploaded_file.chunks(), file_path)
     if old_path and old_path != file_path:
-        _safe_remove_file(old_path)
-
-    # Ensure upload directory exists
-    os.makedirs(user_dir, exist_ok=True)
-
-    with open(file_path, "wb+") as destination:
-        for chunk in uploaded_file.chunks():
-            destination.write(chunk)
+        _safe_remove_file(old_path, request.user.id)
 
     unchanged = _adopt_model(request, file_path)
     logger.info("File uploaded successfully: %s", file_path)
@@ -828,18 +1085,17 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Sample file is not available."}, status=500)
 
     user_dir = _user_upload_dir(request.user.id)
-    os.makedirs(user_dir, exist_ok=True)
     file_path = os.path.join(user_dir, "example.inp")
 
     try:
-        shutil.copyfile(sample_source_path, file_path)
+        _atomic_copy_file(sample_source_path, file_path)
     except OSError:
         logger.exception("Failed to copy sample INP file for user %s", request.user.id)
         return JsonResponse({"error": "Failed to load sample file."}, status=500)
 
     old_path = request.session.get("uploaded_file_path")
     if old_path and old_path != file_path:
-        _safe_remove_file(old_path)
+        _safe_remove_file(old_path, request.user.id)
 
     unchanged = _adopt_model(request, file_path)
     try:
@@ -863,6 +1119,9 @@ def upload_status(request: HttpRequest) -> JsonResponse:
     """Return ``{has_file, filename, size}`` for the current session upload."""
     file_path = request.session.get("uploaded_file_path")
     if file_path:
+        if not _is_in_user_upload_dir(file_path, request.user.id):
+            request.session.pop("uploaded_file_path", None)
+            return JsonResponse({"has_file": False})
         try:
             size = os.path.getsize(file_path)
             return JsonResponse(
@@ -873,7 +1132,7 @@ def upload_status(request: HttpRequest) -> JsonResponse:
                 }
             )
         except OSError:
-            # File disappeared between session set and now – clean up
+            # File disappeared between session set and now - clean up
             request.session.pop("uploaded_file_path", None)
     return JsonResponse({"has_file": False})
 
@@ -885,10 +1144,10 @@ def upload_clear(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Method not allowed."}, status=405)
 
     file_path = request.session.pop("uploaded_file_path", None)
-    _safe_remove_file(file_path)
+    _safe_remove_file(file_path, request.user.id)
     _forget_model_state(request)
 
-    return JsonResponse({"message": "Upload cleared."})
+    return JsonResponse({"message": "Upload cleared.", "option_labels": parameter_labels()})
 
 
 def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
@@ -900,7 +1159,12 @@ def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
         if cached_ids is not None:
             return cached_ids
 
-    if not file_path or not os.path.exists(file_path):
+    user_id = getattr(getattr(request, "user", None), "id", None)
+    if (
+        not file_path
+        or (user_id is not None and not _is_in_user_upload_dir(file_path, user_id))
+        or not os.path.exists(file_path)
+    ):
         request.session.pop("_subcatchment_ids", None)
         request.session.pop("_subcatchment_ids_file", None)
         return []
@@ -910,7 +1174,9 @@ def _get_subcatchment_ids(request: HttpRequest) -> list[str]:
         ids = list(model.inp.subcatchments.index)
     except Exception:
         logger.warning("Failed to read subcatchments from %s", file_path, exc_info=True)
-        ids = []
+        request.session.pop("_subcatchment_ids", None)
+        request.session.pop("_subcatchment_ids_file", None)
+        return []
 
     request.session["_subcatchment_ids"] = ids
     request.session["_subcatchment_ids_file"] = file_path
@@ -934,35 +1200,26 @@ def _get_catchment_choices(request: HttpRequest) -> list[tuple[str, str]]:
 @require_GET
 @ajax_login_required
 def subcatchments(request: HttpRequest) -> JsonResponse:
-    """AJAX endpoint returning subcatchment IDs from the uploaded INP."""
-    return JsonResponse({"subcatchments": _get_subcatchment_ids(request)})
+    """AJAX endpoint returning the uploaded INP's subcatchment IDs and parameter labels."""
+    return JsonResponse(
+        {
+            "subcatchments": _get_subcatchment_ids(request),
+            "option_labels": parameter_labels(_form_units(request)),
+        }
+    )
 
 
 def get_feature_name(method_name: str) -> str:
-    """Map simulation method name (e.g. ``simulate_area``) to INP column name."""
-
-    feature_map = {
-        "simulate_percent_slope": "PercSlope",
-        "simulate_area": "Area",
-        "simulate_width": "Width",
-        "simulate_percent_impervious": "PercImperv",
-        "simulate_percent_zero_imperv": "Zero-Imperv",
-        "simulate_curb_length": "CurbLength",
-        "simulate_n_imperv": "N-Imperv",
-        "simulate_n_perv": "N-Perv",
-        "simulate_s_imperv": "Destore-Imperv",
-        "simulate_s_perv": "Destore-Perv",
-    }
-    return feature_map.get(method_name, "")
-
-
-def _normalize_flow_units(flow_units: str | None) -> str:
-    """Normalize FLOW_UNITS token for comparisons and labels."""
-    return str(flow_units or "").strip().upper()
+    """Map a simulation method name (e.g. ``simulate_area``) to the SWMM column it sweeps."""
+    return METHOD_FEATURES.get(method_name, "")
 
 
 def _read_flow_units(inp_path: str) -> str | None:
-    """Read FLOW_UNITS from a SWMM input file."""
+    """
+    Read FLOW_UNITS from a SWMM input file as FeaturesSimulation does: the keyword
+    in any case, and SWMM's default CFS when it is not set. None when the file
+    cannot be read.
+    """
     if not inp_path or not os.path.exists(inp_path):
         return None
 
@@ -972,139 +1229,30 @@ def _read_flow_units(inp_path: str) -> str | None:
         logger.warning("Failed to read FLOW_UNITS from %s", inp_path, exc_info=True)
         return None
 
-    flow_units: object | None = None
-    if isinstance(options, pd.DataFrame):
-        if "FLOW_UNITS" in options.index and not options.columns.empty:
-            value_column = "Value" if "Value" in options.columns else options.columns[0]
-            flow_units = options.loc["FLOW_UNITS", value_column]
-    elif isinstance(options, dict):
-        flow_units = options.get("FLOW_UNITS")
-
-    if isinstance(flow_units, pd.Series):
-        flow_units = flow_units.iloc[0] if not flow_units.empty else None
-
-    normalized = _normalize_flow_units(str(flow_units) if flow_units is not None else None)
-    return normalized or None
+    return _extract_options_flow_units(options)
 
 
-def _unit_system(flow_units: str | None) -> str:
-    """Classify FLOW_UNITS into SI/US/UNKNOWN buckets."""
-    normalized = _normalize_flow_units(flow_units)
-    if normalized in SI_FLOW_UNITS:
-        return "SI"
-    if normalized in US_FLOW_UNITS:
-        return "US"
-    return "UNKNOWN"
+def _session_flow_units(request: HttpRequest) -> str | None:
+    """FLOW_UNITS of the session's model, cached with it like its subcatchment IDs."""
+    file_path = request.session.get("uploaded_file_path")
+    if not file_path:
+        return None
+    if request.session.get("_flow_units_file") == file_path:
+        return request.session.get("_flow_units")
+    user_id = getattr(getattr(request, "user", None), "id", None)
+    if user_id is not None and not _is_in_user_upload_dir(file_path, user_id):
+        return None
+    flow_units = _read_flow_units(file_path)
+    if flow_units is not None:
+        request.session["_flow_units"] = flow_units
+        request.session["_flow_units_file"] = file_path
+    return flow_units
 
 
-def _unit_labels(flow_units: str | None) -> dict[str, str]:
-    """Return display units for chart labels.
-
-    SWMM reports rainfall and infiltration rates per hour but evaporation rates per day.
-    """
-    normalized = _normalize_flow_units(flow_units)
-    system = _unit_system(normalized)
-    if system == "SI":
-        return {
-            "length": "m",
-            "area": "ha",
-            "storage": "mm",
-            "depth_rate": "mm/h",
-            "evaporation_rate": "mm/day",
-            "volume": "m³",
-            "flow_rate": normalized,
-        }
-    if system == "US":
-        return {
-            "length": "ft",
-            "area": "acre",
-            "storage": "in",
-            "depth_rate": "in/h",
-            "evaporation_rate": "in/day",
-            "volume": "ft³",
-            "flow_rate": normalized,
-        }
-    return {
-        "length": "model length units",
-        "area": "model area units",
-        "storage": "model storage units",
-        "depth_rate": "model depth/time units",
-        "evaporation_rate": "model evaporation rate units",
-        "volume": "model volume units",
-        "flow_rate": normalized or "model flow units",
-    }
-
-
-def _build_simulation_axis_labels(
-    feature_name: str, y_columns: list[str], flow_units: str | None
-) -> tuple[str, dict[str, str]]:
-    """Build X and Y labels for simulation charts."""
-    units = _unit_labels(flow_units)
-    x_templates = {
-        "PercSlope": "Percent Slope [%]",
-        "Area": "Area [{area}]",
-        "Width": "Width [{length}]",
-        "PercImperv": "Impervious Area [%]",
-        "Zero-Imperv": "Zero-Impervious Area [%]",
-        "CurbLength": "Curb Length [{length}]",
-        "N-Imperv": "Manning n (Impervious) [-]",
-        "N-Perv": "Manning n (Pervious) [-]",
-        "Destore-Imperv": "Depression Storage (Impervious) [{storage}]",
-        "Destore-Perv": "Depression Storage (Pervious) [{storage}]",
-    }
-    y_templates = {
-        "runoff": "Total Runoff Volume [{volume}]",
-        "peak_runoff_rate": "Peak Runoff Rate [{flow_rate}]",
-        "infiltration": "Total Infiltration Volume [{volume}]",
-        "evaporation": "Total Evaporation Volume [{volume}]",
-    }
-
-    x_template = x_templates.get(feature_name)
-    x_label = x_template.format(**units) if x_template else feature_name or "Parameter"
-    y_labels = {}
-    for column in y_columns:
-        y_template = y_templates.get(column)
-        y_labels[column] = y_template.format(**units) if y_template else column
-    return x_label, y_labels
-
-
-def _build_timeseries_axis_labels(
-    columns: list[str], flow_units: str | None
-) -> tuple[str, dict[str, str]]:
-    """Build X and Y labels for timeseries charts."""
-    units = _unit_labels(flow_units)
-    y_templates = {
-        "rainfall": "Rainfall Intensity [{depth_rate}]",
-        "runoff": "Runoff Rate [{flow_rate}]",
-        "infiltration_loss": "Infiltration Loss [{depth_rate}]",
-        "evaporation_loss": "Evaporation Loss [{evaporation_rate}]",
-        "runon": "Runon Rate [{flow_rate}]",
-    }
-    y_labels = {}
-    for column in columns:
-        y_template = y_templates.get(column)
-        y_labels[column] = y_template.format(**units) if y_template else column
-    return "Time", y_labels
-
-
-def _excel_attachment_response(
-    output_file_name: str, sheets: dict[str, pd.DataFrame]
-) -> HttpResponse:
-    """Return an in-memory Excel attachment from sheet->DataFrame mapping."""
-    buffer = BytesIO()
-    used_names: set[str] = set()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for sheet_name, df in sheets.items():
-            normalized_sheet_name = _normalize_sheet_name(sheet_name, used_names)
-            df.to_excel(writer, sheet_name=normalized_sheet_name, index=False)
-    buffer.seek(0)
-    safe_name = _safe_download_filename(output_file_name, "results.xlsx")
-    return FileResponse(
-        buffer,
-        as_attachment=True,
-        filename=safe_name,
-        content_type=EXCEL_CONTENT_TYPE,
-    )
+def _form_units(request: HttpRequest) -> dict[str, str] | None:
+    """The units the sweep forms label their parameters in; None (SI) without a model."""
+    flow_units = _session_flow_units(request)
+    return _unit_labels(flow_units) if flow_units else None
 
 
 def get_session_variables(request: HttpRequest) -> dict:
@@ -1174,12 +1322,17 @@ def _get_form_initial(
         except (ValidationError, TypeError, ValueError):
             continue
 
-        if coerced_value is None:
+        if coerced_value is None or (
+            isinstance(coerced_value, float) and not _is_finite_number(coerced_value)
+        ):
             continue
 
-        if isinstance(field, forms.ChoiceField) and field_name != "catchment_name":
-            if not field.valid_value(coerced_value):
-                continue
+        if (
+            isinstance(field, forms.ChoiceField)
+            and field_name != "catchment_name"
+            and not field.valid_value(coerced_value)
+        ):
+            continue
 
         initial[field_name] = coerced_value
 
@@ -1208,30 +1361,28 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
         step=form.cleaned_data.get("step") if not is_predefined else None,
         catchment_name=form.cleaned_data["catchment_name"],
     )
-    with FeaturesSimulation(
-        subcatchment_id=params.catchment_name, raw_file=uploaded_file_path
-    ) as model:
-        feature_name = get_feature_name(params.method_name)
-
-        method = getattr(model, params.method_name)
-        if is_predefined:
-            df = method()
-        else:
-            df = method(start=params.start, stop=params.stop, step=params.step)
-        other_cols = [c for c in df.columns if c != feature_name]
-        df = df[[feature_name] + other_cols]
+    model = FeaturesSimulation(subcatchment_id=params.catchment_name, raw_file=uploaded_file_path)
+    feature_name = get_feature_name(params.method_name)
+    method = getattr(model, params.method_name)
+    if is_predefined:
+        df = method()
+    else:
+        df = method(start=params.start, stop=params.stop, step=params.step)
+    # The chart, the table and the download all show exactly these columns.
+    output_columns = list(SIMULATION_OUTPUT_COLUMNS)
+    df = df[[feature_name, *output_columns]]
 
     flow_units = _read_flow_units(uploaded_file_path)
     x_label, y_labels = _build_simulation_axis_labels(
         feature_name=feature_name,
-        y_columns=other_cols,
+        y_columns=output_columns,
         flow_units=flow_units,
     )
     output_file_name = f"{request.user.username}_simulation_result_{_timestamp_suffix()}.xlsx"
     chart_config = {
         "data": json.loads(df.to_json(orient="records")),
         "x": feature_name,
-        "y": other_cols,
+        "y": output_columns,
         "title": f"Dependence of runoff on subcatchment {feature_name}.",
         "xLabel": x_label,
         "yLabels": y_labels,
@@ -1239,7 +1390,7 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
     payload = {
         "chart_config": chart_config,
         "results_columns": df.columns.tolist(),
-        "results_data": df.values.tolist(),
+        "results_data": df.to_numpy().tolist(),
         "feature_name": feature_name,
         "output_file_name": output_file_name,
     }
@@ -1265,12 +1416,16 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             SimulationForm,
             SIM_FORM_STATE_FIELDS,
         )
-        form = SimulationForm(catchment_choices=catchment_choices, initial=initial)
+        form = SimulationForm(
+            catchment_choices=catchment_choices, units=_form_units(request), initial=initial
+        )
         return render(
             request, SIMULATION_TEMPLATE, {"form": form, **get_session_variables(request)}
         )
 
-    form = SimulationForm(request.POST, catchment_choices=catchment_choices)
+    form = SimulationForm(
+        request.POST, catchment_choices=catchment_choices, units=_form_units(request)
+    )
     if not form.is_valid():
         if _is_ajax(request):
             return _form_invalid_json(form)
@@ -1281,7 +1436,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
     try:
         _run_simulation(request, form)
     except Exception as error:
-        message, status = _classify_run_error(
+        failure = _classify_run_error(
             error,
             "Simulation",
             "Result set is too large to keep for download. Narrow the simulation range.",
@@ -1290,8 +1445,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
         # A failed run leaves the previous result in place, so the page keeps showing it.
         return _run_failed(
             request,
-            message,
-            status,
+            failure,
             SIMULATION_TEMPLATE,
             {"form": form, **get_session_variables(request)},
         )
@@ -1356,27 +1510,6 @@ def download_timeseries_results(request: HttpRequest) -> HttpResponse:
     return redirect("main:timeseries")
 
 
-def _timeseries_payload_to_csv_df(payload: dict) -> pd.DataFrame:
-    """Convert cached timeseries payload to a single CSV-friendly DataFrame."""
-    mode = payload.get("mode")
-    data = payload.get("data")
-
-    if mode == "single" and isinstance(data, list):
-        return pd.DataFrame(data)
-
-    if mode == "sweep" and isinstance(data, dict):
-        frames: list[pd.DataFrame] = []
-        for parameter_value, rows in data.items():
-            frame = pd.DataFrame(rows)
-            frame.insert(0, "parameter_value", parameter_value)
-            frames.append(frame)
-        if frames:
-            return pd.concat(frames, ignore_index=True)
-        return pd.DataFrame(columns=["parameter_value"])
-
-    raise ValueError("Invalid timeseries payload for CSV export.")
-
-
 @login_required
 @require_POST
 def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
@@ -1406,86 +1539,6 @@ def download_timeseries_csv(request: HttpRequest) -> HttpResponse:
         logger.exception("Failed to generate timeseries CSV download")
         messages.error(request, "Failed to generate the timeseries CSV file.")
         return redirect("main:timeseries")
-
-
-# runoff_volume() integrates flow over seconds, i.e. returns flow unit x s; these
-# factors turn that into the volume unit of the model's unit system (m³ or ft³).
-_US_GALLON_FT3 = 0.133680556
-RUNOFF_VOLUME_FACTORS = {
-    "CMS": 1.0,
-    "LPS": 1e-3,
-    "MLD": 1e3 / 86_400,
-    "CFS": 1.0,
-    "GPM": _US_GALLON_FT3 / 60,
-    "MGD": 1e6 * _US_GALLON_FT3 / 86_400,
-}
-
-
-# SWMM reports a subcatchment's total runoff in 10^6 L (SI models) or 10^6 US gal
-# (US models); swmmio names that column TotalRunoffMG either way.
-REPORT_RUNOFF_FACTORS = {"SI": 1e3, "US": 1e6 * _US_GALLON_FT3}
-
-
-def _report_runoff_unit(flow_units: str | None) -> tuple[float, str]:
-    """Return the factor from the report's total runoff to the display volume unit, and that unit."""
-    system = _unit_system(flow_units)
-    if system in REPORT_RUNOFF_FACTORS:
-        return REPORT_RUNOFF_FACTORS[system], _unit_labels(flow_units)["volume"]
-    return 1.0, "10⁶ L or gal"
-
-
-def _runoff_volume_unit(flow_units: str | None) -> tuple[float, str]:
-    """Return the factor from runoff_volume() to the display volume unit, and that unit."""
-    normalized = _normalize_flow_units(flow_units)
-    units = _unit_labels(normalized)
-    if normalized in RUNOFF_VOLUME_FACTORS:
-        return RUNOFF_VOLUME_FACTORS[normalized], units["volume"]
-    return 1.0, f"{units['flow_rate']} × s"
-
-
-def _format_duration(delta: pd.Timedelta) -> str:
-    """Format a duration as e.g. "1 d 8 h 55 min", leaving out zero parts."""
-    remaining = round(delta.total_seconds())
-    parts = []
-    for size, unit in ((86_400, "d"), (3_600, "h"), (60, "min"), (1, "s")):
-        amount, remaining = divmod(remaining, size)
-        if amount:
-            parts.append(f"{amount} {unit}")
-    return " ".join(parts) or "0 min"
-
-
-def _format_parameter_value(value: float) -> str:
-    """Shortest text for a swept value, without float noise: 0.0 -> "0", 0.30000000000000004 -> "0.3"."""
-    return f"{value:.10g}"
-
-
-def _timeseries_records(ts_df: pd.DataFrame) -> list[dict]:
-    """JSON-safe rows of one run: the datetime index as text, NaN as null."""
-    frame = ts_df.reset_index()
-    frame["datetime"] = frame["datetime"].astype(str)
-    return json.loads(frame.to_json(orient="records"))
-
-
-def _hydrograph_metrics(ts_df: pd.DataFrame, volume_factor: float) -> dict:
-    """Peak, time to peak and volume of one run's runoff; None where a value is undefined."""
-    runoff = ts_df["runoff"]
-    try:
-        delay = time_to_peak(ts_df, column="runoff")
-    except ValueError:  # no runoff at all, so there is no peak to time
-        delay = pd.NaT
-    try:
-        volume = runoff_volume(ts_df, column="runoff") * volume_factor
-    except ValueError:  # fewer than two timesteps
-        volume = None
-    peak = float(runoff.max()) if not runoff.empty else None
-    has_peak = not pd.isna(delay)
-    return {
-        "peak": peak if _is_finite_number(peak) else None,
-        "peak_at": runoff.idxmax().strftime("%Y-%m-%d %H:%M") if has_peak else None,
-        "time_to_peak": _format_duration(delay) if has_peak else None,
-        "time_to_peak_seconds": delay.total_seconds() if has_peak else None,
-        "volume": volume if _is_finite_number(volume) else None,
-    }
 
 
 def _get_timeseries_session_variables(request: HttpRequest) -> dict:
@@ -1522,46 +1575,46 @@ def _run_timeseries(request: HttpRequest, form: TimeseriesForm) -> None:
     chart_config = {"mode": mode, "columns": ts_columns, "xLabel": x_label, "yLabels": y_labels}
     timestamp = _timestamp_suffix()
 
-    with FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path) as model:
-        if mode == "single":
-            ts_df = model.calculate_timeseries()
-            data = _timeseries_records(ts_df)
-            summary = {"metrics": _hydrograph_metrics(ts_df, volume_factor)}
-            chart_config["title"] = f"Timeseries for subcatchment {catchment_name}"
-            output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
-        else:
-            feature = form.cleaned_data["feature"]
-            results = model.simulate_subcatchment_timeseries(
-                feature=feature,
-                start=form.cleaned_data["start"],
-                stop=form.cleaned_data["stop"],
-                step=form.cleaned_data["step"],
-            )
-            # The formatted values are the chart legend, the Excel sheet names and the CSV column.
-            runs = {_format_parameter_value(value): ts_df for value, ts_df in results.items()}
-            data = {value: _timeseries_records(ts_df) for value, ts_df in runs.items()}
-            summary = {
-                "sweep_summary": [
-                    {"value": value, **_hydrograph_metrics(ts_df, volume_factor)}
-                    for value, ts_df in runs.items()
-                ]
-            }
-            # The same label as the simulation page's axis: "Percent Slope [%]".
-            parameter_label, _ = _build_simulation_axis_labels(feature, [], flow_units)
-            parameter_name = parameter_label.split(" [")[0]
-            chart_config.update(
-                title=f"Timeseries sweep: {parameter_name} for {catchment_name}",
-                parameterLabel=parameter_label,
-                parameterName=parameter_name,
-                catchment=catchment_name,
-                # Rainfall is the same input in every run, so only the flows can be compared.
-                series=[
-                    {"field": column, "label": y_labels[column]}
-                    for column in ts_columns
-                    if column != "rainfall"
-                ],
-            )
-            output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
+    model = FeaturesSimulation(subcatchment_id=catchment_name, raw_file=uploaded_file_path)
+    if mode == "single":
+        ts_df = model.calculate_timeseries()
+        data: Any = _timeseries_records(ts_df)
+        summary: dict[str, Any] = {"metrics": _hydrograph_metrics(ts_df, volume_factor)}
+        chart_config["title"] = f"Timeseries for subcatchment {catchment_name}"
+        output_file_name = f"{request.user.username}_timeseries_{timestamp}.xlsx"
+    else:
+        feature = form.cleaned_data["feature"]
+        results = model.simulate_subcatchment_timeseries(
+            feature=feature,
+            start=form.cleaned_data["start"],
+            stop=form.cleaned_data["stop"],
+            step=form.cleaned_data["step"],
+        )
+        # The formatted values are the chart legend, the Excel sheet names and the CSV column.
+        runs = {_format_parameter_value(value): ts_df for value, ts_df in results.items()}
+        data = {value: _timeseries_records(ts_df) for value, ts_df in runs.items()}
+        summary = {
+            "sweep_summary": [
+                {"value": value, **_hydrograph_metrics(ts_df, volume_factor)}
+                for value, ts_df in runs.items()
+            ]
+        }
+        # The same label as the simulation page's axis: "Percent Slope [%]".
+        parameter_label, _ = _build_simulation_axis_labels(feature, [], flow_units)
+        parameter_name = parameter_label.split(" [")[0]
+        chart_config.update(
+            title=f"Timeseries sweep: {parameter_name} for {catchment_name}",
+            parameterLabel=parameter_label,
+            parameterName=parameter_name,
+            catchment=catchment_name,
+            # Rainfall is the same input in every run, so only the flows can be compared.
+            series=[
+                {"field": column, "label": y_labels[column]}
+                for column in ts_columns
+                if column != "rainfall"
+            ],
+        )
+        output_file_name = f"{request.user.username}_ts_sweep_{timestamp}.xlsx"
 
     payload = {
         "mode": mode,
@@ -1592,14 +1645,18 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
             TimeseriesForm,
             TS_FORM_STATE_FIELDS,
         )
-        form = TimeseriesForm(catchment_choices=catchment_choices, initial=initial)
+        form = TimeseriesForm(
+            catchment_choices=catchment_choices, units=_form_units(request), initial=initial
+        )
         return render(
             request,
             TIMESERIES_TEMPLATE,
             {"form": form, **_get_timeseries_session_variables(request)},
         )
 
-    form = TimeseriesForm(request.POST, catchment_choices=catchment_choices)
+    form = TimeseriesForm(
+        request.POST, catchment_choices=catchment_choices, units=_form_units(request)
+    )
     if not form.is_valid():
         if _is_ajax(request):
             return _form_invalid_json(form)
@@ -1612,7 +1669,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
     try:
         _run_timeseries(request, form)
     except Exception as error:
-        message, status = _classify_run_error(
+        failure = _classify_run_error(
             error,
             "Timeseries analysis",
             "Result set is too large to keep for download. Narrow the timeseries range.",
@@ -1621,8 +1678,7 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
         # A failed run leaves the previous result in place, so the page keeps showing it.
         return _run_failed(
             request,
-            message,
-            status,
+            failure,
             TIMESERIES_TEMPLATE,
             {"form": form, **_get_timeseries_session_variables(request)},
         )
@@ -1635,15 +1691,13 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
 
 
 def _cleanup_swmm_side_files(inp_path: str) -> None:
-    """Remove .rpt and .out files generated by SWMM alongside a .inp file."""
+    """Remove the .rpt and .out files that the comparison's in-place SWMM run writes."""
     base = os.path.splitext(inp_path)[0]
     for ext in FeaturesSimulation.SWMM_SIDE_EXTENSIONS:
         if ext == ".inp":
             continue
-        try:
+        with suppress(OSError):
             os.remove(base + ext)
-        except OSError:
-            pass
 
 
 def calculations(request: HttpRequest) -> HttpResponse:
@@ -1671,43 +1725,81 @@ def _load_comparison(request: HttpRequest) -> dict | None:
 
 def _check_in_user_upload_dir(path: str, user_id: int) -> None:
     """Refuse a model path outside the user's upload directory."""
-    user_dir = os.path.realpath(_user_upload_dir(user_id))
-    try:
-        common_path = os.path.commonpath([os.path.realpath(path), user_dir])
-    except ValueError:
-        common_path = None
-    if common_path != user_dir:
+    if not _is_in_user_upload_dir(path, user_id):
         logger.warning("File path traversal attempt or cross-user access: %s", path)
         raise InputValidationError("invalid_path")
 
 
+def _swmm_report_errors(report_path: str) -> list[str]:
+    """The ``ERROR`` lines of a SWMM report file; none when it cannot be read."""
+    try:
+        with open(report_path, encoding="utf-8", errors="replace") as report:
+            return [line.strip() for line in report if line.strip().startswith("ERROR")]
+    except OSError:
+        return []
+
+
+def _run_swmm_in_place(inp_path: str) -> None:
+    """
+    Run SWMM on the model, leaving its report next to it for swmmio to read.
+
+    FeaturesSimulation cannot do this: it deletes the report of every run. A failure
+    raises SimulationError carrying the report's ERROR lines, like the package does.
+    A failed open leaves the engine half-open with the report unflushed, so the
+    engine is closed first (as catchment_simulation does), or the errors are lost.
+    """
+    report_path = os.path.splitext(inp_path)[0] + ".rpt"
+    try:
+        simulation = Simulation(inp_path)
+    except _ENGINE_BUSY_ERRORS:
+        # pyswmm >= 2.0 refused to open because another simulation is running; closing
+        # the engine would end that one. On pyswmm 1.5 the tuple is empty.
+        raise
+    except Exception as exc:
+        PySWMM().swmm_close()
+        raise SimulationError(SWMM_FAILED_MESSAGE, _swmm_report_errors(report_path)) from exc
+    try:
+        with simulation:
+            for _ in simulation:
+                pass
+    except Exception as exc:
+        raise SimulationError(SWMM_FAILED_MESSAGE, _swmm_report_errors(report_path)) from exc
+
+
 def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
-    """Run SWMM on the model and pair its runoff with the ANN prediction, in the model's volume unit."""
+    """Run SWMM on an isolated copy of the model and pair its runoff with the ANN prediction."""
     # pyswmm reports a missing file as a bare Exception, so check up front.
     if not os.path.isfile(inp_path):
         raise InputValidationError("missing_file")
-    try:
-        with Simulation(inp_path) as sim:
-            for _ in sim:
-                pass
-        # Build the model after SWMM run so report-derived columns are available.
-        swmmio_model = swmmio.Model(inp_path)
-        subcatchments = swmmio_model.subcatchments.dataframe
-        if subcatchments.empty:
-            raise InputValidationError("no_subcatchments")
-        ann_predictions = predict_runoff(swmmio_model)
-        factor, unit = _report_runoff_unit(_read_flow_units(inp_path))
-        comparison = pd.DataFrame(
-            data={
-                "Name": subcatchments.index,
-                "SWMM_Runoff": subcatchments["TotalRunoffMG"].to_numpy(dtype=float) * factor,
-                # The network was trained on the report's runoff, so it converts the same way.
-                "ANN_Runoff": np.round(ann_predictions.astype(float) * factor, 2),
-            },
-        )
-        return comparison, unit
-    finally:
-        _cleanup_swmm_side_files(inp_path)
+    with tempfile.TemporaryDirectory(prefix="cs-calc-") as work_dir:
+        work_inp = os.path.join(work_dir, os.path.basename(inp_path) or "model.inp")
+        shutil.copyfile(inp_path, work_inp)
+        try:
+            _run_swmm_in_place(work_inp)
+            # Build the model after SWMM run so report-derived columns are available.
+            swmmio_model = swmmio.Model(work_inp)
+            subcatchments = swmmio_model.subcatchments.dataframe
+            if subcatchments.empty:
+                raise InputValidationError("no_subcatchments")
+            # swmmio reads TotalRunoffMG from the report, which lacks it when SWMM skipped runoff.
+            if "TotalRunoffMG" not in subcatchments.columns:
+                raise InputValidationError("no_runoff_summary")
+            ann_predictions = predict_runoff(swmmio_model)
+            flow_units = _read_flow_units(work_inp)
+            swmm_factor, unit = _report_runoff_unit(flow_units)
+            ann_factor = _ann_runoff_factor(flow_units)
+            comparison = pd.DataFrame(
+                data={
+                    "Name": subcatchments.index,
+                    "SWMM_Runoff": subcatchments["TotalRunoffMG"].to_numpy(dtype=float)
+                    * swmm_factor,
+                    # predict_runoff() always outputs 10^6 L (10^3 m³) from the SI-trained network.
+                    "ANN_Runoff": np.round(ann_predictions.astype(float) * ann_factor, 2),
+                },
+            )
+            return comparison, unit
+        finally:
+            _cleanup_swmm_side_files(work_inp)
 
 
 def _finite_or_none(value) -> float | None:
@@ -1762,7 +1854,6 @@ def _summarise_comparison(df: pd.DataFrame, unit: str) -> dict | None:
 def _run_comparison(request: HttpRequest) -> None:
     """Compare SWMM and ANN runoff on the session's model and store the result for the session."""
     uploaded_file_path = _uploaded_model_path(request)
-    _check_in_user_upload_dir(uploaded_file_path, request.user.id)
     comparison = _summarise_comparison(*_compare_swmm_and_ann(uploaded_file_path))
     _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
 
@@ -1778,7 +1869,7 @@ def _run_calculations(request: HttpRequest) -> HttpResponse:
     try:
         _run_comparison(request)
     except Exception as error:
-        message, status = _classify_run_error(
+        failure = _classify_run_error(
             error,
             "Calculations",
             "The comparison is too large to keep. Use a model with fewer subcatchments.",
@@ -1787,8 +1878,7 @@ def _run_calculations(request: HttpRequest) -> HttpResponse:
         # A failed run leaves the previous comparison in place, so the page keeps showing it.
         return _run_failed(
             request,
-            message,
-            status,
+            failure,
             CALCULATIONS_TEMPLATE,
             {"comparison": _load_comparison(request)},
         )

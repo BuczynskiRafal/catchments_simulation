@@ -94,9 +94,7 @@ class SimpleMLPModel:
 
         # Dense layer 2 (output)
         x = x @ self.dense_2_kernel + self.dense_2_bias
-        x = self._relu(x)
-
-        return x
+        return self._relu(x)
 
 
 _model: SimpleMLPModel | None = None
@@ -163,39 +161,72 @@ def preload_model() -> bool:
     return False
 
 
+REQUIRED_SUBCATCHMENT_COLUMNS: tuple[str, ...] = (
+    "PercImperv",
+    "Width",
+    "PercSlope",
+    "N-Imperv",
+    "N-Perv",
+    "S-Imperv",
+    "S-Perv",
+    "PctZero",
+)
+_FT_TO_M = 0.3048
+_IN_TO_MM = 25.4
+
+
+def _is_us_flow_units(swmmio_model: object) -> bool:
+    """Return True when swmmio_model specifies US flow units (CFS, GPM, MGD)."""
+    from main.units import _extract_options_flow_units, _unit_system
+
+    inp = getattr(swmmio_model, "inp", None)
+    options = getattr(inp, "options", None)
+    if options is None:
+        return False
+    return _unit_system(_extract_options_flow_units(options)) == "US"
+
+
 def predict_runoff(swmmio_model: swmmio.Model) -> np.ndarray:
     """
-    Predict runoff using a machine learning model.
+    Predict subcatchment runoff volume using the pre-trained MLP model.
+
+    The network weights were trained on the reference SI model (``example.inp``,
+    ``Area = 5 ha``) with ``Width`` in meters and ``S-Imperv`` / ``S-Perv`` in
+    millimeters, and its output is always expressed in ``10^6 L`` (``10^3 m³``).
+    When ``swmmio_model`` uses US flow units (``CFS``, ``GPM``, ``MGD``), ``Width``
+    (ft -> m) and ``S-Imperv`` / ``S-Perv`` (in -> mm) are converted to SI prior
+    to normalization.
 
     Parameters
     ----------
     swmmio_model : swmmio.Model
-        A SWMM model object with subcatchment data.
+        A SWMM model object with ``subcatchments.dataframe`` containing all 8
+        required ``[SUBCATCHMENTS]`` and ``[SUBAREAS]`` columns.
 
     Returns
     -------
     np.ndarray
-        An array of predicted runoff values for each subcatchment.
+        1-D array of predicted runoff volumes in ``10^6 L`` (``10^3 m³``) for each
+        subcatchment.
 
-    Example
-    -------
-    >>> swmm_model = swmmio.Model("example.inp")
-    >>> predict_runoff(swmm_model)
-    array([0.1, 0.2, 0.3, 0.4, 0.5])
+    Raises
+    ------
+    KeyError
+        If any required ``[SUBCATCHMENTS]`` or ``[SUBAREAS]`` column is missing.
     """
     model = _get_model()
+    dataframe = swmmio_model.subcatchments.dataframe
+    missing = [col for col in REQUIRED_SUBCATCHMENT_COLUMNS if col not in dataframe.columns]
+    if missing:
+        raise KeyError(
+            f"SWMM model is missing required subcatchment/subarea columns: {', '.join(missing)}"
+        )
 
-    data = swmmio_model.subcatchments.dataframe[
-        [
-            "PercImperv",
-            "Width",
-            "PercSlope",
-            "N-Imperv",
-            "N-Perv",
-            "S-Imperv",
-            "S-Perv",
-            "PctZero",
-        ]
-    ].values
+    data = dataframe[list(REQUIRED_SUBCATCHMENT_COLUMNS)].to_numpy(dtype=np.float32, copy=True)
+    if _is_us_flow_units(swmmio_model):
+        # Column 1 is Width (ft -> m); columns 5 and 6 are S-Imperv and S-Perv (in -> mm).
+        data[:, 1] *= _FT_TO_M
+        data[:, 5] *= _IN_TO_MM
+        data[:, 6] *= _IN_TO_MM
 
     return model.predict(data).flatten()

@@ -1,332 +1,266 @@
+# catchment-simulation
+
+[![PyPI version](https://img.shields.io/pypi/v/catchment-simulation.svg)](https://pypi.org/project/catchment-simulation/)
+[![Python versions](https://img.shields.io/pypi/pyversions/catchment-simulation.svg)](https://pypi.org/project/catchment-simulation/)
+[![CI](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml/badge.svg?branch=main)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml)
+[![codecov](https://codecov.io/gh/BuczynskiRafal/catchments_simulation/branch/main/graph/badge.svg?token=40S5AYWXK6)](https://codecov.io/gh/BuczynskiRafal/catchments_simulation)
 [![Documentation Status](https://readthedocs.org/projects/catchments-simulation/badge/?version=latest)](https://catchments-simulation.readthedocs.io/en/latest/?badge=latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/LICENSE)
-[![PyPI version fury.io](https://badge.fury.io/py/ansicolortags.svg)](https://pypi.org/project/catchment-simulation/)
-[![GitHub Actions Build Status](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml/badge.svg?branch=main)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/python-package.yml)
-[![GitHub Actions Build Status](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/django.yml/badge.svg?branch=main)](https://github.com/BuczynskiRafal/catchments_simulation/actions/workflows/django.yml)
-[![codecov](https://codecov.io/gh/BuczynskiRafal/catchments_simulation/branch/main/graph/badge.svg?token=40S5AYWXK6)](https://codecov.io/gh/BuczynskiRafal/catchments_simulation)
 
+Sensitivity sweeps of subcatchment features in [EPA SWMM](https://www.epa.gov/water-research/storm-water-management-model-swmm)
+models. `catchment-simulation` runs a SWMM model many times, each time with one
+feature of one subcatchment (area, imperviousness, width, slope, Manning's n,
+depression storage, ...) set to a different value, and returns that
+subcatchment's runoff statistics or hydrographs as pandas objects. It answers
+questions such as "how much does peak runoff change if this catchment is 20 %
+more impervious?" without editing `.inp` files by hand. SWMM runs through
+[pyswmm](https://github.com/pyswmm/pyswmm) and the input file is edited with
+[swmmio](https://github.com/pyswmm/swmmio).
 
-# Catchment simulation
-Package include method for simulate subcatchment with different features values from Storm Water Management Model.
-Currently, some of the 'catchment simulation' functionality available in the app - [catchment simulation](https://catchment-simulations.onrender.com/)
-
-## Examples of How To Use 
-
-Creating SWMM object for analyse
-
-#### Inslall `catchment_simulation` package using pip 
+## Installation
 
 ```bash
 pip install catchment-simulation
 ```
 
-#### Example of simulation subcatchment area in selected range.
-
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_area(start=1, stop=10, step=1)
-```
-
-More code examples at the end of the notebook.
-
-# Catchment simulation app
-
-The application was built in django share some of the functionality from the 'catchment simulation' package. 
-
-It is designed to analyze and predict water flow behavior in catchments.  The application contain two main components: the Catchment Simulation package and Catchment Calculation.
-On the main page you can find information of the 'catchments simulation' package and examples of use. 
-
-Application at - https://catchment-simulations.onrender.com/
-
-<div align="center">
-    <img src="https://github.com/BuczynskiRafal/catchments_simulation/blob/main/img/home.png">
-    <img src="https://github.com/BuczynskiRafal/catchments_simulation/blob/main/img/example.png">
-</div>
-
-## Simulations in a web application
-The 'Simulations' tab allows the user to upload a file and select components for simulation. Once the simulation is executed, the window will display an interactive graph of the obtained data and a button to download the results in an excel spreadsheet. 
-
-<div align="center">
-    <img src="https://github.com/BuczynskiRafal/catchments_simulation/blob/main/img/simulation_start.png">
-    <img src="https://github.com/BuczynskiRafal/catchments_simulation/blob/main/img/simulation_after.png">
-</div>
-
-### Warning
-You will be asked to register and log in before performing the simulation. 
-
-## Appendix - ANN and SWMM predictions
-The 'Calculations' tab contains a neural network model trained to predict catchment area runoff. The user, after uploading the file, receives the results of calculations performed SWMM and ANN model prediction. 
-
-<div align="center">
-    <img src="https://github.com/BuczynskiRafal/catchments_simulation/blob/main/img/calculations.png">
-    <img src="https://github.com/BuczynskiRafal/catchments_simulation/blob/main/img/ann_model.png">
-</div>
-
-### Warning
-You will be asked to register and log in before performing the simulation. 
-
-## Model and static data artifacts
-
-- The Django app runtime loads ANN weights from `cs_app/swmm_model/weights.npz` (pure NumPy inference).
-- Static chart seed data in `cs_app/data` is stored as JSON files (`*.json`).
-- Simulation/timeseries downloads are generated in memory on demand (no persistent media files required).
-
----
-
-# Local Development Setup
-
-## Running the Django Web Application Locally
-
-### Prerequisites
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/) package manager (recommended)
-
-### Quick Start
+or, in a [uv](https://docs.astral.sh/uv/) project:
 
 ```bash
-# Clone repository
-git clone https://github.com/BuczynskiRafal/catchments_simulation.git
-cd catchments_simulation
-
-# Create virtual environment with uv
-uv venv --python 3.12  # any Python 3.10+ is supported
-source .venv/bin/activate  # macOS/Linux
-# .venv\Scripts\activate   # Windows
-
-# Install project dependencies for app development
-uv sync --frozen --extra dev --extra web
-
-# Optional: install docs toolchain
-uv sync --frozen --extra docs --extra web
-
-# macOS only: Run this only if you see killed process/SIGKILL errors
-find .venv -name "*.so" -o -name "*.dylib" | xargs codesign --force --sign -
-
-# Run the app
-cd cs_app
-uv run python manage.py migrate
-uv run python manage.py runserver
+uv add catchment-simulation
 ```
 
-Open http://127.0.0.1:8000/ in your browser.
+Python 3.10 or newer is required. The SWMM engine comes with the
+`swmm-toolkit` wheel that pyswmm depends on; nothing else needs installing.
 
-For detailed instructions, see [cs_app/README.md](cs_app/README.md).
+## Quickstart
 
-`uv.lock` is committed to the repository. If you change dependencies in
-`pyproject.toml`, regenerate it with `uv lock` and commit both files together.
-
-## E2E Playwright (Django)
-
-Playwright E2E tests for the Django app are implemented with `pytest` and are marked as `e2e`.
-They are excluded from default `pytest` runs and should be executed explicitly.
-
-```bash
-# Install dependencies including E2E tooling
-uv sync --frozen --extra dev --extra web --extra e2e
-
-# Install Chromium browser for Playwright
-uv run playwright install chromium
-
-# Run E2E tests
-uv run pytest cs_app/e2e -m e2e --browser chromium
-```
-
----
-
-# Timeseries (hydrograph) data
-
-#### Get per-timestep runoff hydrograph from a single simulation.
+The package ships a small example model (one subcatchment, `S1`, 5 ha, 25 %
+impervious, 12 hours of rain, CMS flow units), so this runs as-is:
 
 ```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+from catchment_simulation import FeaturesSimulation, example_model_path
 
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-ts = model.calculate_timeseries()
-# ts is a DataFrame with DatetimeIndex and columns:
-# rainfall, runoff, infiltration_loss, evaporation_loss, runon
-# rainfall and infiltration_loss are in mm/h (in/h for US-unit models),
-# evaporation_loss in mm/day (in/day), runoff and runon in the model's FLOW_UNITS
+sim = FeaturesSimulation("S1", example_model_path())
+
+results = sim.simulate_percent_impervious(start=0, stop=100, step=25)
+print(results[["PercImperv", "runoff", "peak_runoff_rate", "infiltration"]].round(2))
 ```
 
-#### Collect timeseries for varying subcatchment parameter values.
-
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-results = model.simulate_subcatchment_timeseries("PercImperv", start=0, stop=100, step=25)
-# results is a dict[float, DataFrame] — one hydrograph per parameter value
-# e.g. results[25.0] returns the timeseries DataFrame for PercImperv=25
+```text
+   PercImperv   runoff  peak_runoff_rate  infiltration
+0         0.0  2580.37              0.16        555.89
+1        25.0  3360.36              0.19        406.71
+2        50.0  4021.30              0.23        261.11
+3        75.0  4520.01              0.26        122.05
+4       100.0  4779.30              0.28          0.00
 ```
 
-#### Compute time to peak runoff.
+Use your own model by passing its path (a `str` or `pathlib.Path`) and a
+subcatchment ID: `FeaturesSimulation("S12", "models/catchment.inp")`.
+
+Each result is a `pandas.DataFrame` with one row per run: the swept feature
+first, named as its column in the SWMM input file, then the subcatchment's
+statistics.
+
+| Column             | Meaning                                    | SI models  | US models |
+|--------------------|--------------------------------------------|------------|-----------|
+| `runoff`           | total runoff volume                        | m³         | ft³       |
+| `peak_runoff_rate` | peak runoff rate                           | flow units | flow units|
+| `infiltration`     | total infiltration volume                  | m³         | ft³       |
+| `evaporation`      | total evaporation volume                   | m³         | ft³       |
+| `precipitation`    | total precipitation depth                  | mm         | in        |
+| `runon`            | total runon volume from upstream areas     | m³         | ft³       |
+
+`sim.calculate()` returns the same statistics for the unmodified model as a
+`dict`.
+
+## Sweep methods
+
+| Method                                                 | Feature column           | Unit (SI / US)  | Default values                       |
+|--------------------------------------------------------|--------------------------|-----------------|--------------------------------------|
+| `simulate_area(start, stop, step)`                     | `Area`                   | ha / ac         | 1 to 10, step 1                      |
+| `simulate_percent_impervious(start, stop, step)`       | `PercImperv`             | %               | 0 to 100, step 10                    |
+| `simulate_width(start, stop, step)`                    | `Width`                  | m / ft          | 10 to 100, step 10                   |
+| `simulate_percent_slope(start, stop, step)`            | `PercSlope`              | %               | 10 to 100, step 10                   |
+| `simulate_curb_length(start, stop, step)`              | `CurbLength`             | m / ft          | 0 to 100, step 10                    |
+| `simulate_percent_zero_imperv(start, stop, step)`      | `PctZero`                | %               | 0 to 100, step 10                    |
+| `simulate_n_imperv()`, `simulate_manning_n("Imperv")`  | `N-Imperv`               | Manning's n     | 15 values, 0.011 to 0.8 ¹            |
+| `simulate_n_perv()`, `simulate_manning_n("Perv")`      | `N-Perv`                 | Manning's n     | 15 values, 0.011 to 0.8 ¹            |
+| `simulate_s_imperv()`, `simulate_destore("Imperv")`    | `S-Imperv`               | mm / in         | 1.27, 2.54, 5.08, 7.62 mm ²          |
+| `simulate_s_perv()`, `simulate_destore("Perv")`        | `S-Perv`                 | mm / in         | 1.27, 2.54, 5.08, 7.62 mm ²          |
+| `simulate_subcatchment(feature, start, stop, step)`    | any of the above         | as above        | 0 to 100, step 10 ³                  |
+
+¹ `FeaturesSimulation.MANNING_N` maps each value to its surface, from
+McCuen et al. (1996). ² 0.05, 0.1, 0.2 and 0.3 in for US models (ASCE, 1992).
+³ Pass a `start` inside the feature's physical range: 0 is rejected for
+`Area`, `Width`, `PercSlope`, `N-Imperv` and `N-Perv`.
+
+A range is `start, start + step, ...` and never goes past `stop`; `stop` is
+included when it falls on the step grid. Every value is checked against the
+feature's physical range (for example `PercImperv` in [0, 100], `Width` > 0,
+`PercSlope` in (0, 100]) before SWMM runs, and a range may give at most 1000
+runs. `catchment_simulation.build_range(start, stop, step)` builds the same
+values for your own use.
+
+## Arbitrary values
+
+`simulate(feature, values)` runs any sequence of values, so non-linear or
+hand-picked designs need no range:
 
 ```python
-from catchment_simulation import FeaturesSimulation
-from catchment_simulation.analysis import time_to_peak
+from catchment_simulation import FeaturesSimulation, example_model_path
 
-with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
-    ts = model.calculate_timeseries()
-ttp = time_to_peak(ts)
-# ttp is a pd.Timedelta, e.g. Timedelta('0 days 02:30:00')
+sim = FeaturesSimulation("S1", example_model_path())
+
+widths = sim.simulate("Width", [5, 20, 80, 320])
+roughness = sim.simulate("N-Perv", [0.05, 0.15, 0.4])
+print(widths[["Width", "runoff", "peak_runoff_rate"]].round(3))
 ```
 
-#### Compute total runoff volume over a time interval.
+```text
+   Width    runoff  peak_runoff_rate
+0    5.0  1442.822             0.082
+1   20.0  2097.928             0.115
+2   80.0  3190.788             0.182
+3  320.0  4013.534             0.239
+```
+
+## Hydrographs and analysis
+
+`calculate_timeseries()` returns the subcatchment's hydrograph for the
+unmodified model, and `simulate_timeseries(feature, values)` or
+`simulate_subcatchment_timeseries(feature, start, stop, step)` return one
+hydrograph per value as a `dict`. Each hydrograph is a `DataFrame` indexed by
+time (the end of each routing step) with the columns `rainfall` and
+`infiltration_loss` (mm/h or in/h), `evaporation_loss` (mm/day or in/day),
+`runoff` and `runon` (flow units).
+
+`runoff_volume` integrates a flow column over time and `time_to_peak`
+measures the time to its maximum:
 
 ```python
-from datetime import datetime
-from catchment_simulation import FeaturesSimulation
-from catchment_simulation.analysis import runoff_volume
+import pandas as pd
 
-with FeaturesSimulation(subcatchment_id="S1", raw_file="example.inp") as model:
-    ts = model.calculate_timeseries()
-volume = runoff_volume(ts)
-# volume in flow-unit x seconds (e.g. cubic metres for CMS models)
-
-# restrict to a specific interval (both endpoints inclusive)
-partial = runoff_volume(
-    ts,
-    start=datetime(2022, 6, 17, 2, 0),
-    end=datetime(2022, 6, 17, 6, 0),
+from catchment_simulation import (
+    FeaturesSimulation,
+    example_model_path,
+    runoff_volume,
+    time_to_peak,
 )
+
+sim = FeaturesSimulation("S1", example_model_path())
+hydrographs = sim.simulate_subcatchment_timeseries("PercImperv", start=0, stop=100, step=50)
+
+start = pd.Timestamp("2022-06-17 00:00")  # START_DATE and START_TIME of the model
+for imperviousness, hydrograph in hydrographs.items():
+    volume = runoff_volume(hydrograph)  # flow units x seconds: m³ for CMS
+    peak = time_to_peak(hydrograph, start=start)
+    print(f"{imperviousness:5.1f} %  {volume:7.1f} m³  peak after {peak}")
 ```
 
-# More examples of package usage
+```text
+  0.0 %   2569.9 m³  peak after 0 days 09:56:00
+ 50.0 %   4013.2 m³  peak after 0 days 08:56:00
+100.0 %   4773.0 m³  peak after 0 days 08:56:00
+```
 
-#### Simulate subcatchment percent impervious in selected range.
+Without `start=`, `time_to_peak` counts from the first timestamp of the
+hydrograph, which is one routing step after the simulation start. Both
+functions take a `column` argument and `runoff_volume` takes an optional
+`start`/`end` window (inclusive).
+
+## Units
+
+Values are read and written in the units of the model, which SWMM derives from
+its `FLOW_UNITS` option (`sim.flow_units`):
+
+- SI: `CMS`, `LPS`, `MLD` — hectares, metres, millimetres, cubic metres.
+- US: `CFS`, `GPM`, `MGD` — acres, feet, inches, cubic feet.
+
+A model without `FLOW_UNITS` uses SWMM's default, `CFS`. The depression storage
+sweeps pick millimetre or inch values to match.
+
+## Errors
+
+Every exception raised by the package derives from `CatchmentSimulationError`:
+
+```text
+CatchmentSimulationError
+├── InvalidParameterError (also a ValueError)   bad range, value out of bounds, too many runs
+│   ├── UnknownFeatureError                     feature name not sweepable (.feature, .allowed)
+│   └── SubcatchmentNotFoundError               ID not in the model (.subcatchment_id, .available)
+└── SimulationError (also a RuntimeError)       SWMM failed (.report_errors: ERROR lines of the .rpt)
+```
+
+Invalid input is rejected before the first SWMM run:
 
 ```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+from catchment_simulation import FeaturesSimulation, InvalidParameterError, example_model_path
 
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_percent_impervious(start=1, stop=10, step=1)
+sim = FeaturesSimulation("S1", example_model_path())
+try:
+    sim.simulate_percent_impervious(start=60, stop=120, step=20)
+except InvalidParameterError as error:
+    print(error)
 ```
 
-#### Simulate subcatchment percent slope in selected range.
+```text
+PercImperv value 120 is outside the physical range [0, 100].
+```
+
+A missing model file raises `FileNotFoundError`.
+
+## How runs work
+
+A `FeaturesSimulation` reads the model file once, when it is created: changes
+to the file afterwards are not seen, so create a new instance to run them.
+Every call writes that model to a uniquely named file next to the original, so
+relative `FILE` references (rain gauges, time series) keep resolving, runs
+SWMM on the copy and deletes the copy with its `.rpt` and `.out` files before
+returning. The original file is never modified and every call starts from the
+model as it was read, so results do not depend on earlier calls. If the
+model's directory is not writable, the copy goes to a new private temporary
+directory, where relative `FILE` references cannot resolve: the run fails with
+a `SimulationError` that says so.
+
+SWMM runs one simulation per process at a time, so a `FeaturesSimulation` is
+not thread-safe. To run sweeps in parallel, use processes:
 
 ```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+from concurrent.futures import ProcessPoolExecutor
 
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_percent_slope(start=1, stop=10, step=1)
+from catchment_simulation import FeaturesSimulation, example_model_path
+
+
+def sweep(feature):
+    sim = FeaturesSimulation("S1", example_model_path())
+    return sim.simulate_subcatchment(feature, start=10, stop=100, step=30)
+
+
+if __name__ == "__main__":
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        for frame in pool.map(sweep, ["Width", "PercSlope"]):
+            print(frame.iloc[:, :3].round(3).to_string(index=False))
 ```
 
-#### Simulate subcatchment width in selected range.
+## Documentation
 
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+- Full documentation and API reference: <https://catchments-simulation.readthedocs.io>
+- Release notes: [CHANGELOG.md](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/CHANGELOG.md)
+- Bugs and feature requests: [issue tracker](https://github.com/BuczynskiRafal/catchments_simulation/issues)
+- Contributing: [CONTRIBUTING.md](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/CONTRIBUTING.md)
 
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_width(start=1, stop=10, step=1)
-```
-#### Simulate subcatchment curb length in selected range.
+The repository also holds a Django web application built on this package
+(upload a model, run sweeps, plot and download results, compare SWMM with a
+neural network). It is not part of the PyPI package; see
+[cs_app/README.md](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/cs_app/README.md).
 
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
+## Citing
 
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_curb_length(start=1, stop=10, step=1)
-```
+If you use `catchment-simulation` in research, please cite it. The repository
+contains a [CITATION.cff](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/CITATION.cff)
+file, and GitHub's "Cite this repository" button gives APA and BibTeX formats.
 
-#### Simulate subcatchment N-Imperv in selected range.
+## License
 
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_n_imperv()
-```
-
-#### Simulate subcatchment N-Perv in selected range.
-
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_n_perv()
-```
-
-#### Simulate subcatchment Destore-Imperv in selected range.
-
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_s_imperv()
-```
-
-#### Simulate subcatchment Destore-Perv in selected range.
-
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_s_perv()
-```
-
-#### Simulate subcatchment Percent Zero Imperv in selected range.
-
-```python
-from catchment_simulation.catchment_features_simulation import FeaturesSimulation
-
-subcatchment_id = "S1"
-raw_file = "catchment_simulation/example.inp"
-model = FeaturesSimulation(subcatchment_id=subcatchment_id, raw_file=raw_file)
-df = model.simulate_percent_zero_imperv(start=0, stop=100, step=10)
-```
-
-
-# Bugs
-
-If you encounter any bugs or issues while using our software, please feel free to report them on the project's [issue tracker](https://github.com/BuczynskiRafal/catchments_simulation/issues). When reporting a bug, please provide as much information as possible to help us reproduce and resolve the issue, including:
-
-* A clear and concise description of the issue
-* Steps to reproduce the problem
-* Expected behavior and actual behavior
-* Any error messages or logs that may be relevant
-
-Your feedback is invaluable and will help us improve the software for all users.
-
-# Contributing
-
-We welcome and appreciate contributions from the community! If you're interested in contributing to this project, please follow these steps:
-
-1. Fork the repository on GitHub.
-2. Create a new branch for your changes.
-3. Make your changes, including updates to documentation if needed.
-4. Write tests to ensure your changes are working as expected.
-5. Ensure all tests pass and there are no linting or code style issues.
-6. Commit your changes and create a pull request, providing a detailed description of your changes.
-
-We will review your pull request as soon as possible and provide feedback. Once your contribution is approved, it will be merged into the main branch.
-
-For more information about contributing to the project, please see our [contributing guide](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/CONTRIBUTING.md).
-
-# License
-
-License
-This project is licensed under the [MIT License](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/LICENSE). By using, distributing, or contributing to this project, you agree to the terms and conditions of the license. Please refer to the [LICENSE.md](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/LICENSE) file for the full text of the license.
+MIT, see [LICENSE](https://github.com/BuczynskiRafal/catchments_simulation/blob/main/LICENSE).

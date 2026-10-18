@@ -11,7 +11,15 @@
  *                       on page load, or the same content loaded again (the server
  *                       answers `unchanged`), so results computed from it stay valid.
  *   "cs:model-cleared"  fired after the user removes the loaded model.
+ *
+ * The sweep parameter options (#id_option, #id_feature) name the units of the model's
+ * FLOW_UNITS, e.g. "Area (ha)" or "Area (acre)"; they are relabelled from the server's
+ * `option_labels` whenever the model changes or is removed.
  */
+if (typeof Dropzone !== "undefined") {
+    Dropzone.autoDiscover = false;
+}
+
 document.addEventListener("DOMContentLoaded", function () {
     if (typeof Dropzone === "undefined") {
         return;
@@ -139,6 +147,24 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
+    /** labels: option value -> label, from the subcatchments or the clear endpoint. */
+    function relabelParameterOptions(labels) {
+        if (!labels) {
+            return;
+        }
+        ["id_option", "id_feature"].forEach(function (id) {
+            var select = document.getElementById(id);
+            if (!select) {
+                return;
+            }
+            Array.prototype.forEach.call(select.options, function (option) {
+                if (Object.prototype.hasOwnProperty.call(labels, option.value)) {
+                    option.textContent = labels[option.value];
+                }
+            });
+        });
+    }
+
     function announceModel(subcatchments) {
         if (!currentModel) {
             return;
@@ -187,6 +213,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
                 // null means "unknown": the chip then shows the file size only.
                 var names = data && Array.isArray(data.subcatchments) ? data.subcatchments : null;
+                relabelParameterOptions(data && data.option_labels);
                 // Re-query in case the page swapped its form while the request was in flight.
                 select = document.getElementById("id_catchment_name");
                 if (select) {
@@ -316,7 +343,8 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function clearModel() {
-        subcatchmentsRequestId++;
+        // Also discards a subcatchment request still in flight for the removed model.
+        var requestId = ++subcatchmentsRequestId;
         currentModel = null;
         dzInstance.removeAllFiles(true);
         setChipVisible(false);
@@ -328,6 +356,13 @@ document.addEventListener("DOMContentLoaded", function () {
                     "X-CSRFToken": csrfToken,
                     "X-Requested-With": "XMLHttpRequest",
                 },
+            }).then(function (response) {
+                return response.ok ? response.json() : null;
+            }).then(function (data) {
+                // A model loaded meanwhile has relabelled the options already.
+                if (requestId === subcatchmentsRequestId) {
+                    relabelParameterOptions(data && data.option_labels);
+                }
             }).catch(function (error) {
                 console.warn("upload clear failed:", error);
             });

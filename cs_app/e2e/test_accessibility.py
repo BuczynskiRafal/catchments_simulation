@@ -14,12 +14,11 @@ tests report violations but do not hard-fail on moderate/minor issues.
 from __future__ import annotations
 
 import warnings
+from typing import TYPE_CHECKING
 
 import pytest
-from playwright.sync_api import Page
 
 from .pages.about_page import AboutPage
-from .pages.base_page import BasePage
 from .pages.calculations_page import CalculationsPage
 from .pages.contact_page import ContactPage
 from .pages.home_page import HomePage
@@ -27,6 +26,11 @@ from .pages.login_page import LoginPage
 from .pages.register_page import RegisterPage
 from .pages.simulation_page import SimulationPage
 from .pages.timeseries_page import TimeseriesPage
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
+
+    from .pages.base_page import BasePage
 
 pytestmark = pytest.mark.e2e
 
