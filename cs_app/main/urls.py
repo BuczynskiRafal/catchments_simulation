@@ -16,6 +16,7 @@ from .views import (
     download_simulation_results,
     download_timeseries_csv,
     download_timeseries_results,
+    healthz,
     main_view,
     simulation_view,
     subcatchments,
@@ -32,6 +33,7 @@ app_name = "main"
 
 urlpatterns = [
     path("", main_view, name="main_view"),
+    path("healthz", healthz, name="healthz"),
     path("upload/", upload, name="upload"),
     path("upload/sample/", upload_sample, name="upload_sample"),
     path("upload/clear/", upload_clear, name="upload_clear"),

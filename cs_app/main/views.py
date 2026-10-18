@@ -28,6 +28,7 @@ from django.contrib.auth.views import redirect_to_login
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadhandler import FileUploadHandler, StopUpload
+from django.db import connection
 from django.http import (
     FileResponse,
     HttpRequest,
@@ -641,6 +642,17 @@ def _uploaded_model_path(request: HttpRequest) -> str:
 def main_view(request: HttpRequest) -> HttpResponse:
     """Home page; ``home`` is None when the precomputed example data cannot be loaded."""
     return render(request, "main/main_view.html", {"home": _load_home_data()})
+
+
+@require_GET
+def healthz(request: HttpRequest) -> JsonResponse:
+    """Liveness and readiness probe for Docker and Render health checks."""
+    try:
+        connection.ensure_connection()
+    except Exception:
+        logger.exception("Healthcheck failed: database connection error")
+        return JsonResponse({"status": "error", "detail": "database"}, status=503)
+    return JsonResponse({"status": "ok"}, status=200)
 
 
 def about(request: HttpRequest) -> HttpResponse:

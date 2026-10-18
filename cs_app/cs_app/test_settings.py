@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 
-import django
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -33,10 +32,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "import_export",
     "crispy_forms",
     "crispy_bootstrap5",
-    "storages",
     "main.apps.MainConfig",
     "register.apps.RegisterConfig",
 ]
@@ -72,7 +69,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "cs_app.wsgi.application"
 
-DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 DATABASES = {
     "default": {
@@ -87,7 +91,6 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
     }
 }
-
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -118,7 +121,6 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
 CRISPY_TEMPLATE_PACK = "bootstrap5"
 
@@ -132,21 +134,9 @@ STATICFILES_DIRS = [
     os.path.join(BASE_DIR, "static"),
 ]
 
-TIME_ZONE = "UTC"
-
-if DEBUG:
-    STATIC_ROOT = os.path.join(BASE_DIR, "static_dev")
-else:
-    # Tell Django to copy statics to the `staticfiles` directory
-    # in your application directory on Render.
-    STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
-
-    # Turn on WhiteNoise storage backend that takes care of compressing static files
-    # and creating unique names for each version so they can safely be cached forever.
-    STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
-
+STATIC_ROOT = os.path.join(BASE_DIR, "static_dev")
 STATIC_URL = "/static/"
 
-
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "cs_app.test_settings")
-django.setup()
+DEFAULT_FROM_EMAIL = "noreply@catchment-simulation.local"
+CONTACT_RECIPIENT_EMAIL = "buczynski.rafal@icloud.com"
+CONTACT_ALLOW_SENDER_COPY = False

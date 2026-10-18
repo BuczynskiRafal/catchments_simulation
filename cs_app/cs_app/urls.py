@@ -14,7 +14,6 @@ urlpatterns = [
     path("accounts/login/", LoginView.as_view(authentication_form=LoginForm), name="login"),
     path("accounts/logout/", require_POST(LogoutView.as_view()), name="logout"),
     *static(settings.STATIC_URL, document_root=settings.STATIC_ROOT),
-    *static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT),
 ]
 
 urlpatterns += staticfiles_urlpatterns()
