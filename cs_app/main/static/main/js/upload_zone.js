@@ -16,6 +16,10 @@
  * FLOW_UNITS, e.g. "Area (ha)" or "Area (acre)"; they are relabelled from the server's
  * `option_labels` whenever the model changes or is removed.
  */
+if (typeof Dropzone !== "undefined") {
+    Dropzone.autoDiscover = false;
+}
+
 document.addEventListener("DOMContentLoaded", function () {
     if (typeof Dropzone === "undefined") {
         return;

@@ -1425,7 +1425,9 @@ def _get_form_initial(
         except (ValidationError, TypeError, ValueError):
             continue
 
-        if coerced_value is None:
+        if coerced_value is None or (
+            isinstance(coerced_value, float) and not _is_finite_number(coerced_value)
+        ):
             continue
 
         if (

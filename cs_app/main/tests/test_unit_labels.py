@@ -44,9 +44,12 @@ def test_forms_label_sweep_parameters_in_the_given_units(units, labels):
     for feature, label in labels.items():
         assert options[SWEEP_METHODS[feature]] == label
         assert features[feature] == label
-    # Unitless parameters keep their labels.
+    # Unitless parameters keep their labels; depression storage shows mm (SI) or in (US).
     assert options["simulate_percent_slope"] == features["PercSlope"] == "Slope (%)"
     assert options["simulate_n_imperv"] == "Manning's n - Impervious"
+    expected_storage = "in" if units is US_UNITS else "mm"
+    assert options["simulate_s_imperv"] == f"Depression Storage - Impervious ({expected_storage})"
+    assert options["simulate_s_perv"] == f"Depression Storage - Pervious ({expected_storage})"
 
 
 def test_range_errors_name_the_models_units():

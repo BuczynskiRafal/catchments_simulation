@@ -2151,7 +2151,7 @@ def test_refactored_pages_do_not_reference_legacy_chart_assets(
     ],
 )
 def test_templates_keep_only_allowlisted_inline_scripts(client, user, url_name, requires_login):
-    """Inline scripts are restricted to Dropzone auto-discover flag and json_script payloads."""
+    """Inline scripts are restricted to json_script payloads (no executable inline JS)."""
     if requires_login:
         client.force_login(user)
 
@@ -2169,11 +2169,7 @@ def test_templates_keep_only_allowlisted_inline_scripts(client, user, url_name, 
         attrs_lower = attrs.lower()
         if re.search(rb"\bsrc\s*=", attrs_lower):
             continue
-        if re.search(rb"\btype\s*=\s*[\"']application/json[\"']", attrs_lower):
-            continue
-
-        inline_body = re.sub(rb"\s+", b"", body)
-        assert inline_body == b"Dropzone.autoDiscover=false;"
+        assert re.search(rb"\btype\s*=\s*[\"']application/json[\"']", attrs_lower), body
 
 
 @pytest.mark.django_db

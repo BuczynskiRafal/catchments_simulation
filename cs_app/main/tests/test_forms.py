@@ -137,6 +137,16 @@ def test_timeseries_form_rejects_values_outside_the_physical_range(
     assert list(form.errors) == [invalid_field]
 
 
+def test_simulation_form_counts_float_runs_like_the_package():
+    assert len(build_range(0.5, 10.4, 0.1)) == 100
+    assert _simulation_form("simulate_percent_slope", 0.5, 10.4, 0.1).is_valid()
+
+    form = _simulation_form("simulate_percent_slope", 0.5, 10.5, 0.1)
+
+    assert not form.is_valid()
+    assert form.errors == {"step": [TOO_MANY_RUNS_MESSAGE]}
+
+
 def test_timeseries_form_counts_float_runs_like_the_package():
     assert len(build_range(0, 9.9, 0.1)) == 100
     assert _timeseries_form("PercImperv", 0, 9.9, 0.1).is_valid()

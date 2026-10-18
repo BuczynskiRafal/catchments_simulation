@@ -34,6 +34,9 @@
     var TIMEOUT_MESSAGE =
         "The server did not finish the run. It may have timed out — try a smaller range " +
         "or reload the page to check for results.";
+    var CSRF_MESSAGE =
+        "Your session or security token expired. Please reload the page and try again.";
+    var TOO_LARGE_MESSAGE = "The request is too large for the server to accept.";
     var FIELDS_MESSAGE = "Please correct the highlighted fields.";
     var FAILED_MESSAGE = "The run could not be completed. Please try again.";
     var ERROR_TOAST = "The run did not complete. See the form for details.";
@@ -170,6 +173,19 @@
         return firstInvalid;
     }
 
+    function defaultStatusMessage(status) {
+        if (status === 403) {
+            return CSRF_MESSAGE;
+        }
+        if (status === 413) {
+            return TOO_LARGE_MESSAGE;
+        }
+        if (status === 500) {
+            return FAILED_MESSAGE;
+        }
+        return TIMEOUT_MESSAGE;
+    }
+
     async function readError(response) {
         var isJson = (response.headers.get("Content-Type") || "").indexOf("application/json") !== -1;
         var payload = null;
@@ -181,7 +197,11 @@
             }
         }
         if (!payload || typeof payload !== "object") {
-            return { status: response.status, message: TIMEOUT_MESSAGE, field_errors: {} };
+            return {
+                status: response.status,
+                message: defaultStatusMessage(response.status),
+                field_errors: {},
+            };
         }
         return {
             status: response.status,
@@ -206,6 +226,9 @@
             });
         } catch (networkError) {
             return { ok: false, error: { status: 0, message: TIMEOUT_MESSAGE, field_errors: {} } };
+        }
+        if (response.redirected && response.url && response.url.indexOf("/login") !== -1) {
+            return { ok: false, error: { status: 401, message: "", field_errors: {} } };
         }
         if (response.ok) {
             return { ok: true, html: await response.text() };

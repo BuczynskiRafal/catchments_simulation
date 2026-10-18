@@ -45,18 +45,28 @@ METHOD_FEATURES = {
 }
 
 
-# Parameter labels name the unit of the swept value: "{area}" and "{length}" are filled in
-# with the session model's units (main.views._unit_labels), and with SI units when no
-# model is loaded.
-SI_UNITS = {"area": "ha", "length": "m"}
+# Parameter labels name the unit of the swept value: "{area}", "{length}" and "{storage}"
+# are filled in with the session model's units (main.views._unit_labels), and with SI units
+# when no model is loaded.
+SI_UNITS = {"area": "ha", "length": "m", "storage": "mm"}
+
+
+def _resolve_units(units: dict[str, str] | None) -> dict[str, str]:
+    if not units:
+        return SI_UNITS
+    default_storage = "in" if units.get("area") == "acre" or units.get("length") == "ft" else "mm"
+    return {**SI_UNITS, "storage": default_storage, **units}
 
 
 def _unit_choices(choices, units):
     """*choices*, flat or grouped, with their labels filled in for *units*."""
+    resolved = _resolve_units(units)
     return [
         (
             value,
-            _unit_choices(label, units) if isinstance(label, tuple) else label.format_map(units),
+            _unit_choices(label, resolved)
+            if isinstance(label, tuple)
+            else label.format_map(resolved),
         )
         for value, label in choices
     ]
@@ -89,6 +99,10 @@ def _clean_sweep_range(form: forms.Form, feature: str, label: str) -> None:
     start, stop, step = (form.cleaned_data.get(field) for field in ("start", "stop", "step"))
     if start is None or stop is None or step is None:
         return  # reported by the field itself
+    for field_name, val in (("start", start), ("stop", stop), ("step", step)):
+        if not math.isfinite(val):
+            form.add_error(field_name, "Enter a finite number.")
+            return
     if start > stop:
         form.add_error("stop", STOP_BEFORE_START_MESSAGE)
         return
@@ -209,8 +223,8 @@ class SimulationForm(forms.Form):
             (
                 ("simulate_n_imperv", "Manning's n - Impervious"),
                 ("simulate_n_perv", "Manning's n - Pervious"),
-                ("simulate_s_imperv", "Depression Storage - Impervious"),
-                ("simulate_s_perv", "Depression Storage - Pervious"),
+                ("simulate_s_imperv", "Depression Storage - Impervious ({storage})"),
+                ("simulate_s_perv", "Depression Storage - Pervious ({storage})"),
             ),
         ),
     )
@@ -231,29 +245,29 @@ class SimulationForm(forms.Form):
         choices=OPTIONS,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
-    start = forms.IntegerField(
+    start = forms.FloatField(
         label="Start",
         min_value=0,
         max_value=10000,
         initial=1,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
-    stop = forms.IntegerField(
+    stop = forms.FloatField(
         label="Stop",
         min_value=0,
         max_value=10000,
         initial=10,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
-    step = forms.IntegerField(
+    step = forms.FloatField(
         label="Step",
-        min_value=1,
+        min_value=0.1,
         max_value=10000,
         initial=1,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     catchment_name = forms.CharField(
         label="Subcatchment",
@@ -340,7 +354,7 @@ class TimeseriesForm(forms.Form):
         max_value=10000,
         initial=0,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     stop = forms.FloatField(
         label="Stop",
@@ -348,14 +362,15 @@ class TimeseriesForm(forms.Form):
         max_value=10000,
         initial=100,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     step = forms.FloatField(
         label="Step",
         min_value=0.1,
+        max_value=10000,
         initial=10,
         required=False,
-        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     catchment_name = forms.CharField(
         label="Subcatchment",
