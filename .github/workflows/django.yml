@@ -1,9 +1,17 @@
 name: Django CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
@@ -35,10 +43,19 @@ jobs:
     - name: Install Dependencies
       run: uv sync --frozen --group web
 
+    - name: Lint and Format Check
+      run: |
+        uv run ruff check cs_app/
+        uv run ruff format --check cs_app/
+
+    - name: Check Pending Migrations
+      run: |
+        SECRET_KEY=ci-secret DATABASE_URL=sqlite:///:memory: uv run python cs_app/manage.py makemigrations --check --dry-run
+
     - name: Run Tests
       run: |
         export DJANGO_SETTINGS_MODULE=cs_app.test_settings
-        uv run pytest cs_app/main/tests/ --cov=cs_app
+        uv run pytest cs_app/main/tests/ cs_app/register/tests.py --cov=cs_app/main --cov=cs_app/register --cov-fail-under=90
 
     - name: Upload coverage reports to Codecov
       if: ${{ github.actor != 'dependabot[bot]' && env.CODECOV_TOKEN != '' }}
@@ -83,4 +100,23 @@ jobs:
     - uses: actions/checkout@v6
 
     - name: Build Django Docker image
-      run: docker build -f cs_app/Dockerfile .
+      run: docker build -t catchment-simulations:ci -f cs_app/Dockerfile .
+
+    - name: Smoke test Docker container
+      run: |
+        docker run -d --name cs-smoke \
+          -p 8000:8000 \
+          -e SECRET_KEY=ci-smoke-secret \
+          -e DATABASE_URL=sqlite:////tmp/smoke.sqlite3 \
+          -e SECURE_SSL_REDIRECT=False \
+          catchment-simulations:ci
+        for i in $(seq 1 30); do
+          if curl -fsS http://127.0.0.1:8000/healthz | grep -q '"status": "ok"'; then
+            docker rm -f cs-smoke
+            exit 0
+          fi
+          sleep 1
+        done
+        docker logs cs-smoke
+        docker rm -f cs-smoke
+        exit 1

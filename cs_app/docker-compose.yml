@@ -1,22 +1,29 @@
 services:
   db:
-    image: postgres
+    image: postgres:16-alpine
     volumes:
       - ./data/db:/var/lib/postgresql/data
     environment:
-      - POSTGRES_DB=django_cs
-      - POSTGRES_USER=django_cs
-      - POSTGRES_PASSWORD=mysecretpassword
+      - POSTGRES_DB=${POSTGRES_DB:-django_cs}
+      - POSTGRES_USER=${POSTGRES_USER:-django_cs}
+      - POSTGRES_PASSWORD
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-django_cs} -d $${POSTGRES_DB:-django_cs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   web:
     build:
       context: ..
       dockerfile: cs_app/Dockerfile
-    command: uv run python manage.py runserver 0.0.0.0:8000
-    volumes:
-      - .:/code
     ports:
       - "8000:8000"
     environment:
-      - DJANGO_CS_PASSWORD=mysecretpassword
+      - SECRET_KEY
+      - DEBUG=${DEBUG:-False}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-django_cs}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-django_cs}
+      - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-False}
     depends_on:
-      - db
+      db:
+        condition: service_healthy

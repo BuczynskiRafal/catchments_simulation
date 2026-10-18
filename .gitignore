@@ -131,6 +131,9 @@ dmypy.json
 cs_app/data/db/
 
 cs_app/media/
+cs_app/staticfiles/
+cs_app/static_dev/
+cs_app/uploaded_files/
 .idea/misc.xml
 .idea/dbnavigator.xml
 .idea/vcs.xml
@@ -140,7 +143,11 @@ cs_app/media/
 .idea/catchments_simulation.iml
 
 *.inp
+!cs_app/data/example.inp
 *.out
 *.bak
 *.rpt
 *.ipynb
+.DS_Store
+test-results/
+playwright-report/
