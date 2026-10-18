@@ -130,3 +130,47 @@ def test_hide_directories_collapses_external_file_oracle_errors():
 
     assert missing == "ERROR 361: external files are not supported in uploaded models."
     assert existing == missing
+
+
+@pytest.mark.django_db
+def test_streamed_oversized_upload_without_csrf_header_returns_413_not_403(
+    csrf_client, upload_path, monkeypatch
+):
+    """When BodySizeLimitUploadHandler aborts a multipart upload before csrfmiddlewaretoken, return 413 (WA3)."""
+
+    class SmallLimitHandler(BodySizeLimitUploadHandler):
+        def __init__(self, request, _max_bytes):
+            super().__init__(request, 256)
+
+    monkeypatch.setattr("main.views.BodySizeLimitUploadHandler", SmallLimitHandler)
+    token = csrf_client.cookies[settings.CSRF_COOKIE_NAME].value
+    response = csrf_client.post(
+        reverse("main:upload"),
+        {
+            "file": SimpleUploadedFile("integration.inp", b"A" * 2048, content_type="text/plain"),
+            "csrfmiddlewaretoken": token,
+        },
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    assert response.status_code == 413
+    assert "File too large" in response.json()["error"]
+    assert not os.path.exists(upload_path)
+
+
+@pytest.mark.django_db
+def test_non_upload_endpoint_rejects_oversized_multipart_body_with_413(csrf_client, settings):
+    """Oversized multipart bodies on non-upload views are rejected with 413 before CSRF parsing (WA3)."""
+    settings.DATA_UPLOAD_MAX_MEMORY_SIZE = 256
+    response = csrf_client.post(
+        reverse("main:contact"),
+        {
+            "file": SimpleUploadedFile(
+                "big.bin", b"X" * 1024, content_type="application/octet-stream"
+            )
+        },
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    assert response.status_code == 413
+    assert response.json()["message"] == "Request body too large."

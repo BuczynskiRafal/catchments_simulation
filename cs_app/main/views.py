@@ -967,7 +967,10 @@ def upload(request: HttpRequest) -> HttpResponse:
         return _upload_too_large(request)
 
     request.upload_handlers.insert(0, BodySizeLimitUploadHandler(request, MAX_UPLOAD_BODY_SIZE))
-    return _store_upload(request)
+    response = _store_upload(request)
+    if getattr(request, "_upload_body_too_large", False):
+        return _upload_too_large(request)
+    return response
 
 
 @csrf_protect
