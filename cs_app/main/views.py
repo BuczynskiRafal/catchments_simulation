@@ -537,6 +537,9 @@ def _coerce_input_validation_error(error: Exception) -> InputValidationError | N
     if isinstance(error, UnicodeDecodeError):
         return InputValidationError("encoding")
 
+    if isinstance(error, KeyError) and "subarea" in str(error).lower():
+        return InputValidationError("missing_subareas")
+
     if isinstance(error, ValueError):
         # swmmio and pandas give no specific type for a number they cannot parse in the model.
         lowered = str(error).lower()
@@ -556,6 +559,8 @@ def _format_input_error_message(error: InputValidationError) -> str:
         return "Invalid file path detected."
     if code == "no_subcatchments":
         return "The model has no subcatchments to compare."
+    if code == "missing_subareas":
+        return "The model is missing required [SUBCATCHMENTS] or [SUBAREAS] columns."
     if code == "no_runoff_summary":
         return NO_RUNOFF_SUMMARY_MESSAGE
     if code == "missing_file":
@@ -1602,6 +1607,10 @@ RUNOFF_VOLUME_FACTORS = {
 # SWMM reports a subcatchment's total runoff in 10^6 L (SI models) or 10^6 US gal
 # (US models); swmmio names that column TotalRunoffMG either way.
 REPORT_RUNOFF_FACTORS = {"SI": 1e3, "US": 1e6 * _US_GALLON_FT3}
+# The ANN model was trained exclusively on SI runoff (10^6 L = 10^3 m³); US models
+# therefore convert 10^3 m³ -> ft³ rather than 10^6 US gal -> ft³.
+_M3_TO_FT3 = 1.0 / (0.3048**3)
+ANN_RUNOFF_FACTORS = {"SI": 1e3, "US": 1e3 * _M3_TO_FT3}
 
 
 def _report_runoff_unit(flow_units: str | None) -> tuple[float, str]:
@@ -1610,6 +1619,12 @@ def _report_runoff_unit(flow_units: str | None) -> tuple[float, str]:
     if system in REPORT_RUNOFF_FACTORS:
         return REPORT_RUNOFF_FACTORS[system], _unit_labels(flow_units)["volume"]
     return 1.0, "10⁶ L or gal"
+
+
+def _ann_runoff_factor(flow_units: str | None) -> float:
+    """Return the factor from the ANN output (10^6 L = 10^3 m³) to the model's display volume unit."""
+    system = _unit_system(flow_units)
+    return ANN_RUNOFF_FACTORS.get(system, 1.0)
 
 
 def _runoff_volume_unit(flow_units: str | None) -> tuple[float, str]:
@@ -1912,13 +1927,15 @@ def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
         if "TotalRunoffMG" not in subcatchments.columns:
             raise InputValidationError("no_runoff_summary")
         ann_predictions = predict_runoff(swmmio_model)
-        factor, unit = _report_runoff_unit(_read_flow_units(inp_path))
+        flow_units = _read_flow_units(inp_path)
+        swmm_factor, unit = _report_runoff_unit(flow_units)
+        ann_factor = _ann_runoff_factor(flow_units)
         comparison = pd.DataFrame(
             data={
                 "Name": subcatchments.index,
-                "SWMM_Runoff": subcatchments["TotalRunoffMG"].to_numpy(dtype=float) * factor,
-                # The network was trained on the report's runoff, so it converts the same way.
-                "ANN_Runoff": np.round(ann_predictions.astype(float) * factor, 2),
+                "SWMM_Runoff": subcatchments["TotalRunoffMG"].to_numpy(dtype=float) * swmm_factor,
+                # predict_runoff() always outputs 10^6 L (10^3 m³) from the SI-trained network.
+                "ANN_Runoff": np.round(ann_predictions.astype(float) * ann_factor, 2),
             },
         )
         return comparison, unit

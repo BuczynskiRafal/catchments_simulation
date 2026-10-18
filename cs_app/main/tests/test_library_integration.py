@@ -299,6 +299,88 @@ def test_comparison_of_a_model_without_runoff_is_a_user_error(client, user):
     assert os.listdir(user_dir) == ["no_rain.inp"]
 
 
+@pytest.mark.django_db
+def test_comparison_of_a_model_without_subareas_is_a_user_error(client, user):
+    """A model lacking [SUBAREAS] columns returns HTTP 400 instead of an unhandled KeyError (500)."""
+    user_dir = _user_upload_dir(user.id)
+    os.makedirs(user_dir)
+    text = example_model_path().read_text()
+    subareas_header = "[SUBAREAS]"
+    infiltration_header = "[INFILTRATION]"
+    assert subareas_header in text
+    assert infiltration_header in text
+    stripped = text[: text.index(subareas_header)] + text[text.index(infiltration_header) :]
+    model = os.path.join(user_dir, "no_subareas.inp")
+    with open(model, "w") as model_file:
+        model_file.write(stripped)
+
+    _login_with_model(client, user, model)
+    response = client.post(reverse("main:calculations"), **AJAX)
+
+    assert response.status_code == 400
+    assert (
+        response.json()["message"]
+        == "The model is missing required [SUBCATCHMENTS] or [SUBAREAS] columns."
+    )
+    assert os.listdir(user_dir) == ["no_subareas.inp"]
+
+
+@pytest.mark.django_db
+def test_comparison_converts_us_units_for_ann_predictions(client, user):
+    """
+    US models convert Width (ft -> m) and S-Imperv/S-Perv (in -> mm) before MLP normalization,
+    and scale the ANN output (10^3 m³) to ft³ rather than treating it as 10^6 US gal.
+    """
+    from main.views import _M3_TO_FT3, CALC_RESULT_TOKEN_SESSION_KEY
+
+    user_dir = _user_upload_dir(user.id)
+    os.makedirs(user_dir)
+    si_text = example_model_path().read_text()
+    si_path = os.path.join(user_dir, "si.inp")
+    with open(si_path, "w") as f:
+        f.write(si_text)
+
+    # Build a US-unit model with physically identical Width (100 m in ft) and S-Imperv/S-Perv (0.05 mm in inches).
+    width_ft = f"{100.0 / 0.3048:.6f}"
+    storage_in = f"{0.05 / 25.4:.6f}"
+    subcatch_line = (
+        "S1               1                J1               5        25       100      10       0"
+    )
+    subareas_line = "S1               0.01       1          0.05       0.05       25         OUTLET"
+    assert subcatch_line in si_text
+    assert subareas_line in si_text
+    us_text = (
+        si_text.replace("FLOW_UNITS           CMS", "FLOW_UNITS           CFS")
+        .replace(
+            subcatch_line,
+            f"S1               1                J1               5        25       {width_ft} 10       0",
+        )
+        .replace(
+            subareas_line,
+            f"S1               0.01       1          {storage_in}   {storage_in}   25         OUTLET",
+        )
+    )
+    us_path = os.path.join(user_dir, "us.inp")
+    with open(us_path, "w") as f:
+        f.write(us_text)
+
+    _login_with_model(client, user, si_path)
+    si_resp = client.post(reverse("main:calculations"), **AJAX)
+    assert si_resp.status_code == 200
+    si_payload = _cached_payload(client, user, "calc", CALC_RESULT_TOKEN_SESSION_KEY)
+
+    _login_with_model(client, user, us_path)
+    us_resp = client.post(reverse("main:calculations"), **AJAX)
+    assert us_resp.status_code == 200
+    us_payload = _cached_payload(client, user, "calc", CALC_RESULT_TOKEN_SESSION_KEY)
+
+    assert si_payload["unit"] == "m³"
+    assert us_payload["unit"] == "ft³"
+    si_ann_m3 = si_payload["rows"][0]["ANN_Runoff"]
+    us_ann_ft3 = us_payload["rows"][0]["ANN_Runoff"]
+    assert us_ann_ft3 == pytest.approx(si_ann_m3 * _M3_TO_FT3, rel=1e-4)
+
+
 # ---------------------------------------------------------------------------
 # Typed errors of the package, raised by a stand-in
 # ---------------------------------------------------------------------------
