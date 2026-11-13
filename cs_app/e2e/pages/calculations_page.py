@@ -98,6 +98,14 @@ class CalculationsPage(BasePage):
     def trace_select(self) -> Locator:
         return self.page.get_by_label("Trace subcatchment")
 
+    @property
+    def range_summary(self) -> Locator:
+        return self.page.locator("#calc-range-summary")
+
+    @property
+    def range_items(self) -> Locator:
+        return self.page.locator("#calc-range-list > li")
+
     def trace_button(self, name: str) -> Locator:
         """The Trace button in the results table row of subcatchment *name*."""
         return self.results_table.get_by_role("button", name=f"Trace {name} through the network")

@@ -10,8 +10,8 @@
  *
  * "Inside the network" draws the network (#calculations-network) as an SVG and,
  * when the rows carry the network's inputs, traces one subcatchment through it
- * with CS.network.forward: neurons fill by activation and connections show what
- * they contribute.
+ * with CS.network.forward: neurons fill by activation, connections show what they
+ * contribute, and the inputs are checked against the range of the training data.
  */
 (function (CS) {
     "use strict";
@@ -19,12 +19,15 @@
     var SVG_NS = "http://www.w3.org/2000/svg";
     // Below this diagram width the labels switch to their short form.
     var COMPACT_WIDTH = 600;
+    // Inputs further than this many standard deviations from the training mean are flagged.
+    var RANGE_SIGMAS = 2;
     var COLUMN_TITLES = ["Inputs", "Layer 1", "Layer 2", "Output"];
     var COMPACT_COLUMN_TITLES = ["Inputs", "L1", "L2", "Out"];
     var DEFAULT_READOUT = "Point at a neuron, or focus the diagram and use the arrow keys, to read its value.";
     var WEIGHTS_LEGEND = "Line weight shows the strength of each connection; teal adds to the next neuron, ochre subtracts.";
 
     var inputFormat = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 5 });
+    var rangeFormat = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 4 });
 
     function readRows(root) {
         var payload = root.querySelector("#calculations-chart-data");
@@ -124,6 +127,29 @@
         return Array.isArray(row.inputs) && row.inputs.every(Number.isFinite);
     }
 
+    // The training range of each input as drawn: two standard deviations around the mean,
+    // cut at the values the input can physically take (the server's min and max; no max
+    // for a width or a roughness). The flag still follows the z-score.
+    function trainingRange(index) {
+        var feature = net.network.features[index];
+        var mean = net.network.mean[index];
+        var spread = RANGE_SIGMAS * net.network.std[index];
+        var high = mean + spread;
+        if (feature.max !== null && feature.max !== undefined) {
+            high = Math.min(feature.max, high);
+        }
+        return { low: Math.max(feature.min || 0, mean - spread), high: high, mean: mean };
+    }
+
+    function outsideInputs() {
+        if (!net.trace) {
+            return [];
+        }
+        return net.network.features.filter(function (feature, index) {
+            return Math.abs(net.trace.normalized[index]) > RANGE_SIGMAS;
+        });
+    }
+
     // ── Geometry ─────────────────────────────────────────────────────────
 
     function geometry(width) {
@@ -218,7 +244,8 @@
             return { className: "", fill: null };
         }
         if (column === 0) {
-            return { className: " is-on", fill: null };
+            var outside = Math.abs(net.trace.normalized[index]) > RANGE_SIGMAS;
+            return { className: " is-on" + (outside ? " is-outside" : ""), fill: null };
         }
         var activations = net.trace.layers[column - 1];
         var value = activations[index];
@@ -272,11 +299,12 @@
                 return;
             }
             svgText(group, labelX, y - 3, "calc-net__label", label, "end");
+            var outside = Math.abs(net.trace.normalized[index]) > RANGE_SIGMAS;
             svgText(
                 group,
                 labelX,
                 y + 11,
-                "calc-net__value",
+                "calc-net__value" + (outside ? " calc-net__value--outside" : ""),
                 inputText(net.rows[net.traced].inputs[index], feature),
                 "end"
             );
@@ -306,11 +334,12 @@
                 return value > 0;
             }).length;
         });
+        var outside = outsideInputs().length;
         return "Neural network traced for subcatchment " + row.Name + ": " + active[0] +
             " of 8 neurons active in the first hidden layer and " + active[1] + " of 8 in the second; " +
             "it predicts " + volumeText(row.ANN_Runoff, net.unit) + " of runoff" +
             (row.SWMM_Runoff !== null ? " against " + volumeText(row.SWMM_Runoff, net.unit) + " from SWMM" : "") +
-            ".";
+            ". " + (outside ? outside + " of 8 inputs are outside the training range." : "All inputs are within the training range.");
     }
 
     function draw() {
@@ -374,7 +403,8 @@
             var z = net.trace.normalized[index];
             var side = z < 0 ? "below" : "above";
             return name + ": " + inputText(net.rows[net.traced].inputs[index], feature) + ", " +
-                CS.format.number(Math.abs(z), 2) + " standard deviations " + side + " the training mean.";
+                CS.format.number(Math.abs(z), 2) + " standard deviations " + side + " the training mean" +
+                (Math.abs(z) > RANGE_SIGMAS ? ", outside the training range." : ".");
         }
         var sum = net.trace.sums[column - 1][index];
         if (column === 3) {
@@ -458,6 +488,80 @@
         return node ? node.dataset.node.split(":").map(Number) : null;
     }
 
+    // ── Training range ───────────────────────────────────────────────────
+
+    function rangeTrack(index, value) {
+        var range = trainingRange(index);
+        var span = range.high - range.low;
+        var position = function (number) {
+            return ((Math.min(range.high, Math.max(range.low, number)) - range.low) / span) * 100 + "%";
+        };
+        var track = svg("svg", { class: "calc-range__track", "aria-hidden": "true", focusable: "false", height: 14, overflow: "visible" });
+        svg("line", { class: "calc-range__bar", x1: "0%", x2: "100%", y1: 7, y2: 7 }, track);
+        svg("line", { class: "calc-range__mean", x1: position(range.mean), x2: position(range.mean), y1: 2, y2: 12 }, track);
+        if (value === null) {
+            return track;
+        }
+        if (value > range.high || value < range.low) {
+            // Clamped at the end of the track, as an arrow pointing past it.
+            var holder = svg("svg", { x: value > range.high ? "100%" : "0%", y: 0, overflow: "visible" }, track);
+            svg("path", { class: "calc-range__arrow", d: value > range.high ? "M-4 1 6 7-4 13Z" : "M4 1-6 7 4 13Z" }, holder);
+        } else {
+            svg("circle", { class: "calc-range__marker", cx: position(value), cy: 7, r: 5 }, track);
+        }
+        return track;
+    }
+
+    function drawRanges() {
+        var list = net.el.rangeList;
+        list.textContent = "";
+        var row = net.trace ? net.rows[net.traced] : null;
+        net.network.features.forEach(function (feature, index) {
+            var value = row ? row.inputs[index] : null;
+            var outside = row !== null && Math.abs(net.trace.normalized[index]) > RANGE_SIGMAS;
+            var item = html("li", "calc-range__item" + (outside ? " is-outside" : ""), undefined, list);
+
+            var name = html("span", "calc-range__name", feature.label, item);
+            if (feature.unit !== "–") {
+                html("span", "calc-range__unit", " (" + feature.unit + ")", name);
+            }
+            if (outside) {
+                html("span", "calc-range__flag", "outside the training range", name);
+            }
+            // Empty before a trace, so the bars line up in the same column either way.
+            html("span", "calc-range__value", row ? inputText(value, feature) : "", item);
+
+            var range = trainingRange(index);
+            var scale = html("span", "calc-range__scale", undefined, item);
+            scale.appendChild(rangeTrack(index, value));
+            var ends = html("span", "calc-range__ends", undefined, scale);
+            var low = html("span", "", undefined, ends);
+            html("span", "visually-hidden", "Training range ", low);
+            low.append(rangeFormat.format(range.low));
+            var high = html("span", "", undefined, ends);
+            html("span", "visually-hidden", " to ", high);
+            high.append(withUnit(rangeFormat.format(range.high), feature.unit));
+        });
+
+        var summary;
+        if (row) {
+            var outside = outsideInputs();
+            summary = outside.length === 0
+                ? "All eight inputs are within the range the network was trained on."
+                : outside.length + " of 8 inputs " + (outside.length === 1 ? "is" : "are") +
+                  " outside the range the network was trained on (" +
+                  outside.map(function (feature) {
+                      return feature.label;
+                  }).join(", ") + "): treat this prediction as indicative.";
+        } else if (net.rows.length) {
+            summary = "No subcatchment of this comparison can be placed on these ranges.";
+        } else {
+            summary = "Run the comparison to check each subcatchment's inputs against these ranges.";
+        }
+        net.el.rangeSummary.textContent = summary;
+        net.el.rangeSummary.classList.toggle("is-outside", Boolean(row) && outsideInputs().length > 0);
+    }
+
     // ── Trace ────────────────────────────────────────────────────────────
 
     function drawResult() {
@@ -491,6 +595,7 @@
         // Rows without the network's inputs: the server could not keep them for a large model.
         net.el.notice.hidden = !(net.rows.length && !net.rows.some(hasInputs));
         draw();
+        drawRanges();
         drawResult();
     }
 
@@ -549,6 +654,8 @@
             output: document.getElementById("calc-network-output"),
             select: document.getElementById("calc-trace-select"),
             traceControl: document.getElementById("calc-trace-control"),
+            rangeList: document.getElementById("calc-range-list"),
+            rangeSummary: document.getElementById("calc-range-summary"),
         };
         document.querySelectorAll("[data-calc-network-js]").forEach(function (el) {
             el.hidden = false;

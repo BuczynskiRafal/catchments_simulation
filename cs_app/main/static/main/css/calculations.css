@@ -314,6 +314,11 @@
     font-variant-numeric: tabular-nums;
 }
 
+.calc-net__value--outside {
+    fill: var(--cs-ochre-text);
+    font-weight: 600;
+}
+
 .calc-net__edge {
     transition: opacity var(--cs-transition);
 }
@@ -355,6 +360,11 @@
 .calc-net__node.is-off .calc-net__dot {
     fill: var(--cs-surface-sunken);
     stroke-dasharray: 2 2.5;
+}
+
+.calc-net__node.is-outside .calc-net__dot {
+    stroke: var(--cs-ochre);
+    stroke-width: 3;
 }
 
 .calc-net__node.is-current .calc-net__dot {
@@ -409,6 +419,131 @@
     margin: 1.25rem 0 0;
     font-size: var(--cs-fs-small);
     font-weight: 600;
+}
+
+/* ── Training range ── */
+
+.calc-range {
+    margin-top: 1.5rem;
+}
+
+.calc-range__title {
+    margin-bottom: 0.25rem;
+    font-size: 1.0625rem;
+}
+
+.calc-range__summary {
+    max-width: 72ch;
+    margin-bottom: 0.75rem;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-small);
+}
+
+.calc-range__summary.is-outside {
+    color: var(--cs-ochre-text);
+    font-weight: 600;
+}
+
+.calc-range__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-bottom: 1px solid var(--cs-line);
+}
+
+.calc-range__item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.25rem 1rem;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--cs-line);
+    font-size: var(--cs-fs-small);
+}
+
+.calc-range__name {
+    min-width: 0;
+}
+
+.calc-range__unit {
+    color: var(--cs-ink-muted);
+}
+
+.calc-range__flag {
+    display: block;
+    color: var(--cs-ochre-text);
+    font-size: var(--cs-fs-caption);
+    font-weight: 600;
+}
+
+.calc-range__value {
+    font-family: var(--cs-font-mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.calc-range__item.is-outside .calc-range__value {
+    color: var(--cs-ochre-text);
+    font-weight: 600;
+}
+
+.calc-range__scale {
+    grid-column: 1 / -1;
+    /* Room for the marker and the arrow past either end. */
+    padding-inline: 0.5rem;
+}
+
+@media (min-width: 768px) {
+    .calc-range__item {
+        grid-template-columns: minmax(0, 17.5rem) 6rem minmax(0, 1fr);
+    }
+
+    .calc-range__scale {
+        grid-column: auto;
+    }
+}
+
+.calc-range__track {
+    display: block;
+    width: 100%;
+}
+
+.calc-range__bar {
+    stroke: var(--cs-line);
+    stroke-width: 6;
+    stroke-linecap: round;
+}
+
+.calc-range__mean {
+    stroke: var(--cs-ink-muted);
+    stroke-width: 1.5;
+}
+
+.calc-range__marker {
+    fill: var(--cs-water);
+    stroke: var(--cs-surface);
+    stroke-width: 2;
+}
+
+.calc-range__arrow {
+    fill: var(--cs-ochre);
+}
+
+.calc-range__ends {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.125rem;
+    color: var(--cs-ink-muted);
+    font-family: var(--cs-font-mono);
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.calc-range__note {
+    margin: 0.5rem 0 0;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
 }
 
 /* ── Results table: Trace column ── */
