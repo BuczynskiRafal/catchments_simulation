@@ -33,8 +33,9 @@
         </p>
         <div class="home-hero__actions">
             <a class="btn btn-primary" href="{% url 'main:simulation' %}">Run a simulation</a>
-            <a class="btn btn-outline-primary" href="#overview">Read the documentation</a>
+            <a class="btn btn-outline-primary" href="{% url 'main:how_it_works' %}">See how it works</a>
         </div>
+        <p class="home-hero__docs">or <a href="#overview">read the package documentation</a></p>
     </div>
 
     <figure class="cs-chart-card home-hero__chart">
@@ -104,6 +105,36 @@
             <p class="home-tool__text">Compare the runoff SWMM computes for every subcatchment with the prediction of a trained neural network.</p>
         </li>
     </ul>
+</section>
+
+<section class="home-how" id="how" aria-labelledby="how-title">
+    <div class="cs-page-header">
+        <p class="cs-eyebrow">How it works</p>
+        <h2 class="cs-page-header__title" id="how-title">From rain to runoff</h2>
+        <p class="cs-page-header__lead">What SWMM computes for a subcatchment at every time step of a storm.</p>
+    </div>
+    <ol class="cs-card home-how__steps" role="list">
+        <li class="home-how__step">
+            <svg class="home-how__icon" aria-hidden="true" focusable="false" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 4 8 9M17 4l-2 5M24 4l-2 5M13 12l-2 5M20 12l-2 5"/><path d="M4 23h11"/><path d="M18 23h10"/><path d="M5 27l2-2.5M9 27l2-2.5M13 27l2-2.5" opacity=".6"/></svg>
+            <h3 class="home-how__title">Rain falls on the subcatchment</h3>
+            <p class="home-how__text">Pervious ground and impervious surfaces collect it.</p>
+        </li>
+        <li class="home-how__step">
+            <svg class="home-how__icon" aria-hidden="true" focusable="false" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11h6l3 7h8l3-7h6"/><path d="M13 15h6" opacity=".6"/><path d="M16 21v6M13.5 24.5 16 27l2.5-2.5"/><path d="M23 6h6M27 4l2 2-2 2"/></svg>
+            <h3 class="home-how__title">Water ponds, soaks in and drains</h3>
+            <p class="home-equation" aria-describedby="how-equation-legend">d<var>d</var>/d<var>t</var> = <var>i</var> − <var>e</var> − <var>f</var> − α (<var>d</var> − <var>d</var><sub>s</sub>)<sup>5/3</sup></p>
+            <p class="home-how__text" id="how-equation-legend">rain − evaporation − infiltration − runoff</p>
+        </li>
+        <li class="home-how__step">
+            <svg class="home-how__icon" aria-hidden="true" focusable="false" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 27h24M4 27V5"/><path d="M5 26c4 0 5-15 9-15s6 13 13 14"/><path d="M5 26c5 0 7-9 11-9s5 8 11 8.5" opacity=".45"/></svg>
+            <h3 class="home-how__title">SWMM adds it up into a hydrograph</h3>
+            <p class="home-how__text">Change one parameter and the curve changes with it.</p>
+        </li>
+    </ol>
+    <div class="home-how__links">
+        <a class="btn btn-outline-primary" href="{% url 'main:how_it_works' %}">See the equations</a>
+        <a href="{% url 'main:how_it_works' %}#lab">Open the interactive model</a>
+    </div>
 </section>
 
 <div class="home-docs">
