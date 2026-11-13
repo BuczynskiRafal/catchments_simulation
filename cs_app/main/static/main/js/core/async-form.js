@@ -24,9 +24,12 @@
  * target) get a .cs-stale-notice above them. Every new run dismisses the toasts and
  * the notice left by the previous one.
  *
- * Loading another model or removing it (the upload zone's cs:model-changed, unless
- * `restored`, and cs:model-cleared) marks the results shown as stale too, and a run
- * still in flight is discarded when it returns: both belong to the previous model.
+ * Loading another model or removing it marks the results shown as stale too, and a run
+ * still in flight is discarded when it returns: both belong to the previous model. The
+ * model is identified by CS.modelGeneration, which the upload zone bumps as soon as the
+ * server takes a different model; the cs:model-changed that follows (once the model's
+ * subcatchments are known) only marks results of an earlier generation as stale, so a
+ * run started between the two belongs to the new model and is kept.
  */
 (function (CS) {
     "use strict";
@@ -260,6 +263,11 @@
         target.prepend(notice);
     }
 
+    /** CS.modelGeneration, kept by the upload zone; 0 on pages without one. */
+    function modelGeneration() {
+        return CS.modelGeneration || 0;
+    }
+
     function swap(target, html) {
         target.dispatchEvent(new CustomEvent("cs:beforeswap", { bubbles: true }));
         target.innerHTML = html;
@@ -271,8 +279,8 @@
         var target = options.target;
         var running = false;
         var runToasts = [];
-        // Bumped whenever the model changes, so a run started before can tell it is outdated.
-        var modelVersion = 0;
+        // The model generation the results on screen were computed from.
+        var resultsGeneration = modelGeneration();
 
         function toast(message, level) {
             var toastEl = CS.toast(message, level);
@@ -302,7 +310,7 @@
         async function run(submitter) {
             clearPreviousRun();
             setRunning(true);
-            var runModelVersion = modelVersion;
+            var runGeneration = modelGeneration();
             var stopElapsed = startElapsed(options.loadingEl);
             var result;
             try {
@@ -315,11 +323,12 @@
                 setRunning(false);
             }
 
-            if (runModelVersion !== modelVersion) {
+            if (runGeneration !== modelGeneration()) {
                 toast(DISCARDED_MESSAGE, "info");
                 return;
             }
             if (result.ok) {
+                resultsGeneration = runGeneration;
                 swap(target, result.html);
                 if (options.onSuccess) {
                     options.onSuccess(target);
@@ -354,10 +363,15 @@
         });
 
         function onModelSwitch(event) {
-            if (event.detail && event.detail.restored) {
+            var detail = event.detail || {};
+            if (detail.restored) {
+                // The same model as before: whatever is shown still belongs to it.
+                resultsGeneration = modelGeneration();
                 return;
             }
-            modelVersion += 1;
+            if (event.type === "cs:model-changed" && detail.generation === resultsGeneration) {
+                return;
+            }
             showStaleNotice(target, MODEL_STALE_MESSAGE);
         }
         document.addEventListener("cs:model-changed", onModelSwitch);

@@ -361,3 +361,85 @@ def test_values_endpoint_requires_login(client):
 def test_values_endpoint_is_get_only(client, user, user_model):
     _load(client, user, user_model)
     assert client.post(VALUES_URL, {"catchment": "S1"}).status_code == 405
+
+
+# ── is_sample ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+def test_upload_responses_say_whether_the_model_is_the_sample(client, user):
+    client.force_login(user)
+    ajax = {"HTTP_X_REQUESTED_WITH": "XMLHttpRequest"}
+
+    sample = client.post(reverse("main:upload_sample"), **ajax).json()
+    assert sample["is_sample"] is True
+    assert client.get(reverse("main:upload_status"), **ajax).json()["is_sample"] is True
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    same = SimpleUploadedFile("copy.inp", SAMPLE.read_bytes(), content_type="text/plain")
+    assert client.post(reverse("main:upload"), {"file": same}, **ajax).json()["is_sample"] is True
+
+    other = SimpleUploadedFile("other.inp", _us_model_bytes(), content_type="text/plain")
+    assert client.post(reverse("main:upload"), {"file": other}, **ajax).json()["is_sample"] is False
+    assert client.get(reverse("main:upload_status"), **ajax).json()["is_sample"] is False
+
+
+# ── page context ──────────────────────────────────────────────────────────────
+
+
+def _json_script(html: str, element_id: str):
+    match = re.search(
+        rf'<script id="{element_id}" type="application/json">(.*?)</script>', html, re.S
+    )
+    assert match, element_id
+    return json.loads(match.group(1))
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("url_name", "form_id"),
+    [("main:simulation", "simulation-form"), ("main:timeseries", "timeseries-form")],
+)
+def test_sweep_pages_hand_the_guide_and_urls_to_their_scripts(client, user, url_name, form_id):
+    client.force_login(user)
+
+    html = client.get(reverse(url_name)).content.decode()
+
+    guide = _json_script(html, "sweep-guide")
+    assert set(guide) == set(PARAMETER_GUIDE)
+    assert guide["PercSlope"]["anchor"] == "parameter-PercSlope"
+    form = re.search(rf'<form[^>]*id="{form_id}"[^>]*>', html, re.S).group(0)
+    assert f'data-values-url="{VALUES_URL}"' in form
+    assert f'data-how-it-works-url="{reverse("main:how_it_works")}"' in form
+    assert "data-cs-run-form" in form
+    assert "data-restored" not in form
+    # Without a model, step 1 is the active one and step 2 waits.
+    assert 'data-cs-step="model" data-state="active"' in html
+    assert 'data-cs-step="run" data-state="todo"' in html
+    if url_name == "main:simulation":
+        assert _json_script(html, "method-features")["simulate_area"] == "Area"
+
+
+@pytest.mark.django_db
+def test_restored_form_is_marked_and_steps_show_the_loaded_model(client, user, user_model):
+    _load(client, user, user_model)
+    session = client.session
+    session["sim_form_state"] = {"option": "simulate_area", "start": 1, "stop": 3, "step": 1}
+    session.save()
+
+    html = client.get(reverse("main:simulation")).content.decode()
+
+    assert 'data-restored="true"' in html
+    assert 'data-cs-step="model" data-state="done"' in html
+    assert 'data-cs-step="run" data-state="active"' in html
+    assert 'data-check="model" data-state="done"' in html
+
+
+@pytest.mark.django_db
+def test_calculations_panel_tracks_the_model(client, user, user_model):
+    _load(client, user, user_model)
+
+    html = client.get(reverse("main:calculations")).content.decode()
+
+    assert 'data-cs-step="model" data-state="done"' in html

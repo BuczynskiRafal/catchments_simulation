@@ -7,7 +7,7 @@
  *   .sim-results          results column: header, key figures, chart card, table, actions
  *   .sim-metrics          <dl> of .cs-metric tiles; .cs-metric__note names the swept value
  *   .sim-chart            chart container; holds the no-JS fallback until Plotly draws
- *   .sim-empty            empty state before the first run, with a list of what a run gives
+ *   .sim-empty            empty state before the first run, with its checklist and what a run gives
  */
 
 /* ── Panel ────────────────────────────────────────────────────────── */
@@ -91,13 +91,7 @@
 
 /* ── Empty state ──────────────────────────────────────────────────── */
 
-.sim-empty__list {
-    margin: 0.75rem 0 0;
-    padding-left: 1.25rem;
+.sim-empty__gives {
+    margin-top: 0.75rem;
     font-size: var(--cs-fs-small);
-    text-align: left;
-}
-
-.sim-empty__list li + li {
-    margin-top: 0.25rem;
 }

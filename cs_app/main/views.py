@@ -80,7 +80,7 @@ from main.forms import (
     UserProfileForm,
     parameter_labels,
 )
-from main.guide import PARAMETER_GUIDE
+from main.guide import PARAMETER_GUIDE, parameter_guide_payload
 from main.insights import (
     feature_units,
     lab_query,
@@ -450,6 +450,18 @@ def _build_home_data() -> dict:
         "hydrograph_summary": _hydrograph_summary(hydrograph, volume_factor),
         "units": {**_unit_labels(flow_units), "volume": volume_unit},
     }
+
+
+@lru_cache(maxsize=1)
+def _sample_digest() -> str | None:
+    """SHA-256 of the bundled sample model, read once per process."""
+    return _file_sha256(HOME_EXAMPLE_MODEL)
+
+
+def _is_sample_model(request: HttpRequest) -> bool:
+    """Whether the session's model has the same content as the bundled sample."""
+    digest = request.session.get(MODEL_DIGEST_SESSION_KEY)
+    return digest is not None and digest == _sample_digest()
 
 
 @lru_cache(maxsize=1)
@@ -1079,7 +1091,14 @@ def _store_upload(request: HttpRequest) -> HttpResponse:
     unchanged = _adopt_model(request, file_path)
     logger.info("File uploaded successfully: %s", file_path)
 
-    return _upload_response(request, {"message": "File was sent.", "unchanged": unchanged})
+    return _upload_response(
+        request,
+        {
+            "message": "File was sent.",
+            "unchanged": unchanged,
+            "is_sample": _is_sample_model(request),
+        },
+    )
 
 
 @require_POST
@@ -1125,6 +1144,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
             "filename": os.path.basename(file_path),
             "size": sample_size,
             "unchanged": unchanged,
+            "is_sample": _is_sample_model(request),
         }
     )
 
@@ -1132,7 +1152,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
 @require_GET
 @ajax_login_required
 def upload_status(request: HttpRequest) -> JsonResponse:
-    """Return ``{has_file, filename, size}`` for the current session upload."""
+    """Return ``{has_file, filename, size, is_sample}`` for the current session upload."""
     file_path = request.session.get("uploaded_file_path")
     if file_path:
         if not _is_in_user_upload_dir(file_path, request.user.id):
@@ -1145,6 +1165,7 @@ def upload_status(request: HttpRequest) -> JsonResponse:
                     "has_file": True,
                     "filename": os.path.basename(file_path),
                     "size": size,
+                    "is_sample": _is_sample_model(request),
                 }
             )
         except OSError:
@@ -1369,6 +1390,28 @@ def get_session_variables(request: HttpRequest) -> dict:
     }
 
 
+def _has_session_model(request: HttpRequest) -> bool:
+    """Whether the session holds a model the user can run (what the workbench steps show)."""
+    path = request.session.get("uploaded_file_path")
+    user_id = getattr(getattr(request, "user", None), "id", None)
+    return bool(path) and _is_in_user_upload_dir(path, user_id) and os.path.isfile(path)
+
+
+def _sweep_page_context(request: HttpRequest, initial: dict | None = None) -> dict:
+    """
+    What the sweep pages hand their scripts as data: the parameter guide, whether a
+    model is loaded and whether the range fields hold the user's own values (restored
+    from the session, or posted back with errors), which a range suggestion must keep.
+    """
+    return {
+        "sweep_guide": parameter_guide_payload(),
+        "method_features": METHOD_FEATURES,
+        "has_model": _has_session_model(request),
+        "form_restored": initial is None
+        or any(field in initial for field in SimulationForm.RANGE_FIELDS),
+    }
+
+
 def _save_form_state(
     request: HttpRequest,
     session_key: str,
@@ -1508,7 +1551,13 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             catchment_choices=catchment_choices, units=_form_units(request), initial=initial
         )
         return render(
-            request, SIMULATION_TEMPLATE, {"form": form, **get_session_variables(request)}
+            request,
+            SIMULATION_TEMPLATE,
+            {
+                "form": form,
+                **_sweep_page_context(request, initial),
+                **get_session_variables(request),
+            },
         )
 
     form = SimulationForm(
@@ -1518,7 +1567,9 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
         if _is_ajax(request):
             return _form_invalid_json(form)
         return render(
-            request, SIMULATION_TEMPLATE, {"form": form, **get_session_variables(request)}
+            request,
+            SIMULATION_TEMPLATE,
+            {"form": form, **_sweep_page_context(request), **get_session_variables(request)},
         )
 
     try:
@@ -1535,7 +1586,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             request,
             failure,
             SIMULATION_TEMPLATE,
-            {"form": form, **get_session_variables(request)},
+            {"form": form, **_sweep_page_context(request), **get_session_variables(request)},
         )
 
     if _is_ajax(request):
@@ -1739,7 +1790,11 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
         return render(
             request,
             TIMESERIES_TEMPLATE,
-            {"form": form, **_get_timeseries_session_variables(request)},
+            {
+                "form": form,
+                **_sweep_page_context(request, initial),
+                **_get_timeseries_session_variables(request),
+            },
         )
 
     form = TimeseriesForm(
@@ -1751,7 +1806,11 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
         return render(
             request,
             TIMESERIES_TEMPLATE,
-            {"form": form, **_get_timeseries_session_variables(request)},
+            {
+                "form": form,
+                **_sweep_page_context(request),
+                **_get_timeseries_session_variables(request),
+            },
         )
 
     try:
@@ -1768,7 +1827,11 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
             request,
             failure,
             TIMESERIES_TEMPLATE,
-            {"form": form, **_get_timeseries_session_variables(request)},
+            {
+                "form": form,
+                **_sweep_page_context(request),
+                **_get_timeseries_session_variables(request),
+            },
         )
 
     if _is_ajax(request):
@@ -1797,7 +1860,15 @@ def calculations(request: HttpRequest) -> HttpResponse:
     """
     if request.method == "POST":
         return _run_calculations(request)
-    return render(request, CALCULATIONS_TEMPLATE, {"comparison": _load_comparison(request)})
+    return render(request, CALCULATIONS_TEMPLATE, _calculations_page_context(request))
+
+
+def _calculations_page_context(request: HttpRequest) -> dict:
+    """The session's last comparison and whether a model is loaded."""
+    return {
+        "comparison": _load_comparison(request),
+        "has_model": _has_session_model(request),
+    }
 
 
 def _load_comparison(request: HttpRequest) -> dict | None:
@@ -1965,10 +2036,7 @@ def _run_calculations(request: HttpRequest) -> HttpResponse:
         )
         # A failed run leaves the previous comparison in place, so the page keeps showing it.
         return _run_failed(
-            request,
-            failure,
-            CALCULATIONS_TEMPLATE,
-            {"comparison": _load_comparison(request)},
+            request, failure, CALCULATIONS_TEMPLATE, _calculations_page_context(request)
         )
 
     if _is_ajax(request):

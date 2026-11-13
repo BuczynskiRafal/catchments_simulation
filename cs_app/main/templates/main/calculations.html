@@ -24,18 +24,19 @@
 
 <div class="cs-workbench">
     <section class="cs-panel" aria-label="Calculation controls">
-        <div class="cs-step">
+        {# data-state: core/steps.js keeps it current as models are loaded and removed. #}
+        <div class="cs-step" data-cs-step="model" data-state="{% if has_model %}done{% else %}active{% endif %}">
             <div class="cs-step__header">
                 <span class="cs-step__num" aria-hidden="true">1</span>
-                <h2 class="cs-step__title"><span class="visually-hidden">Step 1: </span>Model</h2>
+                <h2 class="cs-step__title"><span class="visually-hidden">Step 1: </span>Model<span class="visually-hidden" data-cs-step-status>{% if has_model %} (completed){% endif %}</span></h2>
             </div>
             {% include 'main/_upload_zone.html' with compact=True %}
         </div>
 
-        <div class="cs-step">
+        <div class="cs-step" data-cs-step="run" data-state="{% if has_model %}active{% else %}todo{% endif %}">
             <div class="cs-step__header">
                 <span class="cs-step__num" aria-hidden="true">2</span>
-                <h2 class="cs-step__title"><span class="visually-hidden">Step 2: </span>Compare</h2>
+                <h2 class="cs-step__title"><span class="visually-hidden">Step 2: </span>Compare<span class="visually-hidden" data-cs-step-status>{% if not has_model %} (load a model first){% endif %}</span></h2>
             </div>
             <form method="post" action="{% url 'main:calculations' %}" id="calculations-form">
                 {% csrf_token %}
