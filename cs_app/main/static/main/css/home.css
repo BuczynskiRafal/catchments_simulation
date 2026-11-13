@@ -40,6 +40,12 @@
     gap: 0.75rem;
 }
 
+.home-hero__docs {
+    margin: 0.875rem 0 0;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-small);
+}
+
 .home-hero__chart {
     margin: 0;
 }
@@ -180,6 +186,116 @@
 .home-tool__text {
     margin: 0;
     color: var(--cs-ink-muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* From rain to runoff                                                 */
+/* ------------------------------------------------------------------ */
+
+.home-how {
+    margin-bottom: 4rem;
+}
+
+/* One card split into three beats: side by side from md, stacked on phones. */
+.home-how__steps {
+    display: grid;
+    margin: 0;
+    padding: 1.5rem;
+    list-style: none;
+}
+
+@media (min-width: 768px) {
+    .home-how__steps {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+.home-how__step {
+    padding: 1.25rem 0;
+}
+
+.home-how__step:first-child {
+    padding-top: 0;
+}
+
+.home-how__step:last-child {
+    padding-bottom: 0;
+}
+
+.home-how__step + .home-how__step {
+    border-top: 1px solid var(--cs-line);
+}
+
+@media (min-width: 768px) {
+    .home-how__step,
+    .home-how__step:first-child,
+    .home-how__step:last-child {
+        padding: 0 1.5rem;
+    }
+
+    .home-how__step:first-child {
+        padding-left: 0;
+    }
+
+    .home-how__step:last-child {
+        padding-right: 0;
+    }
+
+    .home-how__step + .home-how__step {
+        border-top: 0;
+        border-left: 1px solid var(--cs-line);
+    }
+}
+
+.home-how__icon {
+    width: 2rem;
+    height: 2rem;
+    margin-bottom: 0.875rem;
+    color: var(--cs-water);
+}
+
+.home-how__title {
+    margin-bottom: 0.5rem;
+    font-size: 1.0625rem;
+}
+
+.home-how__text {
+    margin: 0;
+    color: var(--cs-ink-muted);
+}
+
+/* The reservoir equation, typeset in HTML (no maths library on the home page): the
+   point of the section, so it is set as a display block across the beat. */
+.home-equation {
+    margin: 0.25rem 0 0.625rem;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background-color: var(--cs-surface-sunken);
+    font-family: "Times New Roman", Times, serif;
+    font-size: 1.3125rem;
+    line-height: 1.3;
+    text-align: center;
+}
+
+.home-equation var {
+    font-style: italic;
+}
+
+.home-equation sup {
+    font-size: 0.65em;
+}
+
+.home-how__links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1.5rem;
+    margin-top: 1.25rem;
+}
+
+.home-how__links > a:not(.btn) {
+    font-weight: 600;
 }
 
 /* ------------------------------------------------------------------ */
