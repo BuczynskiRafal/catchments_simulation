@@ -1,11 +1,12 @@
 """
-What the sweep pages can tell the user about their model before a run.
+What the sweep pages can tell the user about their model before and after a run.
 
 * ``read_subcatchment_values``: the model's own value of every sweepable feature
   for one subcatchment, read with swmmio.
 * ``suggest_range``: a sweep range around such a value that the forms accept.
 * ``lab_query``: the query string that opens the interactive model on the "How it
   works" page with a subcatchment's values, converted to SI units.
+* ``water_balance``: where the rain of each run of a sweep went.
 
 Everything here is a pure function of its arguments except the swmmio read.
 """
@@ -171,3 +172,42 @@ def lab_query(
     if vary_guide is not None and vary_guide.lab_key is not None:
         params["vary"] = vary_guide.feature
     return urlencode(params)
+
+
+def water_balance(
+    rows: list[dict], feature: str, model_area: float | None, flow_units: str | None
+) -> dict | None:
+    """
+    Where the rain of each run went, in the model's volume unit.
+
+    *rows* are the records of a sweep (the swept *feature*, then
+    ``FeaturesSimulation.RESULT_KEYS``): ``precipitation`` is a depth (mm or in),
+    the others are volumes. The rain falls on the swept area when *feature* is
+    ``Area``, else on *model_area*. ``storage`` is what is left: the water still on
+    the surface when the simulation ends. None when the unit system or the area is
+    unknown, or a value is not a finite number.
+    """
+    system = _unit_system(flow_units)
+    if system not in RAIN_VOLUME_FACTORS or not rows:
+        return None
+    balance = []
+    for row in rows:
+        area = row.get(feature) if feature == "Area" else model_area
+        numbers = [row.get(key) for key in ("precipitation", "runon", "runoff", "infiltration")]
+        numbers += [row.get("evaporation"), area, row.get(feature)]
+        if not all(_is_finite_number(number) for number in numbers):
+            return None
+        rainfall = row["precipitation"] * area * RAIN_VOLUME_FACTORS[system]
+        losses = row["runoff"] + row["infiltration"] + row["evaporation"]
+        balance.append(
+            {
+                "x": float(row[feature]),
+                "rainfall": float(rainfall),
+                "runon": float(row["runon"]),
+                "runoff": float(row["runoff"]),
+                "infiltration": float(row["infiltration"]),
+                "evaporation": float(row["evaporation"]),
+                "storage": float(max(rainfall + row["runon"] - losses, 0.0)),
+            }
+        )
+    return {"unit": _unit_labels(flow_units)["volume"], "rows": balance}

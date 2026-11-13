@@ -163,6 +163,26 @@ class SimulationPage(BasePage):
         return self.results_table.locator("tbody tr")
 
     @property
+    def reading(self) -> Locator:
+        return self.page.locator("#simulation-reading")
+
+    @property
+    def guide_link(self) -> Locator:
+        return self.page.locator(".sim-reading__link")
+
+    @property
+    def balance_chart(self) -> Locator:
+        return self.page.locator("#simulation-balance-chart")
+
+    def balance_mode(self, value: str) -> Locator:
+        """Label of the water balance toggle: "share" or "volume"."""
+        return self.page.locator(f"label[for='simulation-balance-{value}']")
+
+    @property
+    def lab_link(self) -> Locator:
+        return self.page.locator("#simulation-lab-link")
+
+    @property
     def download_button(self) -> Locator:
         return self.page.locator("#download-simulation-results-button")
 

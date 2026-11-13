@@ -1,18 +1,21 @@
-"""What the sweep pages tell the user about the model: values, suggestions, links."""
+"""What the sweep pages tell the user about the model: values, suggestions, balance, links."""
 
 import json
 import math
 import re
+import shutil
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from django.conf import settings
+from django.core.cache import cache
 from django.urls import reverse
 from hypothesis import given
 from hypothesis import settings as hypothesis_settings
 from hypothesis import strategies as st
 
+from catchment_simulation import FeaturesSimulation
 from main.forms import SimulationForm, TimeseriesForm
 from main.guide import PARAMETER_GUIDE
 from main.insights import (
@@ -21,11 +24,14 @@ from main.insights import (
     lab_query,
     read_subcatchment_values,
     suggest_range,
+    water_balance,
 )
 from main.views import (
     NO_MODEL_MESSAGE,
+    SIM_RESULT_TOKEN_SESSION_KEY,
     SUBCATCHMENT_NOT_FOUND_MESSAGE,
     _cached_subcatchment_values,
+    _result_cache_key,
     _user_upload_dir,
 )
 
@@ -221,6 +227,77 @@ def test_lab_query_is_none_for_an_unknown_unit_system():
     assert lab_query(SAMPLE_VALUES, "XYZ") is None
 
 
+# ── water balance ─────────────────────────────────────────────────────────────
+
+
+def _rows(feature, values, **overrides):
+    base = {
+        "runoff": 3000.0,
+        "peak_runoff_rate": 0.2,
+        "infiltration": 400.0,
+        "evaporation": 10.0,
+        "precipitation": 97.0,
+        "runon": 0.0,
+    }
+    return [{feature: value, **base, **overrides} for value in values]
+
+
+def test_water_balance_volumes_add_up_to_the_rain():
+    balance = water_balance(_rows("Width", [50, 100]), "Width", 5.0, "CMS")
+
+    assert balance["unit"] == "m³"
+    row = balance["rows"][0]
+    assert row["x"] == 50.0
+    assert row["rainfall"] == pytest.approx(97 * 5 * 10)
+    assert row["storage"] == pytest.approx(4850 - 3000 - 400 - 10)
+
+
+def test_water_balance_uses_the_swept_area_and_us_units():
+    balance = water_balance(_rows("Area", [1.0, 2.0], runoff=1.0), "Area", 5.0, "CFS")
+
+    assert balance["unit"] == "ft³"
+    assert [row["rainfall"] for row in balance["rows"]] == pytest.approx(
+        [97 * 1 * 3630, 97 * 2 * 3630]
+    )
+
+
+def test_water_balance_never_reports_negative_storage():
+    balance = water_balance(_rows("Width", [1], runoff=1e9), "Width", 5.0, "CMS")
+    assert balance["rows"][0]["storage"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("rows", "area", "flow_units"),
+    [
+        (_rows("Width", [1]), 5.0, "XYZ"),
+        (_rows("Width", [1]), None, "CMS"),
+        (_rows("Width", [1], runoff=None), 5.0, "CMS"),
+        (_rows("Width", [1], infiltration=math.inf), 5.0, "CMS"),
+        ([], 5.0, "CMS"),
+    ],
+)
+def test_water_balance_is_none_when_it_cannot_be_trusted(rows, area, flow_units):
+    assert water_balance(rows, "Width", area, flow_units) is None
+
+
+def test_water_balance_of_the_sample_model_closes(example_model):
+    """On a real SWMM run the parts add up to the rain that fell on the subcatchment."""
+    frame = FeaturesSimulation("S1", example_model).simulate_percent_slope(1, 10, 9)
+    balance = water_balance(frame.to_dict("records"), "PercSlope", 5.0, "CMS")
+
+    for row in balance["rows"]:
+        parts = row["runoff"] + row["infiltration"] + row["evaporation"] + row["storage"]
+        assert parts == pytest.approx(row["rainfall"] + row["runon"])
+        assert 0 < row["storage"] < row["rainfall"]
+
+
+@pytest.fixture
+def example_model(tmp_path):
+    path = tmp_path / "example.inp"
+    shutil.copyfile(SAMPLE, path)
+    return str(path)
+
+
 # ── values endpoint ───────────────────────────────────────────────────────────
 
 
@@ -383,6 +460,147 @@ def test_upload_responses_say_whether_the_model_is_the_sample(client, user):
     other = SimpleUploadedFile("other.inp", _us_model_bytes(), content_type="text/plain")
     assert client.post(reverse("main:upload"), {"file": other}, **ajax).json()["is_sample"] is False
     assert client.get(reverse("main:upload_status"), **ajax).json()["is_sample"] is False
+
+
+# ── simulation results ──────────────────────────────────────────────────────
+
+
+def _realistic_sweep(feature, values):
+    import pandas as pd
+
+    rows = _rows(feature, values)
+    for index, row in enumerate(rows):
+        row["runoff"] = 3000.0 + 10 * index
+    return pd.DataFrame(rows)[[feature, *FeaturesSimulation.RESULT_KEYS]]
+
+
+@pytest.fixture
+def stub_simulation(monkeypatch):
+    class StubSimulation:
+        def __init__(self, subcatchment_id, raw_file):
+            pass
+
+        def simulate_percent_slope(self, start, stop, step):
+            return _realistic_sweep("PercSlope", [start, start + step, stop])
+
+        def simulate_curb_length(self, start, stop, step):
+            return _realistic_sweep("CurbLength", [start, stop])
+
+    monkeypatch.setattr("main.views.FeaturesSimulation", StubSimulation)
+
+
+def _run(client, option="simulate_percent_slope", start="5", stop="15", step="5"):
+    return client.post(
+        reverse("main:simulation"),
+        {"option": option, "start": start, "stop": stop, "step": step, "catchment_name": "S1"},
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+
+def _cached_chart_config(client, user) -> dict:
+    token = client.session[SIM_RESULT_TOKEN_SESSION_KEY]
+    return json.loads(cache.get(_result_cache_key("sim", user.id, token)))["chart_config"]
+
+
+@pytest.mark.django_db
+def test_simulation_result_has_baseline_balance_and_lab_link(
+    client, user, user_model, stub_simulation
+):
+    _load(client, user, user_model)
+
+    response = _run(client)
+
+    assert response.status_code == 200
+    config = _cached_chart_config(client, user)
+    assert config["baseline"] == 10.0
+    assert config["balance"]["unit"] == "m³"
+    assert [row["x"] for row in config["balance"]["rows"]] == [5.0, 10.0, 15.0]
+    assert config["balance"]["rows"][0]["rainfall"] == pytest.approx(4850.0)
+    lab = urlsplit(config["labUrl"])
+    assert parse_qs(lab.query)["vary"] == ["PercSlope"]
+    assert lab.fragment == "lab"
+    # The Excel columns stay as they were.
+    payload = json.loads(
+        cache.get(_result_cache_key("sim", user.id, client.session[SIM_RESULT_TOKEN_SESSION_KEY]))
+    )
+    assert payload["results_columns"] == [
+        "PercSlope",
+        "runoff",
+        "peak_runoff_rate",
+        "infiltration",
+        "evaporation",
+    ]
+
+    html = response.content.decode()
+    assert "Where the rain goes" in html
+    assert 'id="simulation-lab-link"' in html
+    assert f'href="{reverse("main:how_it_works")}#parameter-PercSlope"' in html
+    assert "How Slope enters the model" in html
+    assert 'data-parameter-name="Slope"' in html
+
+
+@pytest.mark.django_db
+def test_simulation_result_without_a_lab_parameter_keeps_the_link_without_vary(
+    client, user, user_model, stub_simulation
+):
+    _load(client, user, user_model)
+
+    _run(client, "simulate_curb_length", "0", "10", "10")
+
+    config = _cached_chart_config(client, user)
+    assert config["baseline"] == 0.0
+    assert "vary" not in parse_qs(urlsplit(config["labUrl"]).query)
+
+
+@pytest.mark.django_db
+def test_simulation_result_without_model_values(client, user, user_model, stub_simulation):
+    """A model swmmio cannot read for the values still runs; the extras are just missing."""
+    _load(client, user, user_model)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("main.views.read_subcatchment_values", lambda *args: 1 / 0)
+        response = _run(client)
+
+    assert response.status_code == 200
+    config = _cached_chart_config(client, user)
+    assert config["baseline"] is None
+    assert config["balance"] is None
+    assert config["labUrl"] is None
+    assert "Where the rain goes" not in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_results_cached_before_the_new_keys_still_render(client, user, user_model):
+    """An older payload has no baseline, balance or labUrl: the page renders without them."""
+    _load(client, user, user_model)
+    token = "a" * 32
+    payload = {
+        "chart_config": {
+            "data": [{"PercSlope": 1.0, "runoff": 1.0}],
+            "x": "PercSlope",
+            "y": ["runoff"],
+            "title": "t",
+            "xLabel": "Percent Slope [%]",
+            "yLabels": {"runoff": "Total Runoff Volume [m³]"},
+        },
+        "results_columns": ["PercSlope", "runoff"],
+        "results_data": [[1.0, 1.0]],
+        "feature_name": "PercSlope",
+        "output_file_name": "old.xlsx",
+    }
+    cache.set(_result_cache_key("sim", user.id, token), json.dumps(payload))
+    session = client.session
+    session[SIM_RESULT_TOKEN_SESSION_KEY] = token
+    session.save()
+
+    response = client.get(reverse("main:simulation"))
+
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert "Simulation results" in html
+    assert "Where the rain goes" not in html
+    assert "simulation-lab-link" not in html
+    # The guide entry comes from the code, not the cache.
+    assert "How Slope enters the model" in html
 
 
 # ── page context ──────────────────────────────────────────────────────────────
