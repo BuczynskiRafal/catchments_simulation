@@ -116,7 +116,8 @@
     <div class="cs-empty-state">
         <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h32M9 4v6M14 4v10M19 4v5M24 4v3"/><path d="M4 36h32M4 34c6 0 8-14 13-14s8 12 19 14"/></svg>
         <h2 class="cs-empty-state__title">No results yet</h2>
-        <p class="cs-empty-state__text">Load a model, choose a subcatchment and run the analysis. The rainfall and runoff chart appears here.</p>
+        {% include 'main/partials/_workbench_checklist.html' with run_label="Run the analysis" run_next="Next: pick a single run or a sweep and select Run Timeseries Analysis." %}
+        <p class="cs-empty-state__text">The rainfall and runoff chart appears here.</p>
     </div>
     {% endif %}
 </div>

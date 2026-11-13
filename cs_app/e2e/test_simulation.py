@@ -146,7 +146,8 @@ class TestSimulationModelHint:
         sp.navigate_to()
         expect(sp.model_hint).to_be_hidden()
 
-    def test_sample_button_keeps_keyboard_focus(self, auth_page: Page, live_server) -> None:
+    def test_sample_button_hands_keyboard_focus_on(self, auth_page: Page, live_server) -> None:
+        """Once the sample is loaded its button goes away; focus moves on to step 2."""
         sp = _open(auth_page, live_server)
         sample = auth_page.get_by_role("button", name="Try sample data")
         sample.focus()
@@ -154,8 +155,8 @@ class TestSimulationModelHint:
         auth_page.keyboard.press("Enter")
 
         sp.wait_for_catchment_options()
-        expect(sample).to_be_enabled()
-        expect(sample).to_be_focused()
+        expect(sample).to_be_hidden()
+        expect(sp.catchment_name_select).to_be_focused()
 
 
 class TestSimulationModelChange:

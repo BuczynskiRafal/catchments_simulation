@@ -4,8 +4,9 @@
  * Run form: CSS shows the sweep range only in sweep mode; here its fieldset is
  * also disabled in single mode, so leftover values there are neither sent nor
  * checked by the browser's constraint validation (an invalid hidden input would
- * silently block the submit). A live "N runs" hint follows the range. Runs go
- * through CS.asyncForm, which swaps the server-rendered results fragment into
+ * silently block the submit). A live "N runs" hint follows the range, and
+ * CS.sweepAssist explains the parameter and suggests a range from the model. Runs
+ * go through CS.asyncForm, which swaps the server-rendered results fragment into
  * #timeseries-canvas.
  *
  * Results: the server renders the metrics and the sweep summary table;
@@ -55,6 +56,19 @@
         sweepFields.addEventListener("input", updateHint);
         syncMode();
         updateHint();
+
+        CS.sweepAssist({
+            form: form,
+            parameterSelect: form.elements.namedItem("feature"),
+            featureOf: function (feature) {
+                return feature;
+            },
+            rangeInputs: ["start", "stop", "step"].map(function (name) {
+                return form.elements.namedItem(name);
+            }),
+            insightEl: document.getElementById("ts-insight"),
+            suggestionEl: document.getElementById("ts-range-suggestion"),
+        });
     }
 
     // ── Timestep table ────────────────────────────────────────────────

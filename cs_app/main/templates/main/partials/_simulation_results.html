@@ -76,14 +76,8 @@ nothing may precede #simulation-results-heading: the client focuses the first he
     <div class="cs-empty-state sim-empty">
         <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m6 16 4-5 3 3 6-8"/><circle cx="19" cy="6" r="1.2" fill="currentColor"/></svg>
         <h2 class="cs-empty-state__title">No results yet</h2>
-        <p class="cs-empty-state__text">
-            Load a model, pick a subcatchment and a parameter, then select <strong>Run Simulation</strong>.
-        </p>
-        <ul class="sim-empty__list">
-            <li>Key figures: runoff at both ends of the range and how much it changes</li>
-            <li>A chart for every output, from total runoff to evaporation</li>
-            <li>A sortable table you can copy or download as Excel</li>
-        </ul>
+        {% include 'main/partials/_workbench_checklist.html' with run_label="Run the simulation" run_next="Next: pick the parameter to vary and select Run Simulation." %}
+        <p class="cs-empty-state__text sim-empty__gives">A run gives key figures, a chart for every output and a table you can download.</p>
     </div>
     {% endif %}
 </div>

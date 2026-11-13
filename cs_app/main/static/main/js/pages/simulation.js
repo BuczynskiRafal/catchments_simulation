@@ -3,7 +3,8 @@
  *
  * Panel: a hint in step 1 while no model is loaded; the range fields only for
  * range-based methods, with a live "N runs" hint that warns before the server's
- * step limit is hit. The run form is enhanced by CS.asyncForm; the results
+ * step limit is hit; the parameter card and the range suggestion of
+ * CS.sweepAssist. The run form is enhanced by CS.asyncForm; the results
  * fragment is initialised by initResults() on load and after every swap
  * (key figures, chart, sortable table). Result actions are delegated from the
  * canvas, so they keep working across swaps.
@@ -20,14 +21,18 @@
         return input.value.trim() === "" ? NaN : Number(input.value);
     }
 
+    function rangeInputs(form) {
+        return ["start", "stop", "step"].map(function (name) {
+            return form.elements.namedItem(name);
+        });
+    }
+
     function initRange(form) {
         var option = form.elements.namedItem("option");
         var range = document.getElementById("simulation-range");
         var hint = document.getElementById("simulation-range-hint");
         var note = document.getElementById("simulation-literature-note");
-        var inputs = ["start", "stop", "step"].map(function (name) {
-            return form.elements.namedItem(name);
-        });
+        var inputs = rangeInputs(form);
         var predefined = form.dataset.predefinedMethods.split(" ");
         var maxRuns = Number(form.dataset.maxRuns);
 
@@ -64,6 +69,20 @@
         });
         document.addEventListener("cs:model-cleared", function () {
             hint.hidden = false;
+        });
+    }
+
+    function initAssist(form) {
+        var features = CS.readJson("method-features") || {};
+        CS.sweepAssist({
+            form: form,
+            parameterSelect: form.elements.namedItem("option"),
+            featureOf: function (option) {
+                return features[option] || "";
+            },
+            rangeInputs: rangeInputs(form),
+            insightEl: document.getElementById("simulation-insight"),
+            suggestionEl: document.getElementById("simulation-range-suggestion"),
         });
     }
 
@@ -241,6 +260,7 @@
         }
         initModelHint();
         initRange(form);
+        initAssist(form);
         initActions(canvas);
         initResults(canvas);
 
