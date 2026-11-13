@@ -88,7 +88,7 @@ from main.insights import (
     suggested_ranges,
     water_balance,
 )
-from main.predictor import predict_runoff
+from main.predictor import predict_runoff, prediction_inputs
 from main.schemas import ContactMessage
 from main.services import send_message
 from main.units import (
@@ -1968,6 +1968,7 @@ def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
             if "TotalRunoffMG" not in subcatchments.columns:
                 raise InputValidationError("no_runoff_summary")
             ann_predictions = predict_runoff(swmmio_model)
+            network_inputs = prediction_inputs(swmmio_model)
             flow_units = _read_flow_units(work_inp)
             swmm_factor, unit = _report_runoff_unit(flow_units)
             ann_factor = _ann_runoff_factor(flow_units)
@@ -1978,6 +1979,8 @@ def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
                     * swmm_factor,
                     # predict_runoff() always outputs 10^6 L (10^3 m³) from the SI-trained network.
                     "ANN_Runoff": np.round(ann_predictions.astype(float) * ann_factor, 2),
+                    # What the network read for each subcatchment.
+                    "Inputs": network_inputs.tolist(),
                 },
             )
             return comparison, unit
@@ -2000,6 +2003,9 @@ def _summarise_comparison(df: pd.DataFrame, unit: str) -> dict | None:
     ANN minus SWMM. Its percentage is None where SWMM runoff is 0, and the mean
     absolute percentage error skips those rows (``mape_excluded`` counts them).
     ``unit`` is the volume unit of every runoff value and is kept with the result.
+    When ``df`` has an ``Inputs`` column, each row also carries ``inputs``: the
+    network's 8 inputs for that subcatchment (comparisons cached before it existed
+    have none).
 
     Returns None for an empty comparison.
     """
@@ -2009,18 +2015,23 @@ def _summarise_comparison(df: pd.DataFrame, unit: str) -> dict | None:
     ann = df["ANN_Runoff"].astype(float)
     difference = ann - swmm
     difference_pct = difference / swmm.where(swmm != 0) * 100
-    rows = [
-        {
+    inputs = df["Inputs"] if "Inputs" in df.columns else [None] * len(df)
+    rows = []
+    for name, swmm_value, ann_value, diff, pct, row_inputs in zip(
+        df["Name"], swmm, ann, difference, difference_pct, inputs, strict=True
+    ):
+        row = {
             "Name": str(name),
             "SWMM_Runoff": _finite_or_none(swmm_value),
             "ANN_Runoff": _finite_or_none(ann_value),
             "Difference": _finite_or_none(diff),
             "Difference_pct": _finite_or_none(pct),
         }
-        for name, swmm_value, ann_value, diff, pct in zip(
-            df["Name"], swmm, ann, difference, difference_pct, strict=True
-        )
-    ]
+        if row_inputs is not None:
+            # The network reads float32, which holds about 7 significant digits; more
+            # would only carry conversion noise (0.01 -> 0.009999999776) into the JSON.
+            row["inputs"] = [_finite_or_none(f"{value:.7g}") for value in row_inputs]
+        rows.append(row)
     return {
         "unit": unit,
         "rows": rows,
@@ -2038,7 +2049,16 @@ def _run_comparison(request: HttpRequest) -> None:
     """Compare SWMM and ANN runoff on the session's model and store the result for the session."""
     uploaded_file_path = _uploaded_model_path(request)
     comparison = _summarise_comparison(*_compare_swmm_and_ann(uploaded_file_path))
-    _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
+    try:
+        _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
+    except ResultPayloadTooLargeError:
+        if not comparison:
+            raise
+        # The network inputs are an extra: a model with too many subcatchments to keep
+        # them still gets its comparison.
+        for row in comparison["rows"]:
+            row.pop("inputs", None)
+        _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
 
 
 @ajax_login_required
