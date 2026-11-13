@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 import pytest
@@ -47,6 +48,7 @@ class TestContent:
         hiw.try_button("Width").click()
         expect(hiw.sweep_parameter).to_have_value("Width")
         expect(hiw.slider("width")).to_be_focused()
+        expect(hiw.page).to_have_url(re.compile(r"vary=Width"))
 
     def test_parameter_without_a_model_key_has_no_button(self, hiw: HowItWorksPage) -> None:
         expect(hiw.try_button("CurbLength")).to_have_count(0)
@@ -170,8 +172,72 @@ class TestInteractiveModel:
         expect(hiw.drawn_sweep_lines()).to_have_count(0)
         expect(hiw.sweep_button).to_have_text("Run sweep")
 
+    def test_query_string_sets_starting_values_and_vary(self, page: Page, live_server) -> None:
+        hp = HowItWorksPage(page, live_server.url)
+        hp.navigate_to("?area=20&slope=50&imperviousness=abc&vary=PercSlope#lab")
+        expect(hp.slider_readout("area")).to_have_text("20\u00a0ha")
+        # A valid value outside the slider widens it instead of being clamped.
+        expect(hp.slider_readout("slope")).to_have_text("50\u00a0%")
+        expect(hp.slider_max("slope")).to_have_text("50\u00a0%")
+        expect(hp.slider_readout("imperviousness")).to_have_text("25\u00a0%")
+        expect(hp.sweep_parameter).to_have_value("PercSlope")
+        solved = hp.solve("{ area: 20, slope: 50 }")
+        assert _number(hp.metric_value("volume")) == pytest.approx(
+            solved["totals"]["runoff"], abs=1
+        )
+        expect(hp.metric_delta("volume")).to_be_hidden()
+
 
 class TestRobustness:
+    """Starting values come from the URL: anything there must leave a working lab."""
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "?width=1e308&area=1e-12&nImperv=1e-12&vary=a'b",
+            "?area=abc&slope=-5&imperviousness=250",
+            "?area=10000&width=100000&slope=100&nPerv=5",
+        ],
+        ids=["extreme", "malformed", "largest"],
+    )
+    def test_any_query_string_leaves_a_working_lab(
+        self, page: Page, live_server, query: str
+    ) -> None:
+        messages: list[str] = []
+        page.on(
+            "console", lambda m: messages.append(m.text) if m.type in ("error", "warning") else None
+        )
+        page.on("pageerror", lambda e: messages.append(str(e)))
+        hp = HowItWorksPage(page, live_server.url)
+        hp.navigate_to(query + "#lab")
+        expect(page.locator("#hiw-lab")).to_be_visible()
+        for name in ("peak", "volume", "coefficient"):
+            assert math.isfinite(_number(hp.metric_value(name))), name
+        # Readouts stay short however large or small the value.
+        for key in ("area", "width", "slope", "nImperv", "nPerv"):
+            assert len(hp.slider_readout(key).inner_text()) <= 12, key
+        # Still responsive: a slider change updates the numbers within a second (the chart's
+        # label carries them at three significant digits, which a tiny area still moves).
+        before = hp.hydrograph.get_attribute("aria-label")
+        hp.nudge("imperviousness", 10, "ArrowLeft")
+        expect(hp.hydrograph).not_to_have_attribute("aria-label", before, timeout=1000)
+        # The rest of the page still started: equations typeset, try buttons shown.
+        page.wait_for_function(
+            "document.querySelectorAll('.hiw-equation .katex-display').length === 18"
+        )
+        expect(hp.try_button("Width")).to_be_visible()
+        assert messages == []
+
+    def test_values_are_clamped_to_physical_bounds(self, page: Page, live_server) -> None:
+        hp = HowItWorksPage(page, live_server.url)
+        hp.navigate_to("?width=1e308&area=1e-12&slope=-5&imperviousness=250&vary=a'b")
+        expect(hp.slider_readout("width")).to_have_text("100000\u00a0m")
+        expect(hp.slider_readout("area")).to_have_text("0.001\u00a0ha")
+        expect(hp.slider_readout("slope")).to_have_text("0.001\u00a0%")
+        expect(hp.slider_readout("imperviousness")).to_have_text("100\u00a0%")
+        # An unknown vary keeps the default parameter.
+        expect(hp.sweep_parameter).to_have_value("PercImperv")
+
     def test_a_lab_that_cannot_start_leaves_a_note(self, page: Page, live_server) -> None:
         # Without the solver the lab cannot run; the page says so and the rest still works.
         page.route(re.compile(r"runoff-model\.js"), lambda route: route.abort())
