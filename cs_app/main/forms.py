@@ -26,6 +26,9 @@ STOP_BEFORE_START_MESSAGE = "Stop must be greater than or equal to start."
 # A page request runs every value of a sweep in turn, so the site allows far fewer
 # runs than the package does; the run count itself comes from build_range.
 MAX_SWEEP_RUNS = min(100, MAX_RUNS)
+# Bounds of the start, stop and step fields of both sweep forms.
+SWEEP_MAX_VALUE = 10000
+SWEEP_MIN_STEP = 0.1
 TOO_MANY_RUNS_MESSAGE = (
     f"Too many runs (max {MAX_SWEEP_RUNS}). Increase the step or narrow the range."
 )
@@ -248,7 +251,7 @@ class SimulationForm(forms.Form):
     start = forms.FloatField(
         label="Start",
         min_value=0,
-        max_value=10000,
+        max_value=SWEEP_MAX_VALUE,
         initial=1,
         required=False,
         widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
@@ -256,15 +259,15 @@ class SimulationForm(forms.Form):
     stop = forms.FloatField(
         label="Stop",
         min_value=0,
-        max_value=10000,
+        max_value=SWEEP_MAX_VALUE,
         initial=10,
         required=False,
         widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     step = forms.FloatField(
         label="Step",
-        min_value=0.1,
-        max_value=10000,
+        min_value=SWEEP_MIN_STEP,
+        max_value=SWEEP_MAX_VALUE,
         initial=1,
         required=False,
         widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
@@ -351,7 +354,7 @@ class TimeseriesForm(forms.Form):
     start = forms.FloatField(
         label="Start",
         min_value=0,
-        max_value=10000,
+        max_value=SWEEP_MAX_VALUE,
         initial=0,
         required=False,
         widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
@@ -359,15 +362,15 @@ class TimeseriesForm(forms.Form):
     stop = forms.FloatField(
         label="Stop",
         min_value=0,
-        max_value=10000,
+        max_value=SWEEP_MAX_VALUE,
         initial=100,
         required=False,
         widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
     )
     step = forms.FloatField(
         label="Step",
-        min_value=0.1,
-        max_value=10000,
+        min_value=SWEEP_MIN_STEP,
+        max_value=SWEEP_MAX_VALUE,
         initial=10,
         required=False,
         widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),

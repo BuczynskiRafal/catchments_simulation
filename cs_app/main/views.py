@@ -81,6 +81,12 @@ from main.forms import (
     parameter_labels,
 )
 from main.guide import PARAMETER_GUIDE
+from main.insights import (
+    feature_units,
+    lab_query,
+    read_subcatchment_values,
+    suggested_ranges,
+)
 from main.predictor import predict_runoff
 from main.schemas import ContactMessage
 from main.services import send_message
@@ -178,6 +184,8 @@ AUTH_REQUIRED_MESSAGE = "Authentication required."
 FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
 SUBCATCHMENT_NOT_FOUND_MESSAGE = "Selected catchment was not found in the uploaded model."
+NO_CATCHMENT_MESSAGE = "Choose a subcatchment."
+VALUES_UNREADABLE_MESSAGE = "The subcatchment's values could not be read from the model."
 SWMM_FAILED_MESSAGE = "SWMM could not run the model"
 ENGINE_BUSY_MESSAGE = "Another simulation is currently running. Please retry in a moment."
 NO_RUNOFF_SUMMARY_MESSAGE = (
@@ -199,6 +207,8 @@ SIM_SESSION_DEFAULTS = {
     "output_file_name": None,
     "download_token": None,
 }
+# Subcatchment values parsed from session models are cached per process, this many at most.
+SUBCATCHMENT_VALUES_CACHE_SIZE = 64
 
 
 class ResultPayloadTooLargeError(ValueError):
@@ -1211,6 +1221,78 @@ def subcatchments(request: HttpRequest) -> JsonResponse:
         {
             "subcatchments": _get_subcatchment_ids(request),
             "option_labels": parameter_labels(_form_units(request)),
+        }
+    )
+
+
+@lru_cache(maxsize=SUBCATCHMENT_VALUES_CACHE_SIZE)
+def _cached_subcatchment_values(
+    path: str, modified_ns: int, size: int, catchment: str
+) -> tuple[tuple[str, float | None], ...] | None:
+    """
+    Values of one subcatchment of the file at *path*. Its modification time and size
+    are part of the key, so a model written over another one is read again.
+    """
+    values = read_subcatchment_values(path, catchment)
+    return None if values is None else tuple(values.items())
+
+
+def _subcatchment_values(path: str, catchment: str) -> dict[str, float | None] | None:
+    """
+    The model's value of every sweepable feature for *catchment*; None when the model
+    has no such subcatchment. Parsed per request, or taken from a small process cache
+    keyed on the file as it is on disk; nothing is stored in the session.
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return read_subcatchment_values(path, catchment)
+    cached = _cached_subcatchment_values(path, stat.st_mtime_ns, stat.st_size, catchment)
+    return None if cached is None else dict(cached)
+
+
+def _lab_url(
+    values: dict[str, float | None], flow_units: str | None, vary: str | None = None
+) -> str | None:
+    """Link to the interactive model with these values (SI); None for an unknown unit system."""
+    query = lab_query(values, flow_units, vary)
+    if query is None:
+        return None
+    return f"{reverse('main:how_it_works')}{'?' + query if query else ''}#lab"
+
+
+@require_GET
+@ajax_login_required
+def subcatchment_values(request: HttpRequest) -> JsonResponse:
+    """
+    The session model's values of one subcatchment (``?catchment=<id>``), their units,
+    a suggested sweep range for each range-based parameter and a link to the
+    interactive model. Errors are ``{"message": ...}`` JSON.
+    """
+    try:
+        path = _uploaded_model_path(request)
+    except InputValidationError as error:
+        return JsonResponse({"message": _format_input_error_message(error)}, status=400)
+    catchment = request.GET.get("catchment", "")
+    if not catchment:
+        return JsonResponse({"message": NO_CATCHMENT_MESSAGE}, status=400)
+    try:
+        values = _subcatchment_values(path, catchment)
+    except Exception as exc:
+        logger.warning("Failed to read subcatchment values from %s", path, exc_info=True)
+        error = _coerce_input_validation_error(exc)
+        message = _format_input_error_message(error) if error else VALUES_UNREADABLE_MESSAGE
+        return JsonResponse({"message": message}, status=400)
+    if values is None:
+        return JsonResponse({"message": SUBCATCHMENT_NOT_FOUND_MESSAGE}, status=404)
+    flow_units = _session_flow_units(request)
+    return JsonResponse(
+        {
+            "catchment": catchment,
+            "values": values,
+            "units": feature_units(flow_units),
+            "suggested_ranges": suggested_ranges(values),
+            "lab_url": _lab_url(values, flow_units),
         }
     )
 
