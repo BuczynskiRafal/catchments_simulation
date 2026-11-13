@@ -20,7 +20,7 @@
 <header class="cs-page-header hiw-header">
     <p class="cs-eyebrow">How it works</p>
     <h1 class="cs-page-header__title">How the simulation works</h1>
-    <p class="cs-page-header__lead">Every result on this site comes from the EPA Storm Water Management Model. This page shows the equations it solves for a subcatchment and explains what a parameter sweep and the neural network do with them.</p>
+    <p class="cs-page-header__lead">Every result on this site comes from the EPA Storm Water Management Model. This page shows the equations it solves for a subcatchment, runs them live in your browser, and explains what a parameter sweep and the neural network do with them.</p>
 </header>
 
 <div class="hiw-docs">
@@ -29,6 +29,7 @@
         <ul class="nav flex-column">
             <li class="nav-item"><a class="nav-link" href="#pipeline">Running a tool</a></li>
             <li class="nav-item"><a class="nav-link" href="#model">Runoff model</a></li>
+            <li class="nav-item"><a class="nav-link" href="#lab">Interactive model</a></li>
             <li class="nav-item"><a class="nav-link" href="#parameters">Parameters</a></li>
             <li class="nav-item"><a class="nav-link" href="#infiltration">Infiltration</a></li>
             <li class="nav-item"><a class="nav-link" href="#numerics">Numerical solution</a></li>
@@ -223,17 +224,253 @@
             {% endverbatim %}
         </section>
 
+        {# ── 3. Interactive model ────────────────────────────────────── #}
+        <section class="hiw-section" id="lab" aria-labelledby="lab-title">
+            <p class="cs-eyebrow">Interactive model</p>
+            <h2 id="lab-title">Try it: the interactive model</h2>
+            <p class="hiw-prose">This is the model above, solved in your browser: the same equations and the same solution procedure as the SWMM engine, for one subcatchment under a design storm. Move a slider and watch the three reservoirs and the hydrograph respond. It starts from subcatchment <span class="cs-mono">S1</span> of the example model.</p>
+
+            <noscript>
+                <p class="cs-hint cs-hint--note hiw-lab__noscript">The interactive model runs in your browser and needs JavaScript. Everything else on this page reads without it.</p>
+            </noscript>
+
+            <div class="hiw-lab" id="hiw-lab" hidden>
+                <div class="hiw-lab__controls" id="lab-controls">
+                    {# The column's contents stick under the site header beside the stage (≥ xl). #}
+                    <div class="hiw-lab__controls-inner">
+                    <fieldset class="hiw-fieldset">
+                        <legend class="hiw-fieldset__legend">Storm</legend>
+                        <div class="cs-segmented hiw-storms" id="lab-storms"></div>
+                        <p class="hiw-storms__description" id="lab-storm-description"></p>
+                    </fieldset>
+
+                    {% verbatim %}
+                    <fieldset class="hiw-fieldset">
+                        <legend class="hiw-fieldset__legend">Surface</legend>
+                        <div class="hiw-slider" data-hiw-param="area" data-scale="log" data-min="0.5" data-max="50" data-unit="ha">
+                            <label class="hiw-slider__label" for="lab-area">Area <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>A</span></label>
+                            <output class="hiw-slider__value" id="lab-area-value" for="lab-area"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-area" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="imperviousness" data-scale="linear" data-min="0" data-max="100" data-unit="%">
+                            <label class="hiw-slider__label" for="lab-imperviousness">Imperviousness <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>I</span></label>
+                            <output class="hiw-slider__value" id="lab-imperviousness-value" for="lab-imperviousness"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-imperviousness" min="0" max="100" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="width" data-scale="log" data-min="5" data-max="1000" data-unit="m">
+                            <label class="hiw-slider__label" for="lab-width">Width <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>W</span></label>
+                            <output class="hiw-slider__value" id="lab-width-value" for="lab-width"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-width" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="slope" data-scale="linear" data-min="0.1" data-max="30" data-unit="%">
+                            <label class="hiw-slider__label" for="lab-slope">Slope <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>S</span></label>
+                            <output class="hiw-slider__value" id="lab-slope-value" for="lab-slope"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-slope" min="0" max="299" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="hiw-fieldset">
+                        <legend class="hiw-fieldset__legend">Roughness and storage</legend>
+                        <div class="hiw-slider" data-hiw-param="nImperv" data-scale="log" data-min="0.005" data-max="0.05" data-unit="">
+                            <label class="hiw-slider__label" for="lab-nImperv">Manning's <i>n</i>, impervious <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>n_{\mathrm{imp}}</span></label>
+                            <output class="hiw-slider__value" id="lab-nImperv-value" for="lab-nImperv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-nImperv" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="nPerv" data-scale="log" data-min="0.02" data-max="1" data-unit="">
+                            <label class="hiw-slider__label" for="lab-nPerv">Manning's <i>n</i>, pervious <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>n_{\mathrm{perv}}</span></label>
+                            <output class="hiw-slider__value" id="lab-nPerv-value" for="lab-nPerv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-nPerv" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="storageImperv" data-scale="linear" data-min="0" data-max="5" data-unit="mm">
+                            <label class="hiw-slider__label" for="lab-storageImperv" title="Depression storage, impervious">Storage, impervious <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>d_{s,\mathrm{imp}}</span></label>
+                            <output class="hiw-slider__value" id="lab-storageImperv-value" for="lab-storageImperv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-storageImperv" aria-label="Depression storage, impervious" min="0" max="100" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="storagePerv" data-scale="linear" data-min="0" data-max="10" data-unit="mm">
+                            <label class="hiw-slider__label" for="lab-storagePerv" title="Depression storage, pervious">Storage, pervious <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>d_{s,\mathrm{perv}}</span></label>
+                            <output class="hiw-slider__value" id="lab-storagePerv-value" for="lab-storagePerv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-storagePerv" aria-label="Depression storage, pervious" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="zeroImperv" data-scale="linear" data-min="0" data-max="100" data-unit="%">
+                            <label class="hiw-slider__label" for="lab-zeroImperv" title="Impervious area without storage">Impervious without storage <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>z</span></label>
+                            <output class="hiw-slider__value" id="lab-zeroImperv-value" for="lab-zeroImperv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-zeroImperv" aria-label="Impervious area without storage" min="0" max="100" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="hiw-fieldset">
+                        <legend class="hiw-fieldset__legend">Soil</legend>
+                        <div class="hiw-slider" data-hiw-param="conductivity" data-scale="log" data-min="0.1" data-max="50" data-unit="mm/h">
+                            <label class="hiw-slider__label" for="lab-conductivity" title="Saturated hydraulic conductivity">Conductivity <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>K_s</span></label>
+                            <output class="hiw-slider__value" id="lab-conductivity-value" for="lab-conductivity"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-conductivity" aria-label="Saturated hydraulic conductivity" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                    </fieldset>
+                    {% endverbatim %}
+
+                    <div class="hiw-lab__reset">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="lab-reset">Reset to starting values</button>
+                        <p class="hiw-lab__reset-hint" id="lab-start-note">The tick on each slider marks its starting value.</p>
+                    </div>
+                    </div>
+                </div>
+
+                <div class="hiw-lab__stage">
+                    <figure class="hiw-panel hiw-reservoirs">
+                        <figcaption class="hiw-panel__header">
+                            <h3 class="hiw-panel__title">The three sub-areas</h3>
+                            <p class="hiw-panel__meta">Depths on a square-root scale</p>
+                        </figcaption>
+                        <div class="hiw-reservoirs__canvas" id="lab-reservoirs" role="img" aria-label="The three sub-areas"></div>
+                        <div class="hiw-time">
+                            <button type="button" class="btn btn-primary btn-sm hiw-time__play" id="lab-play">
+                                <svg class="hiw-time__icon hiw-time__icon--play" aria-hidden="true" viewBox="0 0 16 16"><path d="M4.5 2.8v10.4L13 8z" fill="currentColor"/></svg>
+                                <svg class="hiw-time__icon hiw-time__icon--pause" aria-hidden="true" viewBox="0 0 16 16"><path d="M4 3h3v10H4zM9 3h3v10H9z" fill="currentColor"/></svg>
+                                <span class="hiw-time__play-text">Play</span>
+                            </button>
+                            <label class="visually-hidden" for="lab-time">Time</label>
+                            <input class="form-range hiw-time__scrubber" type="range" id="lab-time" min="0" max="720" step="1" value="0">
+                            <p class="hiw-time__readout" aria-hidden="true">
+                                <span class="hiw-time__item"><span class="hiw-time__key">t</span> <span id="lab-time-value">0:00</span></span>
+                                <span class="hiw-time__item"><span class="hiw-time__key">i</span> <span id="lab-rain-value">0</span>&nbsp;mm/h</span>
+                            </p>
+                        </div>
+                    </figure>
+
+                    <figure class="hiw-panel hiw-hydrograph-card">
+                        <figcaption class="hiw-panel__header">
+                            <h3 class="hiw-panel__title">Hydrograph</h3>
+                            <ul class="hiw-legend" role="list" id="lab-legend">
+                                <li class="hiw-legend__item hiw-legend__item--rain">Rainfall</li>
+                                <li class="hiw-legend__item hiw-legend__item--runoff" data-hiw-legend="runoff">Runoff</li>
+                                <li class="hiw-legend__item hiw-legend__item--ghost" data-hiw-legend="ghost" hidden>Starting values</li>
+                                <li class="hiw-legend__item hiw-legend__item--sweep" data-hiw-legend="sweep" hidden>One line per value</li>
+                                <li class="hiw-legend__item hiw-legend__item--peak" data-hiw-legend="peak">Peak</li>
+                            </ul>
+                        </figcaption>
+                        <div class="hiw-hydrograph" id="lab-hydrograph" role="img" aria-label="Hydrograph"></div>
+                        <p class="hiw-panel__hint" id="lab-hydrograph-hint">Drag across the chart, or use the time slider above it, to move through the storm.</p>
+                    </figure>
+                </div>
+
+                <div class="hiw-lab__results">
+                    <h3 class="visually-hidden">Key numbers</h3>
+                    <dl class="cs-metrics hiw-metrics" id="lab-metrics">
+                        <div class="cs-metric" data-hiw-metric="peak">
+                            <dt class="cs-metric__label">Peak runoff</dt>
+                            <dd class="cs-metric__value"><span data-hiw-value></span><span class="cs-metric__unit">m³/s</span></dd>
+                            <dd class="hiw-metric__delta" data-hiw-delta></dd>
+                        </div>
+                        <div class="cs-metric" data-hiw-metric="timeToPeak">
+                            <dt class="cs-metric__label">Time to peak</dt>
+                            <dd class="cs-metric__value"><span data-hiw-value></span></dd>
+                            <dd class="hiw-metric__delta" data-hiw-delta></dd>
+                        </div>
+                        <div class="cs-metric" data-hiw-metric="volume">
+                            <dt class="cs-metric__label">Runoff volume</dt>
+                            <dd class="cs-metric__value"><span data-hiw-value></span><span class="cs-metric__unit">m³</span></dd>
+                            <dd class="hiw-metric__delta" data-hiw-delta></dd>
+                        </div>
+                        <div class="cs-metric" data-hiw-metric="coefficient">
+                            <dt class="cs-metric__label">Runoff coefficient</dt>
+                            <dd class="cs-metric__value"><span data-hiw-value></span><span class="cs-metric__unit">%</span></dd>
+                            <dd class="hiw-metric__delta" data-hiw-delta></dd>
+                        </div>
+                    </dl>
+
+                    <div class="hiw-balance">
+                        <h3 class="hiw-balance__title" id="lab-balance-title">Where the rain went</h3>
+                        <p class="hiw-balance__total" id="lab-balance-total"></p>
+                        <div class="hiw-balance__bar" id="lab-balance-bar" aria-hidden="true">
+                            <span class="hiw-balance__part hiw-balance__part--runoff" data-hiw-part="runoff"></span>
+                            <span class="hiw-balance__part hiw-balance__part--infiltration" data-hiw-part="infiltration"></span>
+                            <span class="hiw-balance__part hiw-balance__part--storage" data-hiw-part="storage"></span>
+                            <span class="hiw-balance__part hiw-balance__part--evaporation" data-hiw-part="evaporation"></span>
+                        </div>
+                        <dl class="hiw-balance__legend" aria-labelledby="lab-balance-title">
+                            <div class="hiw-balance__item hiw-balance__item--runoff" data-hiw-part="runoff"><dt>Runoff</dt><dd></dd></div>
+                            <div class="hiw-balance__item hiw-balance__item--infiltration" data-hiw-part="infiltration"><dt>Infiltration</dt><dd></dd></div>
+                            <div class="hiw-balance__item hiw-balance__item--storage" data-hiw-part="storage"><dt>Still on the surface</dt><dd></dd></div>
+                            <div class="hiw-balance__item hiw-balance__item--evaporation" data-hiw-part="evaporation"><dt>Evaporation</dt><dd></dd></div>
+                        </dl>
+                    </div>
+                </div>
+
+                <section class="hiw-lab__sweep hiw-sweep" aria-labelledby="lab-sweep-title">
+                    <div class="hiw-sweep__controls">
+                        <h3 class="hiw-sweep__title" id="lab-sweep-title">See a sweep</h3>
+                        <p class="hiw-sweep__lead">Run the model once for each of nine values of one parameter, spread over its slider.</p>
+                        <label class="form-label" for="lab-sweep-parameter">Parameter</label>
+                        <select class="form-select" id="lab-sweep-parameter">
+                            {% for guide in guides %}{% if guide.lab_key %}
+                            <option value="{{ guide.feature }}" data-hiw-param="{{ guide.lab_key }}"{% if guide.feature == 'PercImperv' %} selected{% endif %}>{{ guide.name }}</option>
+                            {% endif %}{% endfor %}
+                        </select>
+                        <button type="button" class="btn btn-primary hiw-sweep__run" id="lab-sweep-run">Run sweep</button>
+                        <p class="hiw-sweep__progress cs-mono" id="lab-sweep-progress" aria-hidden="true"></p>
+                        <div class="hiw-sweep__status" id="lab-sweep-status" role="status"></div>
+                    </div>
+                    <figure class="hiw-sweep__response">
+                        <figcaption class="hiw-sweep__response-header">
+                            <span class="hiw-sweep__response-title" id="lab-response-title">Response</span>
+                            <span class="cs-segmented hiw-sweep__toggle" role="radiogroup" aria-label="Quantity on the response curve">
+                                <input type="radio" class="btn-check" name="lab-response" id="lab-response-volume" value="volume" checked>
+                                <label class="btn cs-segmented__option" for="lab-response-volume">Volume</label>
+                                <input type="radio" class="btn-check" name="lab-response" id="lab-response-peak" value="peak">
+                                <label class="btn cs-segmented__option" for="lab-response-peak">Peak rate</label>
+                            </span>
+                        </figcaption>
+                        <div class="hiw-response" id="lab-response" role="img" aria-label="Response curve: run a sweep to fill it."></div>
+                        <table class="visually-hidden" id="lab-response-table">
+                            <caption>Results of the sweep</caption>
+                            <thead><tr><th scope="col">Value</th><th scope="col">Runoff volume [m³]</th><th scope="col">Peak runoff [m³/s]</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </figure>
+                </section>
+
+                {# Below xl: the run's headline numbers, docked while the sliders are in view and the hydrograph is not. #}
+                <div class="hiw-dock" id="lab-dock" aria-hidden="true">
+                    <svg class="hiw-dock__spark" viewBox="0 0 120 36" preserveAspectRatio="none" focusable="false">
+                        <path class="hiw-dock__ghost"/>
+                        <path class="hiw-dock__line"/>
+                    </svg>
+                    <p class="hiw-dock__numbers">
+                        <span class="hiw-dock__item"><span class="hiw-dock__key">Peak</span> <span data-hiw-dock="peak"></span>&nbsp;m³/s <span class="hiw-dock__change" data-hiw-dock="peakChange"></span></span>
+                        <span class="hiw-dock__item"><span class="hiw-dock__key">Volume</span> <span data-hiw-dock="volume"></span>&nbsp;m³ <span class="hiw-dock__change" data-hiw-dock="volumeChange"></span></span>
+                    </p>
+                </div>
+            </div>
+            <p class="hiw-note hiw-lab__footnote">SI units. The interactive model covers one subcatchment draining to its outlet, without snow, groundwater or LID controls.</p>
+            <template id="lab-sweep-done">
+                <p class="hiw-sweep__done">This is a parameter sweep: one run per value, everything else unchanged. The <a href="{% url 'main:simulation' %}">Simulation tool</a> does the same with the SWMM engine on your own model.</p>
+            </template>
+        </section>
+
         {# ── 4. Parameters ───────────────────────────────────────────── #}
         <section class="hiw-section" id="parameters" aria-labelledby="parameters-title">
             <p class="cs-eyebrow">Parameters</p>
             <h2 id="parameters-title">What each parameter does</h2>
-            <p class="hiw-prose">Each sweep in the tools changes one of these columns of the input file and leaves the rest of the model as it is.</p>
+            <p class="hiw-prose">Each sweep in the tools changes one of these columns of the input file and leaves the rest of the model as it is. The interactive model above can vary all of them except the curb length, which does not enter the runoff equations.</p>
             <div class="hiw-params">
                 {% for guide in guides %}
                 <article class="hiw-param" id="{{ guide.anchor }}" aria-labelledby="{{ guide.anchor }}-title">
                     <div class="hiw-param__head">
                         <h3 class="hiw-param__title" id="{{ guide.anchor }}-title">{{ guide.name }} <span class="hiw-param__symbol" data-cs-math>{{ guide.tex }}</span></h3>
                         <p class="hiw-param__column"><span class="cs-mono">{{ guide.section }}</span> <span class="cs-mono hiw-param__feature">{{ guide.feature }}</span></p>
+                        {% if guide.lab_key %}
+                        <button type="button" class="btn btn-sm btn-outline-primary hiw-param__try" data-hiw-try="{{ guide.feature }}" hidden>Try it in the model<span class="visually-hidden">: {{ guide.name }}</span></button>
+                        {% endif %}
                     </div>
                     <dl class="hiw-param__body">
                         <dt>Enters</dt>
@@ -278,6 +515,7 @@
                 <div class="hiw-equation__body" data-cs-math="display">d(t + \Delta t) = d(t) + \int_{t}^{t + \Delta t} \left[\, i - e - f - \alpha\,(d - d_s)^{5/3} \right] \mathrm{d}\tau</div>
                 <span class="hiw-equation__number">(10)</span>
             </div>
+            <p class="hiw-prose">The interactive model above follows the same procedure step by step. With the example model's settings it reproduces the engine's runoff volume, peak rate and infiltration to within 0.02&nbsp;%; the test suite checks this against SWMM itself.</p>
         </section>
 
         <section class="hiw-section" id="sweep" aria-labelledby="sweep-title">
@@ -395,5 +633,12 @@
 
 {% block additional_scripts %}
 <script src="{% static 'main/js/core/math.js' %}"></script>
+<script src="{% static 'main/js/model/runoff-model.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/svg.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/format.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/controls.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/reservoirs.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/hydrograph.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/response.js' %}"></script>
 <script src="{% static 'main/js/pages/how_it_works.js' %}"></script>
 {% endblock %}

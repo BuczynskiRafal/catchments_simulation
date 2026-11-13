@@ -4,7 +4,7 @@
  *
  * Page
  *   .hiw-docs                 table of contents (≥ lg) + .hiw-docs__body, as on the home page
- *   .hiw-section              one numbered topic (#pipeline, #model, …)
+ *   .hiw-section              one numbered topic (#pipeline, #model, #lab, …)
  *   .hiw-prose / .hiw-note    running text / small print
  *   [data-cs-math]            TeX typeset by CS.math; until then (or without JS) the source, legibly
  *   .hiw-equation             numbered display equation: __body (scrolls sideways when too wide)
@@ -13,6 +13,20 @@
  *   .hiw-pipeline             the four steps of a tool run; .hiw-pipeline__loop frames the repeated two
  *   .hiw-table-wrap           sideways scroll box for the symbols table
  *   .hiw-params / .hiw-param  parameter guide entries, link targets with a :target state
+ *
+ * Interactive model (#lab)
+ *   .hiw-lab                  the instrument: __controls, __stage, __results, __sweep on one surface;
+ *                             two columns from xl, stacked (stage first) below
+ *   .hiw-slider               labelled range with a live readout, a tick at the starting value
+ *                             (--hiw-start, 0…1, set by the page script) and the range ends
+ *   .hiw-panel                figure inside the stage: .hiw-reservoirs, .hiw-hydrograph-card
+ *   .hiw-res__*               the reservoir drawing (built by js/pages/how_it_works/reservoirs.js)
+ *   .hiw-chart__*             hydrograph and response curve (hydrograph.js, response.js)
+ *   .hiw-ramp-0 … -8          sequential teal ramp of sweep runs (value order = colour order); sets --hiw-ramp
+ *   .hiw-time                 play button, scrubber and readout
+ *   .hiw-legend               chart legend with drawn swatches
+ *   .hiw-balance              "Where the rain went": stacked bar (parts sized by --hiw-share) + legend
+ *   .hiw-sweep                sweep demonstration: controls + response curve
  */
 
 /* ------------------------------------------------------------------ */
@@ -176,7 +190,8 @@
 
 /* Symbols in drawings: the italic of the typeset equations. */
 .hiw-schematic__symbol,
-.hiw-net__labels text {
+.hiw-net__labels text,
+.hiw-res__symbol {
     font-family: KaTeX_Math, "Times New Roman", serif;
     font-style: italic;
 }
@@ -483,6 +498,1150 @@
 }
 
 /* ------------------------------------------------------------------ */
+/* Interactive model: frame                                            */
+/* ------------------------------------------------------------------ */
+
+.hiw-lab {
+    --hiw-pad: 1.25rem;
+    display: grid;
+    /* Stacked: the sliders follow the figures they move, the key numbers come after them. */
+    grid-template-areas:
+        "stage"
+        "controls"
+        "results"
+        "sweep";
+    margin-top: 1.5rem;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius-lg);
+    background-color: var(--cs-surface);
+    box-shadow: var(--cs-shadow);
+}
+
+/* [hidden] until the script has set the model up. */
+.hiw-lab[hidden] {
+    display: none;
+}
+
+.hiw-lab__controls,
+.hiw-lab__stage,
+.hiw-lab__results,
+.hiw-lab__sweep {
+    min-width: 0;
+    padding: var(--hiw-pad);
+}
+
+.hiw-lab__controls {
+    grid-area: controls;
+    border-block: 1px solid var(--cs-line);
+}
+
+.hiw-lab__stage {
+    grid-area: stage;
+    display: grid;
+    gap: 1.25rem;
+}
+
+.hiw-lab__results {
+    grid-area: results;
+    display: grid;
+    gap: 1.25rem;
+}
+
+.hiw-lab__sweep {
+    grid-area: sweep;
+    border-top: 1px solid var(--cs-line);
+}
+
+@media (max-width: 575.98px) {
+    .hiw-lab {
+        --hiw-pad: 0.875rem;
+        border-radius: var(--cs-radius);
+    }
+}
+
+/* Between md and xl the controls sit in two columns under the stage. */
+@media (min-width: 768px) and (max-width: 1199.98px) {
+    .hiw-lab__controls-inner {
+        columns: 2;
+        column-gap: 2rem;
+    }
+
+    .hiw-lab__controls-inner > * {
+        break-inside: avoid;
+    }
+
+    /* Storm and surface fill the first column; roughness, soil and reset the second. */
+    .hiw-lab__controls-inner > .hiw-fieldset:nth-of-type(3) {
+        break-before: column;
+    }
+}
+
+@media (min-width: 1200px) {
+    .hiw-lab {
+        grid-template-columns: 19.5rem minmax(0, 1fr);
+        grid-template-rows: auto auto 1fr;
+        grid-template-areas:
+            "controls stage"
+            "controls results"
+            "controls sweep";
+    }
+
+    .hiw-lab__results {
+        padding-top: 0;
+    }
+
+    /* The cell keeps the divider the full height of the lab; its contents stick under the
+       site header while the stage scrolls, and scroll themselves on a short viewport. */
+    .hiw-lab__controls {
+        padding: 0;
+        border-block: 0;
+        border-right: 1px solid var(--cs-line);
+    }
+
+    .hiw-lab__controls-inner {
+        --hiw-stick: calc(var(--cs-header-h) + 1rem);
+        position: sticky;
+        top: var(--hiw-stick);
+        max-height: calc(100vh - var(--hiw-stick) - 1rem);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 1rem var(--hiw-pad);
+        scrollbar-width: thin;
+    }
+
+    /* Compact: the readout already shows the value, so the range ends go. */
+    .hiw-lab__controls .hiw-slider__bound {
+        display: none;
+    }
+
+    .hiw-lab__controls .hiw-fieldset {
+        margin-bottom: 1rem;
+    }
+
+    .hiw-lab__controls .hiw-fieldset__legend {
+        margin-bottom: 0.375rem;
+    }
+
+    .hiw-lab__controls .hiw-slider + .hiw-slider {
+        margin-top: 0.25rem;
+    }
+
+    .hiw-lab__controls .hiw-storms__description {
+        min-height: 0;
+        margin-top: 0.375rem;
+    }
+
+    .hiw-lab__controls .hiw-storms .cs-segmented__option {
+        --bs-btn-padding-y: 0.3rem;
+    }
+
+    .hiw-lab__controls .hiw-slider__input {
+        height: 1.25rem;
+    }
+
+    /* Beside the stage the ticks speak for themselves; the hint stays for the stacked layout. */
+    .hiw-lab__controls .hiw-lab__reset-hint {
+        display: none;
+    }
+}
+
+.hiw-lab__noscript {
+    max-width: 70ch;
+    margin-top: 1rem;
+}
+
+.hiw-lab__footnote {
+    margin: 0.75rem 0 0;
+    font-size: var(--cs-fs-caption);
+}
+
+/* ------------------------------------------------------------------ */
+/* Interactive model: controls                                         */
+/* ------------------------------------------------------------------ */
+
+.hiw-fieldset {
+    min-width: 0;
+    margin: 0 0 1.5rem;
+    padding: 0;
+    border: 0;
+}
+
+.hiw-fieldset__legend {
+    float: none;
+    margin-bottom: 0.75rem;
+    color: var(--cs-ink-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.hiw-storms {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.25rem;
+}
+
+.hiw-storms .cs-segmented__option {
+    --bs-btn-padding-x: 0.5rem;
+    --bs-btn-font-size: var(--cs-fs-caption);
+    white-space: nowrap;
+}
+
+.hiw-storms__description {
+    min-height: 2.6em;
+    margin: 0.625rem 0 0;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+.hiw-slider {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    column-gap: 0.75rem;
+}
+
+.hiw-slider + .hiw-slider {
+    margin-top: 0.875rem;
+}
+
+.hiw-slider__label {
+    min-width: 0;
+    font-size: var(--cs-fs-small);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hiw-slider__symbol {
+    margin-left: 0.125rem;
+    color: var(--cs-ink-muted);
+    font-weight: 400;
+}
+
+.hiw-slider__value {
+    color: var(--cs-ink);
+    font-family: var(--cs-font-mono);
+    font-size: var(--cs-fs-small);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.hiw-slider__track {
+    position: relative;
+    grid-column: 1 / -1;
+}
+
+.hiw-slider__input {
+    display: block;
+    position: relative;
+    z-index: 1;
+}
+
+/* Below xl a focused slider stays clear of the docked readout. */
+@media (max-width: 1199.98px) {
+    .hiw-slider__input {
+        scroll-margin-bottom: 6rem;
+    }
+}
+
+/* The starting value: a notch under the track, aligned with the thumb's centre (Bootstrap thumb: 1rem). */
+.hiw-slider__tick {
+    position: absolute;
+    top: calc(50% + 0.3125rem);
+    left: calc(0.5rem + (100% - 1rem) * var(--hiw-start, 0));
+    width: 2px;
+    height: 0.4375rem;
+    margin-left: -1px;
+    border-radius: 1px;
+    background-color: var(--cs-ink-muted);
+}
+
+.hiw-slider__bound {
+    margin-top: -0.125rem;
+    color: var(--cs-ink-muted);
+    font-family: var(--cs-font-mono);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.hiw-slider__bound--max {
+    text-align: right;
+}
+
+.hiw-lab__reset {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.875rem;
+}
+
+.hiw-lab__reset-hint {
+    flex: 1 1 10rem;
+    margin: 0;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+/* ------------------------------------------------------------------ */
+/* Interactive model: stage panels                                     */
+/* ------------------------------------------------------------------ */
+
+.hiw-panel {
+    min-width: 0;
+    margin: 0;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+    background-color: var(--cs-surface);
+}
+
+.hiw-panel__header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+    padding: 0.75rem 1rem 0;
+}
+
+.hiw-panel__title {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.hiw-panel__meta,
+.hiw-panel__hint {
+    margin: 0;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+.hiw-panel__hint {
+    padding: 0 1rem 0.75rem;
+}
+
+.hiw-reservoirs__canvas {
+    min-height: 272px; /* the drawing's height, reserved so nothing jumps when it is drawn */
+    margin: 0.75rem 0.75rem 0.25rem;
+}
+
+/* The chart's width decides its height (hydrograph.js): 248 px under 520 px, 300 px from there.
+   The card is the query container: 520 px of chart = 544 px of card content (margins 2 × 0.75rem). */
+.hiw-hydrograph-card {
+    container-type: inline-size;
+}
+
+.hiw-hydrograph {
+    min-height: 248px;
+    margin: 0.75rem 0.75rem 0.25rem;
+    border-radius: var(--cs-radius-sm);
+    cursor: crosshair;
+    touch-action: pan-y;
+}
+
+@container (min-width: 544px) {
+    .hiw-hydrograph {
+        min-height: 300px;
+    }
+}
+
+/* Legend with drawn swatches (the chart's own marks). */
+.hiw-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    margin: 0;
+    padding: 0;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+    list-style: none;
+}
+
+.hiw-legend__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.hiw-legend__item[hidden] {
+    display: none;
+}
+
+.hiw-legend__item::before {
+    content: "";
+    flex: none;
+    width: 1rem;
+    height: 0;
+    border-top: 2.5px solid var(--cs-water);
+}
+
+.hiw-legend__item--rain::before {
+    width: 0.625rem;
+    height: 0.75rem;
+    border: 0;
+    background-color: var(--cs-rain);
+    opacity: 0.8;
+}
+
+.hiw-legend__item--ghost::before {
+    border-top: 1.5px dashed var(--cs-ink-muted);
+}
+
+.hiw-legend__item--sweep::before {
+    height: 0.375rem;
+    border: 0;
+    border-radius: 1px;
+    background-image: linear-gradient(to right, var(--hiw-ramp-low), var(--hiw-ramp-high));
+}
+
+.hiw-legend__item--peak::before {
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-inline: 0.125rem;
+    border: 0;
+    background-color: var(--cs-ochre);
+    transform: rotate(45deg);
+}
+
+/* Time control */
+.hiw-time {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.875rem;
+    padding: 0.5rem 1rem 0.875rem;
+}
+
+.hiw-time__play {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-width: 5.25rem;
+    justify-content: center;
+}
+
+.hiw-time__icon {
+    width: 0.875rem;
+    height: 0.875rem;
+}
+
+.hiw-time__play .hiw-time__icon--pause,
+.hiw-time__play.is-playing .hiw-time__icon--play {
+    display: none;
+}
+
+.hiw-time__play.is-playing .hiw-time__icon--pause {
+    display: block;
+}
+
+.hiw-time__scrubber {
+    flex: 1 1 8rem;
+    min-width: 8rem;
+}
+
+.hiw-time__readout {
+    display: flex;
+    gap: 1rem;
+    margin: 0;
+    font-family: var(--cs-font-mono);
+    font-size: var(--cs-fs-small);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.hiw-time__item {
+    min-width: 4.25rem;
+}
+
+.hiw-time__item + .hiw-time__item {
+    min-width: 7rem;
+}
+
+.hiw-time__key {
+    color: var(--cs-ink-muted);
+    font-family: KaTeX_Math, "Times New Roman", serif;
+    font-size: 1.05em;
+    font-style: italic;
+}
+
+/* ------------------------------------------------------------------ */
+/* Interactive model: drawings                                         */
+/* ------------------------------------------------------------------ */
+
+.hiw-lab {
+    /* Ends of the sweep ramp, as in CS.charts: water towards the surface (3:1 kept),
+       water-strong most of the way to the ink. */
+    --hiw-ramp-low: color-mix(in srgb, var(--cs-water) 70%, var(--cs-surface));
+    --hiw-ramp-high: color-mix(in srgb, var(--cs-ink) 85%, var(--cs-water-strong));
+}
+
+[data-bs-theme="dark"] .hiw-lab {
+    --hiw-ramp-low: color-mix(in srgb, var(--cs-water) 56%, var(--cs-surface));
+    --hiw-ramp-high: color-mix(in srgb, var(--cs-ink) 90%, var(--cs-water-strong));
+}
+
+.hiw-ramp-0 { --hiw-ramp: var(--hiw-ramp-low); }
+.hiw-ramp-1 { --hiw-ramp: color-mix(in srgb, var(--hiw-ramp-high) 12.5%, var(--hiw-ramp-low)); }
+.hiw-ramp-2 { --hiw-ramp: color-mix(in srgb, var(--hiw-ramp-high) 25%, var(--hiw-ramp-low)); }
+.hiw-ramp-3 { --hiw-ramp: color-mix(in srgb, var(--hiw-ramp-high) 37.5%, var(--hiw-ramp-low)); }
+.hiw-ramp-4 { --hiw-ramp: color-mix(in srgb, var(--hiw-ramp-high) 50%, var(--hiw-ramp-low)); }
+.hiw-ramp-5 { --hiw-ramp: color-mix(in srgb, var(--hiw-ramp-high) 62.5%, var(--hiw-ramp-low)); }
+.hiw-ramp-6 { --hiw-ramp: color-mix(in srgb, var(--hiw-ramp-high) 75%, var(--hiw-ramp-low)); }
+.hiw-ramp-7 { --hiw-ramp: color-mix(in srgb, var(--hiw-ramp-high) 87.5%, var(--hiw-ramp-low)); }
+.hiw-ramp-8 { --hiw-ramp: var(--hiw-ramp-high); }
+
+.hiw-res,
+.hiw-chart {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    overflow: visible;
+    font-family: var(--cs-font-body);
+}
+
+/* Reservoirs */
+.hiw-res__name {
+    fill: var(--cs-ink);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.hiw-res__share,
+.hiw-res__value,
+.hiw-res__outlet,
+.hiw-res__ticks text,
+.hiw-res__axis-unit {
+    font-family: var(--cs-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.hiw-res__share {
+    fill: var(--cs-ink-muted);
+    font-size: 12px;
+}
+
+.hiw-res__ticks text,
+.hiw-res__axis-unit {
+    fill: var(--cs-ink-muted);
+    font-size: 10.5px;
+}
+
+.hiw-res__grid {
+    fill: none;
+    stroke: var(--cs-line);
+    stroke-width: 1;
+}
+
+.hiw-res__interior {
+    fill: var(--cs-surface-sunken);
+}
+
+.hiw-res__water {
+    fill: var(--cs-water);
+    fill-opacity: 0.26;
+}
+
+.hiw-res__surface {
+    fill: none;
+    stroke: var(--cs-water);
+    stroke-width: 2;
+}
+
+.hiw-res__storage {
+    fill: none;
+    stroke: var(--cs-ink-muted);
+    stroke-dasharray: 4 3;
+    stroke-width: 1.25;
+}
+
+.hiw-res__walls {
+    fill: none;
+    stroke: var(--cs-ink-muted);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.hiw-res__value {
+    fill: var(--cs-ink);
+    font-size: 11.5px;
+}
+
+.hiw-res__value--muted {
+    fill: var(--cs-ink-muted);
+}
+
+.hiw-res__symbol {
+    font-size: 13.5px;
+}
+
+.hiw-res__sub {
+    font-size: 9px;
+}
+
+.hiw-res__drop {
+    fill: none;
+    stroke: var(--cs-rain);
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    opacity: 0;
+}
+
+.hiw-res__drop.is-on {
+    opacity: 1;
+}
+
+/* Rain falls only while the storm plays. */
+@keyframes hiw-fall {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+
+    30% {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+}
+
+.hiw-res.is-playing .hiw-res__drop.is-on {
+    animation: hiw-fall 640ms linear infinite;
+}
+
+.hiw-res__drop:nth-child(3n + 1) { animation-delay: -210ms; }
+.hiw-res__drop:nth-child(3n + 2) { animation-delay: -430ms; }
+
+.hiw-res__soil {
+    fill: url(#hiw-res-soil);
+}
+
+.hiw-res__hatch {
+    stroke: var(--cs-soil);
+    stroke-opacity: 0.4;
+    stroke-width: 1.5;
+}
+
+.hiw-res__infiltration {
+    fill: none;
+    stroke: var(--cs-soil);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0;
+}
+
+.hiw-res__infiltration.is-on {
+    opacity: 1;
+}
+
+.hiw-res__value--soil {
+    fill: var(--cs-ink);
+}
+
+.hiw-res__bed {
+    fill: none;
+    stroke: var(--cs-line);
+    stroke-width: 2;
+}
+
+.hiw-res__stream {
+    fill: none;
+    stroke: var(--cs-water);
+    stroke-linecap: round;
+}
+
+.hiw-res__outlet-arrow {
+    fill: var(--cs-water);
+}
+
+.hiw-res__outlet {
+    fill: var(--cs-ink);
+    font-size: 12.5px;
+}
+
+/* A sub-area with no share of the area: an outline only. */
+.hiw-res__tank.is-empty .hiw-res__walls {
+    stroke: var(--cs-line);
+    stroke-dasharray: 4 4;
+}
+
+.hiw-res__tank.is-empty .hiw-res__name {
+    fill: var(--cs-ink-muted);
+    font-weight: 500;
+}
+
+.hiw-res__tank.is-empty :is(.hiw-res__interior, .hiw-res__water, .hiw-res__surface, .hiw-res__storage,
+    .hiw-res__value, .hiw-res__stream, .hiw-res__soil, .hiw-res__infiltration, .hiw-res__rain) {
+    display: none;
+}
+
+/* Charts */
+.hiw-chart__grid {
+    fill: none;
+    stroke: var(--cs-line);
+    stroke-width: 1;
+    opacity: 0.7;
+}
+
+.hiw-chart__axis {
+    fill: none;
+    stroke: var(--cs-line);
+    stroke-width: 1;
+}
+
+.hiw-chart__tick {
+    fill: var(--cs-ink-muted);
+    font-family: var(--cs-font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.hiw-chart__title {
+    fill: var(--cs-ink-muted);
+    font-size: 12px;
+}
+
+.hiw-chart__rain {
+    fill: var(--cs-rain);
+    fill-opacity: 0.7;
+}
+
+.hiw-chart__rain-now {
+    fill: var(--cs-rain);
+}
+
+.hiw-chart__runoff,
+.hiw-chart__ghost,
+.hiw-chart__sweep-line,
+.hiw-chart__response-line {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.hiw-chart__runoff {
+    stroke: var(--cs-water);
+    stroke-width: 2.25;
+}
+
+.hiw-chart__ghost {
+    stroke: var(--cs-ink-muted);
+    stroke-dasharray: 5 4;
+    stroke-width: 1.5;
+}
+
+.hiw-chart__sweep-line {
+    stroke: var(--hiw-ramp);
+    stroke-width: 1.75;
+}
+
+.hiw-chart__peak-mark {
+    fill: var(--cs-ochre);
+    stroke: var(--cs-surface);
+    stroke-width: 2;
+}
+
+.hiw-chart__peak-leader {
+    fill: none;
+    stroke: var(--cs-ochre);
+    stroke-width: 1;
+}
+
+.hiw-chart__peak-box {
+    fill: var(--cs-surface);
+    stroke: var(--cs-line);
+}
+
+.hiw-chart__peak-text {
+    fill: var(--cs-ink);
+    font-family: var(--cs-font-mono);
+    font-size: 11px;
+}
+
+.hiw-chart__cursor {
+    fill: none;
+    stroke: var(--cs-ink);
+    stroke-opacity: 0.5;
+    stroke-width: 1;
+}
+
+.hiw-chart__cursor-dot {
+    fill: var(--cs-water);
+    stroke: var(--cs-surface);
+    stroke-width: 2;
+}
+
+.hiw-chart__response-line {
+    stroke: var(--cs-ink-muted);
+    stroke-width: 1.25;
+}
+
+.hiw-chart__point {
+    fill: var(--hiw-ramp);
+    stroke: var(--cs-surface);
+    stroke-width: 1.5;
+}
+
+.hiw-chart__start {
+    fill: none;
+    stroke: var(--cs-ink-muted);
+    stroke-dasharray: 3 3;
+    stroke-width: 1;
+}
+
+.hiw-chart__start-text {
+    fill: var(--cs-ink-muted);
+    font-size: 11px;
+}
+
+.hiw-chart__empty {
+    fill: var(--cs-ink-muted);
+    font-size: 13px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Interactive model: key numbers and water balance                    */
+/* ------------------------------------------------------------------ */
+
+.hiw-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.625rem;
+    margin: 0;
+}
+
+@media (min-width: 768px) {
+    .hiw-metrics {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+.hiw-metrics .cs-metric {
+    padding: 0.75rem 0.875rem;
+    border-color: transparent;
+    background-color: var(--cs-surface-sunken);
+}
+
+.hiw-metrics .cs-metric__label {
+    letter-spacing: 0.04em;
+}
+
+.hiw-metrics dd {
+    margin: 0;
+}
+
+.hiw-metrics .cs-metric__value {
+    font-size: 1.25rem;
+    white-space: nowrap;
+}
+
+.hiw-metric__delta {
+    margin-top: 0.25rem;
+    color: var(--cs-ink-muted);
+    font-family: var(--cs-font-mono);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.hiw-balance {
+    padding: 0.875rem 1rem 1rem;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+}
+
+.hiw-balance__title {
+    display: inline;
+    margin: 0 0.5rem 0 0;
+    font-family: var(--cs-font-body);
+    font-size: 0.9375rem;
+    font-stretch: normal;
+    font-weight: 600;
+    letter-spacing: 0;
+}
+
+.hiw-balance__total {
+    display: inline;
+    margin: 0;
+    color: var(--cs-ink-muted);
+    font-family: var(--cs-font-mono);
+    font-size: var(--cs-fs-caption);
+}
+
+.hiw-balance__bar {
+    display: flex;
+    height: 0.875rem;
+    margin: 0.75rem 0 0.75rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background-color: var(--cs-surface-sunken);
+}
+
+.hiw-balance__part {
+    flex: 0 0 calc(var(--hiw-share, 0) * 100%);
+    min-width: 0;
+}
+
+.hiw-balance__part + .hiw-balance__part {
+    box-shadow: inset 1.5px 0 0 var(--cs-surface);
+}
+
+.hiw-balance__part[hidden] {
+    display: none;
+}
+
+.hiw-balance__part--runoff,
+.hiw-balance__item--runoff dt::before {
+    background-color: var(--cs-water);
+}
+
+.hiw-balance__part--infiltration,
+.hiw-balance__item--infiltration dt::before {
+    background-color: var(--cs-soil);
+}
+
+.hiw-balance__part--storage,
+.hiw-balance__item--storage dt::before {
+    background-color: color-mix(in srgb, var(--cs-rain) 55%, var(--cs-surface));
+}
+
+.hiw-balance__part--evaporation,
+.hiw-balance__item--evaporation dt::before {
+    background-color: var(--cs-evap);
+}
+
+.hiw-balance__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem 1.5rem;
+    margin: 0;
+    font-size: var(--cs-fs-caption);
+}
+
+.hiw-balance__item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 0.5rem;
+}
+
+.hiw-balance__item[hidden] {
+    display: none;
+}
+
+.hiw-balance__item dt {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-weight: 500;
+}
+
+.hiw-balance__item dt::before {
+    content: "";
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 2px;
+}
+
+.hiw-balance__item dd {
+    margin: 0;
+    color: var(--cs-ink-muted);
+    font-family: var(--cs-font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ */
+/* Interactive model: sweep                                            */
+/* ------------------------------------------------------------------ */
+
+.hiw-sweep {
+    display: grid;
+    gap: 1.25rem;
+}
+
+/* Side by side where the stage is wide: the full-width lab below xl, the wide stage from 1400 px. */
+@media (min-width: 768px) and (max-width: 1199.98px), (min-width: 1400px) {
+    .hiw-sweep {
+        grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+        gap: 1.5rem;
+        align-items: start;
+    }
+}
+
+.hiw-sweep__title {
+    margin: 0 0 0.25rem;
+    font-size: 1.0625rem;
+}
+
+.hiw-sweep__lead {
+    margin: 0 0 1rem;
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-caption);
+}
+
+.hiw-sweep__controls .form-label {
+    margin-bottom: 0.25rem;
+    font-size: var(--cs-fs-small);
+    font-weight: 500;
+}
+
+.hiw-sweep__run {
+    width: 100%;
+    margin-top: 0.75rem;
+}
+
+.hiw-sweep__progress {
+    min-height: 1.25rem;
+    margin: 0.625rem 0 0;
+    color: var(--cs-ink-muted);
+    font-size: 0.75rem;
+}
+
+.hiw-sweep__status {
+    font-size: var(--cs-fs-caption);
+}
+
+.hiw-sweep__status:empty {
+    display: none;
+}
+
+.hiw-sweep__status,
+.hiw-sweep__done {
+    margin: 0.5rem 0 0;
+}
+
+.hiw-sweep__done {
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid var(--cs-water);
+    border-radius: 0 var(--cs-radius-sm) var(--cs-radius-sm) 0;
+    background-color: var(--cs-surface-sunken);
+}
+
+.hiw-sweep__response {
+    min-width: 0;
+    margin: 0;
+    border: 1px solid var(--cs-line);
+    border-radius: var(--cs-radius);
+}
+
+.hiw-sweep__response-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.625rem 0.75rem 0 1rem;
+}
+
+.hiw-sweep__response-title {
+    font-size: var(--cs-fs-small);
+    font-weight: 600;
+}
+
+.hiw-sweep__toggle .cs-segmented__option {
+    --bs-btn-padding-y: 0.2rem;
+    --bs-btn-padding-x: 0.625rem;
+    --bs-btn-font-size: var(--cs-fs-caption);
+}
+
+.hiw-response {
+    min-height: 224px;
+    margin: 0.5rem 0.5rem 0.25rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Interactive model: docked readout (below xl)                        */
+/* ------------------------------------------------------------------ */
+
+/* Fixed, so showing it never moves the page; .is-shown is set by the page script. */
+.hiw-dock {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1010;
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    padding: 0.5rem max(1rem, env(safe-area-inset-right)) calc(0.5rem + env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+    border-top: 1px solid var(--cs-line);
+    background-color: var(--cs-surface);
+    box-shadow: 0 -4px 12px rgb(15 34 51 / 0.08);
+    visibility: hidden;
+    transform: translateY(100%);
+    transition: transform 160ms ease, visibility 0s linear 160ms;
+}
+
+[data-bs-theme="dark"] .hiw-dock {
+    box-shadow: 0 -4px 12px rgb(0 0 0 / 0.4);
+}
+
+.hiw-dock.is-shown {
+    visibility: visible;
+    transform: none;
+    transition: transform 160ms ease, visibility 0s;
+}
+
+@media (min-width: 1200px) {
+    .hiw-dock {
+        display: none;
+    }
+}
+
+.hiw-dock__spark {
+    flex: none;
+    width: 6.5rem;
+    height: 2.25rem;
+    border-bottom: 1px solid var(--cs-line);
+}
+
+.hiw-dock__line,
+.hiw-dock__ghost {
+    fill: none;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+
+.hiw-dock__line {
+    stroke: var(--cs-water);
+    stroke-width: 2;
+}
+
+.hiw-dock__ghost {
+    stroke: var(--cs-ink-muted);
+    stroke-dasharray: 3 3;
+    stroke-width: 1.25;
+}
+
+.hiw-dock__numbers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.125rem 1.25rem;
+    margin: 0;
+    font-family: var(--cs-font-mono);
+    font-size: var(--cs-fs-caption);
+    font-variant-numeric: tabular-nums;
+}
+
+.hiw-dock__item {
+    white-space: nowrap;
+}
+
+.hiw-dock__key {
+    color: var(--cs-ink-muted);
+    font-family: var(--cs-font-body);
+    font-weight: 600;
+}
+
+.hiw-dock__change {
+    color: var(--cs-ink-muted);
+}
+
+/* ------------------------------------------------------------------ */
 /* Parameter guide                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -582,4 +1741,15 @@
 
 .hiw-references cite {
     font-style: italic;
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion preferences                                                  */
+/* ------------------------------------------------------------------ */
+
+/* app.css shortens every animation to its end state; the rain would then vanish, so it stands still. */
+@media (prefers-reduced-motion: reduce) {
+    .hiw-res.is-playing .hiw-res__drop.is-on {
+        animation: none;
+    }
 }

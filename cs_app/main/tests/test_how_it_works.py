@@ -11,6 +11,7 @@ from main.guide import PARAMETER_GUIDE
 SECTION_ANCHORS = (
     "pipeline",
     "model",
+    "lab",
     "parameters",
     "infiltration",
     "numerics",
@@ -53,6 +54,13 @@ def test_every_parameter_is_explained(html, feature):
     text = entry.group(0)
     for value in (guide.name, guide.feature, guide.section, guide.where, guide.role, guide.effect):
         assert escape(value) in text, (feature, value)
+    assert ('data-hiw-try="' + feature + '"' in text) is (guide.lab_key is not None)
+
+
+@pytest.mark.django_db
+def test_sweep_picker_lists_every_parameter_of_the_model(html):
+    options = dict(re.findall(r'<option value="([^"]+)" data-hiw-param="([^"]+)"', html))
+    assert options == {f: g.lab_key for f, g in PARAMETER_GUIDE.items() if g.lab_key}
 
 
 @pytest.mark.django_db
@@ -94,6 +102,13 @@ def test_katex_loads_with_subresource_integrity(html):
         assert tag, asset
         assert 'integrity="sha384-' in tag.group(0)
         assert 'crossorigin="anonymous"' in tag.group(0)
+
+
+@pytest.mark.django_db
+def test_lab_needs_javascript_and_says_so(html):
+    assert re.search(r'<div class="hiw-lab" id="hiw-lab" hidden>', html)
+    assert "<noscript>" in html
+    assert "needs JavaScript" in html
 
 
 @pytest.mark.django_db
