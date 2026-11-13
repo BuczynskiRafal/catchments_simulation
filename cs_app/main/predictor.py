@@ -4,7 +4,8 @@ This module contains functions to predict runoff using a machine learning model.
 The model weights are loaded from the 'swmm_model' directory.
 The predict_runoff function takes a SWMM model object as input and returns an array of
 predicted runoff values for each subcatchment; prediction_inputs returns what the
-network reads for each one, and network_payload describes the network itself.
+network reads for each one, and network_payload describes the network itself for the
+diagram on the calculations page.
 
 This is a pure NumPy implementation - no TensorFlow/Keras required.
 """
@@ -303,7 +304,7 @@ def predict_runoff(swmmio_model: swmmio.Model) -> np.ndarray:
 
 def network_payload() -> dict:
     """
-    The loaded network as JSON-ready data.
+    The loaded network as JSON-ready data, for drawing it in the browser.
 
     ``features`` lists the 8 inputs in order (``key``: the SWMM column, ``label``: its
     name in the parameter guide, ``short``: a label that fits the diagram, ``unit``: the

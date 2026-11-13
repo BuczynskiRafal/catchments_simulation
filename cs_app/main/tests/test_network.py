@@ -1,4 +1,4 @@
-"""The network as data: its inputs per subcatchment and its payload."""
+"""The network as data: its inputs per subcatchment, its payload, and the calculations page that draws it."""
 
 import json
 import os
@@ -196,6 +196,54 @@ def calc_client(client, user, monkeypatch):
 def _embedded_json(html: str, element_id: str):
     match = re.search(rf'<script id="{element_id}" type="application/json">(.*?)</script>', html)
     return json.loads(match.group(1)) if match else None
+
+
+@pytest.mark.django_db
+def test_page_embeds_the_network_before_any_run(client):
+    html = client.get(reverse("main:calculations")).content.decode()
+
+    assert _embedded_json(html, "calculations-network") == json.loads(json.dumps(network_payload()))
+    assert 'id="calc-network-title"' in html
+    assert f'href="{reverse("main:how_it_works")}#network"' in html
+    assert "The equations behind the network" in html
+
+
+@pytest.mark.django_db
+def test_failed_run_page_still_embeds_the_network(client, user):
+    """The no-JS error path renders the full page, diagram data included."""
+    client.force_login(user)
+
+    html = client.post(reverse("main:calculations"), follow=True).content.decode()
+
+    assert "Please upload a file first." in html
+    assert _embedded_json(html, "calculations-network") is not None
+
+
+@pytest.mark.django_db
+def test_page_renders_without_the_diagram_when_the_weights_cannot_be_loaded(client, monkeypatch):
+    def unavailable():
+        raise FileNotFoundError("weights.npz")
+
+    monkeypatch.setattr("main.views.network_payload", unavailable)
+
+    response = client.get(reverse("main:calculations"))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert _embedded_json(html, "calculations-network") is None
+    assert 'id="run-calculations-button"' in html
+    # A note in place of the diagram; the explanation and the equations link stay.
+    assert (
+        '<p class="calc-net__unavailable" id="calc-network-unavailable">'
+        "The network diagram is not available right now.</p>"
+    ) in html
+    for absent in (
+        "calc-network-stage",
+        "calc-network-diagram",
+    ):
+        assert f'id="{absent}"' not in html
+    assert 'class="calc-net__intro"' in html
+    assert "The equations behind the network" in html
 
 
 @pytest.mark.django_db

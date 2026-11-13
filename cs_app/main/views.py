@@ -88,7 +88,7 @@ from main.insights import (
     suggested_ranges,
     water_balance,
 )
-from main.predictor import predict_runoff, prediction_inputs
+from main.predictor import network_payload, predict_runoff, prediction_inputs
 from main.schemas import ContactMessage
 from main.services import send_message
 from main.units import (
@@ -1888,9 +1888,16 @@ def calculations(request: HttpRequest) -> HttpResponse:
 
 
 def _calculations_page_context(request: HttpRequest) -> dict:
-    """The session's last comparison and whether a model is loaded."""
+    """The session's last comparison and the network the page draws next to it."""
+    try:
+        network = network_payload()
+    except Exception:
+        # The page still compares and explains; only the diagram is left out.
+        logger.exception("The network weights could not be loaded for the calculations page")
+        network = None
     return {
         "comparison": _load_comparison(request),
+        "network": network,
         "has_model": _has_session_model(request),
     }
 
