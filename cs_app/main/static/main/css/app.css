@@ -209,7 +209,7 @@ code, kbd, samp, pre {
     padding-left: 0.75rem;
 }
 
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
     .cs-header .navbar-nav .nav-link,
     .cs-header .navbar-nav .nav-link[aria-current="page"] {
         padding-inline: 0.75rem;
@@ -239,7 +239,7 @@ code, kbd, samp, pre {
  * of the brand and of the tools (two auth buttons, or the account menu). The collapse
  * wrapper steps out of the layout (display: contents) to make its two lists grid items.
  */
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
     .cs-header .navbar > .container {
         display: grid;
         grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
@@ -247,7 +247,7 @@ code, kbd, samp, pre {
         column-gap: 1rem;
     }
 
-    .cs-header .navbar-expand-lg .navbar-collapse {
+    .cs-header .navbar-expand-xl .navbar-collapse {
         display: contents !important;
     }
 
@@ -265,15 +265,8 @@ code, kbd, samp, pre {
     }
 }
 
-/* Between lg and xl the row is only just wide enough: the wordmark stacks on two lines. */
-@media (min-width: 992px) and (max-width: 1199.98px) {
-    .cs-brand__wordmark {
-        width: min-content;
-        white-space: normal; /* .navbar-brand sets nowrap */
-        font-size: 0.9375rem;
-        line-height: 1.1;
-    }
-
+/* Between xl and xxl the row is only just wide enough for six links: they sit closer together. */
+@media (min-width: 1200px) and (max-width: 1399.98px) {
     .cs-header .navbar > .container {
         column-gap: 0.75rem;
     }
@@ -289,7 +282,7 @@ code, kbd, samp, pre {
     }
 }
 
-@media (max-width: 991.98px) {
+@media (max-width: 1199.98px) {
     /* The header is sticky, so an open menu taller than the viewport must scroll itself. */
     .cs-header .navbar-collapse {
         max-height: calc(100vh - var(--cs-header-h));
@@ -327,7 +320,7 @@ code, kbd, samp, pre {
 }
 
 /* The icon alone carries the control on wide screens; the label stays for AT. */
-@media (min-width: 992px) {
+@media (min-width: 1200px) {
     .cs-theme-toggle__text {
         position: absolute;
         width: 1px;
@@ -387,6 +380,26 @@ code, kbd, samp, pre {
     border-top: 1px solid var(--cs-line);
     background-color: var(--cs-surface);
     font-size: var(--cs-fs-small);
+}
+
+.cs-footer__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+/* Wide screens: equal side columns keep the logo on the page's centre line. */
+@media (min-width: 992px) {
+    .cs-footer__bar {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+    }
+
+    .cs-footer__bar > .nav {
+        justify-self: end;
+    }
 }
 
 .cs-footer .nav-link {

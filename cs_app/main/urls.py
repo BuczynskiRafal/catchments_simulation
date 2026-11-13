@@ -27,6 +27,7 @@ from .views import (
     download_timeseries_csv,
     download_timeseries_results,
     healthz,
+    how_it_works,
     main_view,
     simulation_view,
     subcatchments,
@@ -51,6 +52,7 @@ urlpatterns = [
     path("user/<int:user_id>/profile", user_profile, name="userprofile"),
     path("contact", contact, name="contact"),
     path("about", about, name="about"),
+    path("how-it-works", how_it_works, name="how_it_works"),
     path("calculations", calculations, name="calculations"),
     path("simulation", simulation_view, name="simulation"),
     path(
