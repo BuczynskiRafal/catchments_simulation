@@ -166,7 +166,10 @@ class TestLogin:
         lp.login("nobody", "wrong-password")
 
         assert any("correct username or email and password" in m for m in lp.get_error_messages())
-        error_id = page.locator("form .alert-danger").get_attribute("id")
+        alert = page.locator("form .alert-danger")
+        # core/forms.js gives the alert its id when it ties it to the field; wait for it.
+        expect(alert).to_have_attribute("id", re.compile(r".+"))
+        error_id = alert.get_attribute("id")
         expect(lp.username_input).to_have_attribute(
             "aria-describedby", re.compile(rf"\b{error_id}\b")
         )
