@@ -8,7 +8,10 @@
  * All numbers are computed server-side; the charts read the rows embedded as
  * #calculations-chart-data.
  *
- * "Inside the network" draws the network (#calculations-network) as an SVG.
+ * "Inside the network" draws the network (#calculations-network) as an SVG and,
+ * when the rows carry the network's inputs, traces one subcatchment through it
+ * with CS.network.forward: neurons fill by activation and connections show what
+ * they contribute.
  */
 (function (CS) {
     "use strict";
@@ -19,6 +22,7 @@
     var COLUMN_TITLES = ["Inputs", "Layer 1", "Layer 2", "Output"];
     var COMPACT_COLUMN_TITLES = ["Inputs", "L1", "L2", "Out"];
     var DEFAULT_READOUT = "Point at a neuron, or focus the diagram and use the arrow keys, to read its value.";
+    var WEIGHTS_LEGEND = "Line weight shows the strength of each connection; teal adds to the next neuron, ochre subtracts.";
 
     var inputFormat = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 5 });
 
@@ -61,6 +65,10 @@
         return withUnit(inputFormat.format(value), feature.unit);
     }
 
+    function volumeText(value, unit) {
+        return CS.format.number(value, 2) + " " + unit;
+    }
+
     // ── DOM helpers ──────────────────────────────────────────────────────
 
     function svg(tag, attributes, parent) {
@@ -80,10 +88,29 @@
         return element;
     }
 
+    function html(tag, className, text, parent) {
+        var element = document.createElement(tag);
+        if (className) {
+            element.className = className;
+        }
+        if (text !== undefined) {
+            element.textContent = text;
+        }
+        if (parent) {
+            parent.appendChild(element);
+        }
+        return element;
+    }
+
     // ── State of the diagram ─────────────────────────────────────────────
 
     var net = {
         network: null, // main.predictor.network_payload
+        rows: [], // the comparison rows
+        unit: "", // the page's volume unit
+        traceable: false, // whether the rows carry the network's inputs
+        traced: null, // index of the traced row in net.rows
+        trace: null, // CS.network.forward of the traced row
         current: null, // {column, index} of the neuron read out
         width: 0,
         el: {},
@@ -91,6 +118,10 @@
 
     function columnSize(column) {
         return column === 0 ? net.network.features.length : net.network.layers[column - 1].bias.length;
+    }
+
+    function hasInputs(row) {
+        return Array.isArray(row.inputs) && row.inputs.every(Number.isFinite);
     }
 
     // ── Geometry ─────────────────────────────────────────────────────────
@@ -123,14 +154,19 @@
 
     // ── Drawing ──────────────────────────────────────────────────────────
 
-    /** The value each connection carries: its weight. */
+    /** The value each connection carries: its weight, or weight × source activation when tracing. */
     function edgeValue(layerIndex, i, j) {
         var weight = net.network.layers[layerIndex].weights[i][j];
-        return weight;
+        if (!net.trace) {
+            return weight;
+        }
+        var source = layerIndex === 0 ? net.trace.normalized : net.trace.layers[layerIndex - 1];
+        return weight * source[i];
     }
 
     function edgeScales() {
-        // Weights share one scale, so the layers compare.
+        // Weights share one scale, so the layers compare. Contributions are scaled per
+        // layer: activations grow from layer to layer, and one scale would hide the first.
         var maxima = net.network.layers.map(function (layer, layerIndex) {
             var max = 0;
             layer.weights.forEach(function (row, i) {
@@ -140,6 +176,9 @@
             });
             return max;
         });
+        if (net.trace) {
+            return maxima;
+        }
         var overall = Math.max.apply(null, maxima);
         return maxima.map(function () {
             return overall;
@@ -174,22 +213,42 @@
         });
     }
 
+    function nodeState(column, index) {
+        if (!net.trace) {
+            return { className: "", fill: null };
+        }
+        if (column === 0) {
+            return { className: " is-on", fill: null };
+        }
+        var activations = net.trace.layers[column - 1];
+        var value = activations[index];
+        if (value <= 0) {
+            return { className: " is-off", fill: null };
+        }
+        var max = Math.max.apply(null, activations);
+        return { className: " is-on", fill: (0.3 + (0.7 * value) / max).toFixed(2) };
+    }
+
     function drawNodes(group, g) {
         [0, 1, 2, 3].forEach(function (column) {
             for (var index = 0; index < columnSize(column); index += 1) {
                 var x = g.columns[column];
                 var y = g.y(column, index);
+                var state = nodeState(column, index);
                 var kind = column === 0 ? "input" : column === 3 ? "output" : "hidden";
                 var node = svg(
                     "g",
                     {
-                        class: "calc-net__node calc-net__node--" + kind,
+                        class: "calc-net__node calc-net__node--" + kind + state.className,
                         "data-node": column + ":" + index,
                     },
                     group
                 );
                 svg("circle", { class: "calc-net__hit", cx: x, cy: y, r: g.radius + 8 }, node);
-                svg("circle", { class: "calc-net__dot", cx: x, cy: y, r: g.radius }, node);
+                var circle = svg("circle", { class: "calc-net__dot", cx: x, cy: y, r: g.radius }, node);
+                if (state.fill) {
+                    circle.setAttribute("fill-opacity", state.fill);
+                }
             }
         });
     }
@@ -208,21 +267,50 @@
         net.network.features.forEach(function (feature, index) {
             var y = g.y(0, index);
             var label = g.compact ? feature.short : feature.label;
-            svgText(group, labelX, y + 4, "calc-net__label", label, "end");
+            if (!net.trace) {
+                svgText(group, labelX, y + 4, "calc-net__label", label, "end");
+                return;
+            }
+            svgText(group, labelX, y - 3, "calc-net__label", label, "end");
+            svgText(
+                group,
+                labelX,
+                y + 11,
+                "calc-net__value",
+                inputText(net.rows[net.traced].inputs[index], feature),
+                "end"
+            );
         });
 
         var outX = g.columns[3] + g.radius + 8;
         var outY = g.y(3, 0);
+        var row = net.trace ? net.rows[net.traced] : null;
         if (g.compact) {
             svgText(group, outX, outY + 4, "calc-net__label", "Runoff");
+        } else if (row && row.ANN_Runoff !== null) {
+            svgText(group, outX, outY - 3, "calc-net__label", "Runoff volume");
+            svgText(group, outX, outY + 11, "calc-net__value", volumeText(row.ANN_Runoff, net.unit));
         } else {
             svgText(group, outX, outY + 4, "calc-net__label", "Runoff volume");
         }
     }
 
     function diagramLabel() {
-        return "Diagram of the neural network: 8 inputs, two hidden layers of 8 neurons and one output neuron. " +
-            "Line weight shows the strength of each connection.";
+        if (!net.trace) {
+            return "Diagram of the neural network: 8 inputs, two hidden layers of 8 neurons and one output neuron. " +
+                "Line weight shows the strength of each connection.";
+        }
+        var row = net.rows[net.traced];
+        var active = net.trace.layers.slice(0, 2).map(function (layer) {
+            return layer.filter(function (value) {
+                return value > 0;
+            }).length;
+        });
+        return "Neural network traced for subcatchment " + row.Name + ": " + active[0] +
+            " of 8 neurons active in the first hidden layer and " + active[1] + " of 8 in the second; " +
+            "it predicts " + volumeText(row.ANN_Runoff, net.unit) + " of runoff" +
+            (row.SWMM_Runoff !== null ? " against " + volumeText(row.SWMM_Runoff, net.unit) + " from SWMM" : "") +
+            ".";
     }
 
     function draw() {
@@ -274,12 +362,29 @@
     function describe(column, index) {
         var name = neuronName(column, index);
         var feature = column === 0 ? net.network.features[index] : null;
-        if (feature) {
-            return name + ": standardised with the training mean " + inputText(net.network.mean[index], feature) +
-                " and standard deviation " + inputText(net.network.std[index], feature) + ".";
+        if (!net.trace) {
+            if (feature) {
+                return name + ": standardised with the training mean " + inputText(net.network.mean[index], feature) +
+                    " and standard deviation " + inputText(net.network.std[index], feature) + ".";
+            }
+            var bias = net.network.layers[column - 1].bias[index];
+            return name + ": bias " + signed(bias, 2) + "; strongest weight from " + strongestSource(column, index) + ".";
         }
-        var bias = net.network.layers[column - 1].bias[index];
-        return name + ": bias " + signed(bias, 2) + "; strongest weight from " + strongestSource(column, index) + ".";
+        if (feature) {
+            var z = net.trace.normalized[index];
+            var side = z < 0 ? "below" : "above";
+            return name + ": " + inputText(net.rows[net.traced].inputs[index], feature) + ", " +
+                CS.format.number(Math.abs(z), 2) + " standard deviations " + side + " the training mean.";
+        }
+        var sum = net.trace.sums[column - 1][index];
+        if (column === 3) {
+            return name + ": " + CS.format.number(net.trace.output, 4) + " × " + net.network.output.unit +
+                " of runoff; biggest contribution from " + strongestSource(column, index) + ".";
+        }
+        if (sum <= 0) {
+            return name + ": off. Its weighted sum, " + signed(sum, 2) + ", is negative, so ReLU passes 0.";
+        }
+        return name + ": " + CS.format.number(sum, 2) + "; biggest contribution from " + strongestSource(column, index) + ".";
     }
 
     function highlight() {
@@ -353,18 +458,97 @@
         return node ? node.dataset.node.split(":").map(Number) : null;
     }
 
+    // ── Trace ────────────────────────────────────────────────────────────
+
+    function drawResult() {
+        var output = net.el.output;
+        var row = net.trace ? net.rows[net.traced] : null;
+        output.hidden = !row;
+        output.textContent = "";
+        if (!row) {
+            return;
+        }
+        // The server's prediction, exactly as in the table; the browser's pass agrees to ~1e-5.
+        html("span", "calc-net__result-label", "ANN ", output);
+        html("span", "calc-net__result-value", volumeText(row.ANN_Runoff, net.unit), output);
+        if (row.SWMM_Runoff !== null) {
+            output.append(" · ");
+            html("span", "calc-net__result-label", "SWMM ", output);
+            html("span", "calc-net__result-value", volumeText(row.SWMM_Runoff, net.unit), output);
+        }
+        if (row.Difference_pct !== null) {
+            output.append(" (" + (row.Difference_pct > 0 ? "+" : "") + signed(row.Difference_pct, 1) + " %)");
+        }
+    }
+
+    function render() {
+        var row = net.traced === null ? null : net.rows[net.traced];
+        net.trace = row ? CS.network.forward(net.network, row.inputs) : null;
+        net.el.legend.textContent = net.trace
+            ? "Tracing " + row.Name + ". Filled neurons are active, dashed ones are off. Line weight shows what each " +
+              "connection adds for this subcatchment (its weight times the value it carries); teal adds, ochre subtracts."
+            : WEIGHTS_LEGEND;
+        // Rows without the network's inputs: the server could not keep them for a large model.
+        net.el.notice.hidden = !(net.rows.length && !net.rows.some(hasInputs));
+        draw();
+        drawResult();
+    }
+
+    function trace(index) {
+        net.traced = index;
+        net.el.select.value = index === null ? "" : String(index);
+        render();
+    }
+
+    /** Point the diagram at the rows of a new comparison (none before the first run). */
+    function setRows(rows, unit) {
+        if (!net.network) {
+            return;
+        }
+        var previous = net.traced === null ? null : net.rows[net.traced].Name;
+        net.rows = rows;
+        net.unit = unit;
+        net.traceable = rows.length > 0 && rows.every(hasInputs);
+        var select = net.el.select;
+        select.textContent = "";
+        if (net.traceable) {
+            rows.forEach(function (row, index) {
+                var option = html("option", "", row.Name, select);
+                option.value = String(index);
+            });
+        }
+        net.el.traceControl.hidden = !net.traceable;
+        var keep = rows.findIndex(function (row) {
+            return row.Name === previous;
+        });
+        trace(net.traceable ? Math.max(0, keep) : null);
+    }
+
+    function focusDiagram() {
+        var heading = net.el.heading;
+        var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        heading.focus({ preventScroll: true });
+        heading.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+    }
+
     function initNetwork() {
         var payload = document.getElementById("calculations-network");
         var network = payload ? JSON.parse(payload.textContent) : null;
-        if (!network) {
+        if (!network || !CS.network) {
             return;
         }
         net.network = network;
         net.el = {
+            heading: document.getElementById("calc-network-title"),
             stage: document.getElementById("calc-network-stage"),
             svg: document.getElementById("calc-network-diagram"),
+            legend: document.getElementById("calc-network-caption"),
             readout: document.getElementById("calc-network-readout"),
             announce: document.getElementById("calc-network-announce"),
+            notice: document.getElementById("calc-network-notice"),
+            output: document.getElementById("calc-network-output"),
+            select: document.getElementById("calc-trace-select"),
+            traceControl: document.getElementById("calc-trace-control"),
         };
         document.querySelectorAll("[data-calc-network-js]").forEach(function (el) {
             el.hidden = false;
@@ -391,6 +575,9 @@
                 setCurrent(null);
             }
         });
+        net.el.select.addEventListener("change", function () {
+            trace(Number(net.el.select.value));
+        });
         // Redraw at the new width, so the labels keep their size instead of scaling.
         if (window.ResizeObserver) {
             new ResizeObserver(function () {
@@ -399,30 +586,42 @@
                 }
             }).observe(stage);
         }
-        draw();
     }
 
     // ── Results ──────────────────────────────────────────────────────────
 
     function initResults(root) {
         var rows = readRows(root);
+        var unitHolder = root.querySelector("[data-calc-unit]");
+        setRows(rows || [], unitHolder ? unitHolder.dataset.calcUnit : "");
         if (!rows) {
             return;
         }
-        // Unhide before drawing: Plotly sizes each chart from its container.
+        // Unhide before drawing: Plotly sizes each chart from its container. The Trace
+        // column stays hidden when the page has no network to trace through.
         root.querySelectorAll("[data-calc-requires-js]").forEach(function (el) {
-            el.hidden = false;
+            el.hidden = el.hasAttribute("data-calc-trace-col") && !net.network;
         });
         drawCharts(root, rows);
         CS.table.sortable(root.querySelector("#calculations-table"));
     }
 
-    // Delegated, so the button in every swapped-in fragment works.
+    // Delegated, so the buttons in every swapped-in fragment work.
     document.addEventListener("click", function (event) {
+        var traceButton = event.target.closest("[data-calc-trace]");
+        if (traceButton && net.traceable) {
+            trace(Number(traceButton.dataset.calcTrace));
+            focusDiagram();
+            return;
+        }
         if (!event.target.closest("#copy-calculations-table-button")) {
             return;
         }
-        var table = document.getElementById("calculations-table");
+        // The Trace column is a control, not data.
+        var table = document.getElementById("calculations-table").cloneNode(true);
+        table.querySelectorAll("[data-calc-trace-col]").forEach(function (cell) {
+            cell.remove();
+        });
         CS.clipboard.copy(CS.table.toCSV(table), "Comparison table copied as CSV.");
     });
 

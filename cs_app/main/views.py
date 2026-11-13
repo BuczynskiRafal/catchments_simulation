@@ -1986,7 +1986,7 @@ def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
                     * swmm_factor,
                     # predict_runoff() always outputs 10^6 L (10^3 m³) from the SI-trained network.
                     "ANN_Runoff": np.round(ann_predictions.astype(float) * ann_factor, 2),
-                    # What the network read for each subcatchment.
+                    # What the network read for each subcatchment, so the page can trace it.
                     "Inputs": network_inputs.tolist(),
                 },
             )
@@ -2012,7 +2012,7 @@ def _summarise_comparison(df: pd.DataFrame, unit: str) -> dict | None:
     ``unit`` is the volume unit of every runoff value and is kept with the result.
     When ``df`` has an ``Inputs`` column, each row also carries ``inputs``: the
     network's 8 inputs for that subcatchment (comparisons cached before it existed
-    have none).
+    have none, and the page then cannot trace them).
 
     Returns None for an empty comparison.
     """
@@ -2061,8 +2061,8 @@ def _run_comparison(request: HttpRequest) -> None:
     except ResultPayloadTooLargeError:
         if not comparison:
             raise
-        # The network inputs are an extra: a model with too many subcatchments to keep
-        # them still gets its comparison.
+        # The network inputs only make the rows traceable in the diagram: a model with
+        # too many subcatchments to keep them still gets its comparison.
         for row in comparison["rows"]:
             row.pop("inputs", None)
         _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
