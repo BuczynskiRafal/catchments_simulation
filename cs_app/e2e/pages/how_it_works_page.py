@@ -15,8 +15,8 @@ class HowItWorksPage(BasePage):
 
     PATH = "/how-it-works"
 
-    def navigate_to(self) -> None:
-        self.navigate(self.PATH)
+    def navigate_to(self, query: str = "") -> None:
+        self.navigate(self.PATH + query)
         self.wait_for_lab()
 
     def wait_for_lab(self) -> None:
@@ -49,6 +49,9 @@ class HowItWorksPage(BasePage):
 
     def slider_readout(self, key: str) -> Locator:
         return self.page.locator(f"#lab-{key}-value")
+
+    def slider_max(self, key: str) -> Locator:
+        return self.page.locator(f"[data-hiw-param='{key}'] .hiw-slider__bound--max")
 
     def nudge(self, key: str, presses: int, key_name: str = "ArrowRight") -> None:
         """Move a slider from the keyboard."""

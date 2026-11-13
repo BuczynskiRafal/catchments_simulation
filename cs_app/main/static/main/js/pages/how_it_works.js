@@ -69,7 +69,9 @@
     function initLab(root) {
         var model = CS.runoffModel;
         var sliders = hiw.controls.sliders(root);
+        var start = hiw.controls.startingValues(window.location.search, model.DEFAULTS);
         var select = document.getElementById("lab-sweep-parameter");
+        var defaultVary = select.value;
         var elements = {
             storms: document.getElementById("lab-storms"),
             stormDescription: document.getElementById("lab-storm-description"),
@@ -95,8 +97,8 @@
 
         var state = {
             storm: "example",
-            start: model.DEFAULTS,
-            values: Object.assign({}, model.DEFAULTS),
+            start: start.values,
+            values: Object.assign({}, start.values),
             result: null,
             baseline: null,
             changed: false,
@@ -179,6 +181,7 @@
             state.values = Object.assign({}, state.start);
             clearSweep();
             recompute(false);
+            updateUrl();
             requestRender();
         }
 
@@ -554,6 +557,15 @@
                 (sweep.unit ? " " + sweep.unit : "") + ". The table of results follows.";
         }
 
+        // ── URL ─────────────────────────────────────────────────────────
+
+        function updateUrl() {
+            var vary = select.value !== defaultVary ? select.value : null;
+            var url = window.location.pathname + hiw.controls.queryString(state.values, model.DEFAULTS, vary) +
+                window.location.hash;
+            window.history.replaceState(window.history.state, "", url);
+        }
+
         // ── Controls ────────────────────────────────────────────────────
 
         function buildStorms() {
@@ -588,10 +600,11 @@
                 slider.input.addEventListener("input", function () {
                     setValue(key, slider.valueAt(Number(slider.input.value)));
                 });
+                slider.input.addEventListener("change", updateUrl);
             });
         }
 
-        /** The sweep option of a feature name, compared as data. */
+        /** The sweep option of a feature name, compared as data (it may come from the URL). */
         function optionFor(feature) {
             return Array.prototype.find.call(select.options, function (option) {
                 return option.value === feature;
@@ -606,6 +619,7 @@
             }
             select.value = feature;
             clearSweep();
+            updateUrl();
             requestRender();
             var slider = sliders[option.getAttribute("data-hiw-param")];
             var header = document.querySelector(".cs-header");
@@ -624,6 +638,9 @@
 
         buildStorms();
         initSliders();
+        if (optionFor(start.vary)) {
+            select.value = start.vary;
+        }
 
         elements.reset.addEventListener("click", reset);
         elements.play.addEventListener("click", function () {
@@ -646,6 +663,7 @@
         });
         select.addEventListener("change", function () {
             clearSweep();
+            updateUrl();
             requestRender();
         });
         root.querySelectorAll("input[name='lab-response']").forEach(function (input) {
