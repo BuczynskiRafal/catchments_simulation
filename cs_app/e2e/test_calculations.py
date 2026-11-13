@@ -75,6 +75,14 @@ class TestCalculationsPageRendering:
         expect(cp.validity_note).to_be_visible()
         expect(cp.validity_note).to_contain_text("limited precipitation range")
 
+    def test_validity_note_points_to_the_diagram(self, page: Page, live_server) -> None:
+        cp = _open(page, live_server)
+        link = cp.validity_note.get_by_role("link", name="The network diagram")
+
+        link.click()
+
+        expect(page).to_have_url(re.compile(r"#calc-network-title$"))
+
     def test_model_details_expand_with_keyboard(self, page: Page, live_server) -> None:
         cp = _open(page, live_server)
         features = cp.model_details("Features")
@@ -280,6 +288,16 @@ class TestNetworkDiagram:
         )
         expect(cp.trace_select).to_be_hidden()
         expect(cp.network_output).to_be_hidden()
+        expect(cp.range_items).to_have_count(8)
+        # The bars stop at what an input can physically take: a share at 100 %, a slope
+        # (rise over run) at two standard deviations above its mean.
+        ends = cp.page.locator("#calc-range-list .calc-range__ends > span:last-child")
+        expect(ends.nth(0)).to_have_text(re.compile(r"\b100 %$"))
+        expect(ends.nth(7)).to_have_text(re.compile(r"\b100 %$"))
+        expect(ends.nth(2)).to_have_text(re.compile(r"112\.3 %$"))
+        expect(cp.range_summary).to_have_text(
+            "Run the comparison to check each subcatchment's inputs against these ranges."
+        )
         expect(page.get_by_role("link", name="The equations behind the network")).to_have_attribute(
             "href", "/how-it-works#network"
         )
@@ -444,6 +462,10 @@ class TestNetworkTrace:
         table_ann = float(cp.column_values(2)[0].replace(",", ""))
         assert cp.traced_ann_value() == table_ann
         expect(cp.network_output).to_contain_text("SWMM 3,360.00 m³ (−26.6 %)")
+        expect(cp.range_summary).to_have_text(
+            "All eight inputs are within the range the network was trained on."
+        )
+        expect(cp.range_items.locator(".calc-range__flag")).to_have_count(0)
         assert console_errors == []
 
     def test_trace_button_switches_the_trace(
@@ -466,11 +488,16 @@ class TestNetworkTrace:
         expect(cp.network_heading).to_be_in_viewport()
         s3_ann = float(cp.column_values(2)[2].replace(",", ""))
         assert cp.traced_ann_value() == s3_ann
+        expect(cp.range_summary).to_have_text(
+            "1 of 8 inputs is outside the range the network was trained on (Width): "
+            "treat this prediction as indicative."
+        )
+        width = cp.range_items.nth(1)
+        expect(width).to_contain_text("outside the training range")
+        expect(width.locator(".calc-range__arrow")).to_have_count(1)
 
         cp.trace_select.select_option(label="S5")
-        expect(cp.network_diagram).to_have_attribute(
-            "aria-label", re.compile(r"^Neural network traced for subcatchment S5: ")
-        )
+        expect(cp.range_summary).to_contain_text("(Slope)")
         assert console_errors == []
 
     def test_trace_button_is_keyboard_reachable(self, five_page: CalculationsPage) -> None:

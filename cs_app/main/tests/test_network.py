@@ -266,6 +266,7 @@ def test_page_renders_without_the_diagram_when_the_weights_cannot_be_loaded(clie
     for absent in (
         "calc-network-stage",
         "calc-network-diagram",
+        "calc-range-list",
         "calc-trace-select",
     ):
         assert f'id="{absent}"' not in html

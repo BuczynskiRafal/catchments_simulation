@@ -56,7 +56,7 @@
                 <svg class="calc-note__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg>
                 <div>
                     <p class="calc-note__title" id="calc-validity-title">Validity range</p>
-                    <p class="calc-note__text">Trained on a small data set, the network is reliable only within a limited precipitation range. Treat results outside it as indicative.</p>
+                    <p class="calc-note__text">Trained on a small data set, the network is reliable only within a limited precipitation range and for subcatchments like those it learned from. <a href="#calc-network-title">The network diagram</a> shows, for each subcatchment, which inputs fall outside the training data.</p>
                 </div>
             </div>
         </div>
@@ -73,7 +73,7 @@
             <h2 class="cs-card__title calc-model__title" id="calc-model-title">Catchment Area Neural Network Model</h2>
             <p class="calc-model__lead">A small fully connected network that estimates subcatchment runoff from the same properties SWMM uses, so it can be checked against a full SWMM run.</p>
 
-            {# calculations.js draws the diagram from #calculations-network and traces the rows of #calculations-chart-data. #}
+            {# calculations.js draws the diagram and the training-range list from #calculations-network and traces the rows of #calculations-chart-data. #}
             <section class="calc-net" aria-labelledby="calc-network-title">
                 <div class="calc-net__header">
                     <h3 class="calc-net__title" id="calc-network-title" tabindex="-1">Inside the network</h3>
@@ -102,6 +102,12 @@
                 </figure>
                 <p class="calc-net__result" id="calc-network-output" hidden></p>
 
+                <section class="calc-range" aria-labelledby="calc-range-title" data-calc-network-js hidden>
+                    <h4 class="calc-range__title" id="calc-range-title">Inputs compared with the training data</h4>
+                    <p class="calc-range__summary" id="calc-range-summary"></p>
+                    <ul class="calc-range__list" id="calc-range-list" role="list"></ul>
+                    <p class="calc-range__note">Each bar spans the training data from two standard deviations below its mean to two above, cut at the values an input can physically take; the tick marks the mean.</p>
+                </section>
                 {% else %}
                 <p class="calc-net__unavailable" id="calc-network-unavailable">The network diagram is not available right now.</p>
                 {% endif %}
