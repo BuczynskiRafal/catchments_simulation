@@ -1,7 +1,7 @@
 """Contract tests for the shared core scripts (static/main/js/core/*).
 
 The run endpoints are mocked with Playwright routing so the client side of the
-AJAX contract (DESIGN_SPEC §4) is exercised in isolation from the views.
+AJAX contract (docs/design/design-system.md §4) is exercised in isolation from the views.
 """
 
 from __future__ import annotations

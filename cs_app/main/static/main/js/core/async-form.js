@@ -1,5 +1,5 @@
 /*
- * CS.asyncForm(options) — progressive enhancement for run forms (DESIGN_SPEC §4).
+ * CS.asyncForm(options) — progressive enhancement for run forms (docs/design/design-system.md §4).
  *
  * options:
  *   form          <form> to enhance (without JS it keeps its native POST)
