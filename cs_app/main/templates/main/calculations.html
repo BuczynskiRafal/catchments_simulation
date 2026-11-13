@@ -72,35 +72,50 @@
             <h2 class="cs-card__title calc-model__title" id="calc-model-title">Catchment Area Neural Network Model</h2>
             <p class="calc-model__lead">A small fully connected network that estimates subcatchment runoff from the same properties SWMM uses, so it can be checked against a full SWMM run.</p>
 
+            {# calculations.js draws the diagram from #calculations-network. #}
+            <section class="calc-net" aria-labelledby="calc-network-title">
+                <div class="calc-net__header">
+                    <h3 class="calc-net__title" id="calc-network-title">Inside the network</h3>
+                </div>
+                <p class="calc-net__intro">The eight inputs are standardised with the mean and spread of the training data, then pass through two hidden layers of eight neurons to one output neuron. Each neuron adds up its weighted inputs and a bias and applies ReLU: a negative sum switches it off. The network was trained with the Adam optimiser on mean squared error.</p>
+
+                {% if network %}
+                <figure class="calc-net__figure">
+                    <div class="calc-net__stage" id="calc-network-stage" tabindex="0" role="group" aria-label="Network diagram: use the arrow keys to read each neuron" aria-describedby="calc-network-readout" data-calc-network-js hidden>
+                        <svg class="calc-net__svg" id="calc-network-diagram" role="img" aria-label="Diagram of the neural network" xmlns="http://www.w3.org/2000/svg"></svg>
+                    </div>
+                    <figcaption class="calc-net__caption" data-calc-network-js hidden>
+                        <p class="calc-net__legend" id="calc-network-caption">Line weight shows the strength of each connection; teal adds to the next neuron, ochre subtracts.</p>
+                        {# Updates on pointer and keyboard; only the arrow keys announce, through #calc-network-announce. #}
+                        <p class="calc-net__readout" id="calc-network-readout"></p>
+                    </figcaption>
+                    <p class="visually-hidden" id="calc-network-announce" aria-live="polite"></p>
+                    <noscript><p class="calc-net__noscript">Turn on JavaScript to see the network diagram.</p></noscript>
+                </figure>
+
+                {% else %}
+                <p class="calc-net__unavailable" id="calc-network-unavailable">The network diagram is not available right now.</p>
+                {% endif %}
+
+                <p class="calc-net__more"><a href="{% url 'main:how_it_works' %}#network">The equations behind the network</a></p>
+            </section>
+
             <div class="calc-details">
                 <details class="calc-details__item">
                     <summary class="calc-details__title">Features</summary>
                     <div class="calc-details__body">
-                        <p>The network reads eight properties of each subcatchment from the SWMM model:</p>
+                        <p>The network reads eight properties of each subcatchment from the SWMM model, in SI units (a US model's widths and storage depths are converted first):</p>
                         <dl class="calc-features">
-                            <dt>Imperv (%)</dt><dd>Share of the land surface, excluding LID, that is impervious.</dd>
-                            <dt>Width</dt><dd>Characteristic width of the overland flow path.</dd>
+                            <dt>Imperviousness (%)</dt><dd>Share of the land surface, excluding LID, that is impervious.</dd>
+                            <dt>Width (m)</dt><dd>Characteristic width of the overland flow path.</dd>
                             <dt>Slope (%)</dt><dd>Average surface slope.</dd>
-                            <dt>N-Imperv</dt><dd>Manning's n for overland flow over the impervious area.</dd>
-                            <dt>N-Perv</dt><dd>Manning's n for overland flow over the pervious area.</dd>
-                            <dt>Dstore-Imperv</dt><dd>Depression storage depth on the impervious area.</dd>
-                            <dt>Dstore-Perv</dt><dd>Depression storage depth on the pervious area.</dd>
-                            <dt>Zero-Imperv (%)</dt><dd>Share of the impervious area without depression storage.</dd>
+                            <dt>Manning's n, impervious</dt><dd>Roughness for overland flow over the impervious area.</dd>
+                            <dt>Manning's n, pervious</dt><dd>Roughness for overland flow over the pervious area.</dd>
+                            <dt>Depression storage, impervious (mm)</dt><dd>Depth of water held back on the impervious area.</dd>
+                            <dt>Depression storage, pervious (mm)</dt><dd>Depth of water held back on the pervious area.</dd>
+                            <dt>Impervious area without storage (%)</dt><dd>Share of the impervious area without depression storage.</dd>
                         </dl>
-                    </div>
-                </details>
-                <details class="calc-details__item">
-                    <summary class="calc-details__title">Architecture</summary>
-                    <div class="calc-details__body">
-                        <figure class="calc-model__diagram">
-                            <img src="{% static 'main/img/nn.png' %}" width="1208" height="937" loading="lazy" alt="Diagram of the neural network: 8 inputs, 8 hidden neurons, 1 output">
-                        </figure>
-                        <ul>
-                            <li>Input layer: 8 neurons, ReLU activation.</li>
-                            <li>Hidden layer: 8 neurons, ReLU activation.</li>
-                            <li>Output layer: 1 neuron, ReLU activation.</li>
-                            <li>Trained with the Adam optimiser and mean squared error (MSE) loss; evaluated with mean absolute error (MAE) and MSE.</li>
-                        </ul>
+                        <p>The area is not among them: the network learned from subcatchments of 5 ha, so its prediction does not change with the area.</p>
                     </div>
                 </details>
                 <details class="calc-details__item">
@@ -120,5 +135,6 @@
 {% endblock %}
 
 {% block additional_scripts %}
+{{ network|json_script:"calculations-network" }}
 <script src="{% static 'main/js/pages/calculations.js' %}"></script>
 {% endblock %}

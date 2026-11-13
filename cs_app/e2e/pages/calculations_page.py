@@ -62,8 +62,28 @@ class CalculationsPage(BasePage):
             "details.calc-details__item", has=self.page.locator("summary", has_text=title)
         )
 
-    def has_nn_architecture_image(self) -> bool:
-        return self.page.get_by_role("img", name="Diagram of the neural network").is_visible()
+    # ------------------------------------------------------------------
+    # Inside the network
+    # ------------------------------------------------------------------
+
+    @property
+    def network_stage(self) -> Locator:
+        """The keyboard-focusable wrapper of the diagram (arrow keys read the neurons)."""
+        return self.page.locator("#calc-network-stage")
+
+    @property
+    def network_diagram(self) -> Locator:
+        """The ``role="img"`` SVG drawn from ``#calculations-network``."""
+        return self.page.locator("#calc-network-diagram")
+
+    @property
+    def network_caption(self) -> Locator:
+        return self.page.locator("#calc-network-caption")
+
+    @property
+    def network_readout(self) -> Locator:
+        """The line that reads out the neuron under the pointer or the keyboard."""
+        return self.page.locator("#calc-network-readout")
 
     # ------------------------------------------------------------------
     # Run
