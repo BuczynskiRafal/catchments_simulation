@@ -107,7 +107,8 @@ class TestInteractiveModel:
         bars = hiw.path("hiw-chart__rain")
         hiw.choose_storm("cloudburst")
         expect(hiw.page.locator("#lab-storm-description")).to_contain_text("45 minutes")
-        assert hiw.path("hiw-chart__rain") != bars
+        # The chart is redrawn on the next animation frame.
+        expect(hiw.figure("hiw-chart__rain")).not_to_have_attribute("d", bars)
         solved = hiw.solve(storm="cloudburst")
         assert _number(hiw.metric_value("volume")) == pytest.approx(
             solved["totals"]["runoff"], abs=1
@@ -157,7 +158,7 @@ class TestInteractiveModel:
         hiw.sweep_parameter.select_option("PercSlope")
         hiw.sweep_button.click()
         expect(hiw.sweep_status).to_contain_text("This is a parameter sweep", timeout=10_000)
-        assert hiw.drawn_sweep_lines() == 9
+        expect(hiw.drawn_sweep_lines()).to_have_count(9)
         expect(hiw.response_points()).to_have_count(9)
         expect(hiw.page.locator("#lab-response-table tbody tr")).to_have_count(9)
         expect(hiw.sweep_status.get_by_role("link", name="Simulation tool")).to_have_attribute(
@@ -166,7 +167,7 @@ class TestInteractiveModel:
         # Any slider change clears the sweep.
         hiw.nudge("area", 1)
         expect(hiw.response_points()).to_have_count(0)
-        assert hiw.drawn_sweep_lines() == 0
+        expect(hiw.drawn_sweep_lines()).to_have_count(0)
         expect(hiw.sweep_button).to_have_text("Run sweep")
 
 
@@ -263,7 +264,7 @@ class TestQuality:
             assert page.evaluate(LAB_ANIMATIONS) == 0
             # The sweep is drawn at once.
             hp.sweep_button.click()
-            assert hp.drawn_sweep_lines() == 9
+            expect(hp.drawn_sweep_lines()).to_have_count(9)
             expect(hp.sweep_status).to_contain_text("This is a parameter sweep")
             # Playing is the reader's choice; the rain then stands still.
             hp.play_button.click()

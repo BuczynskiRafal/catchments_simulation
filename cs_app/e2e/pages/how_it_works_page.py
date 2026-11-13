@@ -87,8 +87,12 @@ class HowItWorksPage(BasePage):
         """Path data of one element of the hydrograph ("" when it draws nothing)."""
         return self.hydrograph.locator(f".{css_class}").get_attribute("d") or ""
 
-    def drawn_sweep_lines(self) -> int:
-        return self.hydrograph.locator(".hiw-chart__sweep-line[d^='M']").count()
+    def figure(self, css_class: str) -> Locator:
+        """One element of the hydrograph, by its class."""
+        return self.hydrograph.locator(f".{css_class}")
+
+    def drawn_sweep_lines(self) -> Locator:
+        return self.hydrograph.locator(".hiw-chart__sweep-line[d^='M']")
 
     def response_points(self) -> Locator:
         return self.page.locator("#lab-response .hiw-chart__point")
