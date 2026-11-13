@@ -1,5 +1,5 @@
 /*
- * Design tokens — "survey sheet" palette (docs/ui-modernization/DESIGN_SPEC.md §2).
+ * Design tokens — "survey sheet" palette (docs/design/design-system.md §2).
  *
  * --cs-* tokens are the source of truth; the --bs-* block under each theme maps
  * them onto Bootstrap 5.3 so stock components inherit the palette. Must load

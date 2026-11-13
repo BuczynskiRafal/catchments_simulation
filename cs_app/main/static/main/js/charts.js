@@ -43,7 +43,7 @@
     // ~265 px on phones), for turning those px into domain fractions.
     var PLOT_MARGINS_ESTIMATE = 200;
 
-    // DESIGN_SPEC §2.1 values, used when a token is not defined by tokens.css.
+    // The design system's §2.1 values, used when a token is not defined by tokens.css.
     var FALLBACK_TOKENS = {
         light: {
             "--cs-ink": "#0F2233",

@@ -20,6 +20,22 @@ api module
    :undoc-members:
    :show-inheritance:
 
+insights module
+----------------------------------------
+
+.. automodule:: main.insights
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+guide module
+----------------------------------------
+
+.. automodule:: main.guide
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 units module
 ----------------------------------------
 
