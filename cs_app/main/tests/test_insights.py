@@ -437,9 +437,10 @@ def test_restored_form_is_marked_and_steps_show_the_loaded_model(client, user, u
 
 
 @pytest.mark.django_db
-def test_calculations_panel_tracks_the_model(client, user, user_model):
+def test_calculations_panel_tracks_the_model_and_describes_its_run(client, user, user_model):
     _load(client, user, user_model)
 
     html = client.get(reverse("main:calculations")).content.decode()
 
     assert 'data-cs-step="model" data-state="done"' in html
+    assert 'data-cs-run-status="Running SWMM and the neural network"' in html

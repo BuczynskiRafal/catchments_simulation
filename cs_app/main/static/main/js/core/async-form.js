@@ -16,6 +16,15 @@
  *   onSuccess     optional (target) => void, called after the fragment is swapped in
  *   onError       optional ({status, message, field_errors}) => void, after the inline
  *                 errors and the error toast are shown (do not toast again)
+ *   runStatus     optional string, or (form) => string, describing the run in flight
+ *                 ("Running SWMM — 11 runs for S1, Slope 5 → 15 %"); defaults to the
+ *                 form's data-cs-run-status. When set, a .cs-run-status panel is shown at
+ *                 the top of target while the run is in flight: the description, the
+ *                 pipeline stages and the elapsed time, with an indeterminate activity
+ *                 bar (the server reports no progress, so none is invented). The panel is
+ *                 aria-hidden: loadingEl remains the one polite announcement.
+ *   runStages     optional stage names for the panel; defaults to the form's
+ *                 data-cs-run-stages ("|"-separated), else RUN_STAGES
  *
  * Error responses: 4xx/5xx JSON {message, field_errors} render inline Bootstrap
  * field errors plus a role="alert" summary in the form, and a short danger toast;
@@ -49,24 +58,91 @@
     var ERROR_MARK = "data-cs-async-error";
     var INVALID_MARK = "data-cs-async-invalid";
     var STALE_CLASS = "cs-stale-notice";
+    var RUN_STAGES = ["Copy the model", "Write the value", "Run SWMM", "Collect results"];
 
-    function startElapsed(loadingEl) {
-        if (!loadingEl) {
+    function runDescription(options, form) {
+        var status = options.runStatus !== undefined ? options.runStatus : form.dataset.csRunStatus;
+        return typeof status === "function" ? status(form) : status || "";
+    }
+
+    function runStages(options, form) {
+        if (options.runStages) {
+            return options.runStages;
+        }
+        return form.dataset.csRunStages ? form.dataset.csRunStages.split("|") : RUN_STAGES;
+    }
+
+    function textElement(tag, className, text) {
+        var el = document.createElement(tag);
+        el.className = className;
+        el.textContent = text;
+        return el;
+    }
+
+    /** The presentational panel shown at the top of the results while a run is in flight. */
+    function showRunStatus(target, description, stages) {
+        var panel = document.createElement("div");
+        panel.className = "cs-run-status";
+        panel.setAttribute("aria-hidden", "true");
+
+        var head = document.createElement("div");
+        head.className = "cs-run-status__head";
+        head.append(
+            textElement("p", "cs-run-status__title", description),
+            textElement("span", "cs-run-status__elapsed", "0 s")
+        );
+        var list = document.createElement("ol");
+        list.className = "cs-run-status__stages";
+        stages.forEach(function (stage) {
+            list.append(textElement("li", "cs-run-status__stage", stage));
+        });
+        var track = document.createElement("div");
+        track.className = "cs-run-status__track";
+        track.append(document.createElement("span"));
+
+        panel.append(head, list, track);
+        target.prepend(panel);
+        // The run button may sit far below the top of the results: bring the panel into view.
+        var box = panel.getBoundingClientRect();
+        if (box.bottom < 0 || box.top > window.innerHeight) {
+            var still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            panel.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+        }
+        return panel;
+    }
+
+    /** Shows loadingEl and the run status panel (either may be null) with the elapsed seconds. */
+    function startElapsed(loadingEl, panel) {
+        if (!loadingEl && !panel) {
             return function () {};
         }
-        var counter = loadingEl.querySelector("[data-cs-elapsed]");
+        var counters = [];
+        if (loadingEl && loadingEl.querySelector("[data-cs-elapsed]")) {
+            counters.push(loadingEl.querySelector("[data-cs-elapsed]"));
+        }
+        if (panel) {
+            counters.push(panel.querySelector(".cs-run-status__elapsed"));
+        }
         var startedAt = Date.now();
         function render() {
-            if (counter) {
-                counter.textContent = Math.floor((Date.now() - startedAt) / 1000) + " s";
-            }
+            var text = Math.floor((Date.now() - startedAt) / 1000) + " s";
+            counters.forEach(function (counter) {
+                counter.textContent = text;
+            });
         }
         render();
-        loadingEl.hidden = false;
+        if (loadingEl) {
+            loadingEl.hidden = false;
+        }
         var timer = window.setInterval(render, 1000);
         return function stop() {
             window.clearInterval(timer);
-            loadingEl.hidden = true;
+            if (loadingEl) {
+                loadingEl.hidden = true;
+            }
+            if (panel) {
+                panel.remove();
+            }
         };
     }
 
@@ -311,7 +387,9 @@
             clearPreviousRun();
             setRunning(true);
             var runGeneration = modelGeneration();
-            var stopElapsed = startElapsed(options.loadingEl);
+            var description = runDescription(options, form);
+            var panel = description ? showRunStatus(target, description, runStages(options, form)) : null;
+            var stopElapsed = startElapsed(options.loadingEl, panel);
             var result;
             try {
                 result = await send(form, submitter);

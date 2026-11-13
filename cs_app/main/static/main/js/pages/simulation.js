@@ -4,16 +4,18 @@
  * Panel: a hint in step 1 while no model is loaded; the range fields only for
  * range-based methods, with a live "N runs" hint that warns before the server's
  * step limit is hit; the parameter card and the range suggestion of
- * CS.sweepAssist. The run form is enhanced by CS.asyncForm; the results
- * fragment is initialised by initResults() on load and after every swap
- * (key figures, chart, sortable table). Result actions are delegated from the
- * canvas, so they keep working across swaps.
+ * CS.sweepAssist. The run form is enhanced by CS.asyncForm, with a status panel
+ * that says what is running. The results fragment is initialised by initResults()
+ * on load and after every swap (key figures, chart, sortable table). Result
+ * actions are delegated from the canvas, so they keep working across swaps.
  */
 (function (CS) {
     "use strict";
 
     var RUNOFF = "runoff";
     var PEAK_RATE = "peak_runoff_rate";
+
+    var assist = null;
 
     // ── Parameters panel ────────────────────────────────────────────────
 
@@ -74,7 +76,7 @@
 
     function initAssist(form) {
         var features = CS.readJson("method-features") || {};
-        CS.sweepAssist({
+        assist = CS.sweepAssist({
             form: form,
             parameterSelect: form.elements.namedItem("option"),
             featureOf: function (option) {
@@ -84,6 +86,19 @@
             insightEl: document.getElementById("simulation-insight"),
             suggestionEl: document.getElementById("simulation-range-suggestion"),
         });
+        return features;
+    }
+
+    /** "Running SWMM — 11 runs for S1, Slope 5 → 15 %": what the status panel says. */
+    function describeRun(form, features) {
+        var option = form.elements.namedItem("option");
+        var catchment = form.elements.namedItem("catchment_name").value;
+        if (form.dataset.predefinedMethods.split(" ").indexOf(option.value) !== -1) {
+            var entry = assist.guide[features[option.value]];
+            var name = entry ? entry.name : option.value;
+            return "Running SWMM — one run per literature value of " + name + " for " + catchment;
+        }
+        return assist.describeRun(catchment);
     }
 
     // ── Key figures ─────────────────────────────────────────────────────
@@ -260,7 +275,7 @@
         }
         initModelHint();
         initRange(form);
-        initAssist(form);
+        var features = initAssist(form);
         initActions(canvas);
         initResults(canvas);
 
@@ -271,6 +286,9 @@
             loadingEl: document.getElementById("simulation-loading-state"),
             successMessage: "Simulation finished",
             onSuccess: initResults,
+            runStatus: function () {
+                return describeRun(form, features);
+            },
         });
     });
 })(window.CS);
