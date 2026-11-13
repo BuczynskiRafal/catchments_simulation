@@ -80,6 +80,7 @@ from main.forms import (
     UserProfileForm,
     parameter_labels,
 )
+from main.guide import PARAMETER_GUIDE
 from main.predictor import predict_runoff
 from main.schemas import ContactMessage
 from main.services import send_message
@@ -686,6 +687,11 @@ def healthz(request: HttpRequest) -> JsonResponse:
 
 def about(request: HttpRequest) -> HttpResponse:
     return render(request, "main/about.html")
+
+
+def how_it_works(request: HttpRequest) -> HttpResponse:
+    """Explain the runoff model, the sweep and the neural network; public."""
+    return render(request, "main/how_it_works.html", {"guides": PARAMETER_GUIDE.values()})
 
 
 def contact(request: HttpRequest) -> HttpResponse:
