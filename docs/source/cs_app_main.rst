@@ -33,7 +33,6 @@ guide module
 
 .. automodule:: main.guide
    :members:
-   :undoc-members:
    :show-inheritance:
 
 units module
