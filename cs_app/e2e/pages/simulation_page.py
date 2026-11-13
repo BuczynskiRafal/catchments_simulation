@@ -111,6 +111,10 @@ class SimulationPage(BasePage):
     def use_suggestion_button(self) -> Locator:
         return self.suggestion.get_by_role("button", name="Use the suggested range")
 
+    @property
+    def run_status(self) -> Locator:
+        return self.canvas.locator(".cs-run-status")
+
     def range_values(self) -> list[str]:
         return [
             self.start_input.input_value(),

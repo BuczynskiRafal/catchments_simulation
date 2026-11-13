@@ -38,7 +38,10 @@
                 <span class="cs-step__num" aria-hidden="true">2</span>
                 <h2 class="cs-step__title"><span class="visually-hidden">Step 2: </span>Compare<span class="visually-hidden" data-cs-step-status>{% if not has_model %} (load a model first){% endif %}</span></h2>
             </div>
-            <form method="post" action="{% url 'main:calculations' %}" id="calculations-form">
+            {# data-cs-run-*: the status panel CS.asyncForm shows over the results while the comparison runs. #}
+            <form method="post" action="{% url 'main:calculations' %}" id="calculations-form"
+                  data-cs-run-status="Running SWMM and the neural network"
+                  data-cs-run-stages="Copy the model|Run SWMM|Read the report|Predict with the network">
                 {% csrf_token %}
                 <p class="cs-hint">SWMM runs the model, then the network predicts runoff from the same subcatchment properties.</p>
                 <button type="submit" class="btn btn-primary w-100" id="run-calculations-button" data-authenticated="{{ request.user.is_authenticated }}">Run Calculations</button>

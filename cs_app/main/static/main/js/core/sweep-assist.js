@@ -25,7 +25,9 @@
  * One request per subcatchment of a model: the cs:model-changed of a model with a single
  * subcatchment and the `change` its auto-selection fires do not fetch twice.
  *
- * Returns {guide, values()}: the parsed guide and the latest values response (or null).
+ * Returns {guide, values(), describeRun(catchment)}: the parsed guide, the latest values
+ * response (or null), and the run status text of the range on screen ("Running SWMM —
+ * 11 runs for S1, Slope 5 → 15 %").
  */
 (function (CS) {
     "use strict";
@@ -38,6 +40,12 @@
     var FULL_RANGE_FEATURES = ["PercImperv", "PctZero"];
 
     var number = CS.format.parameter;
+
+    /** "Slope (%)" → "%"; "Manning's n - Impervious" has no unit. */
+    function optionUnit(label) {
+        var match = /\(([^)]*)\)\s*$/.exec(label || "");
+        return match ? match[1] : "";
+    }
 
     function element(tag, className, text) {
         var el = document.createElement(tag);
@@ -271,10 +279,32 @@
         if (suggestionEl) {
             suggestionEl.hidden = false;
         }
+        /** What the status panel says about a run of the range on screen. */
+        function describeRun(catchmentName) {
+            var option = select.selectedOptions.length ? select.selectedOptions[0] : null;
+            var label = option ? option.textContent : select.value;
+            var entry = guide[feature()];
+            var name = entry ? entry.name : label;
+            var unit = optionUnit(label);
+            var range = inputs.map(function (input) {
+                return input.value.trim() === "" ? NaN : Number(input.value);
+            });
+            var runs = CS.format.runCount(range[0], range[1], range[2]);
+            var suffix = unit ? " " + unit : "";
+            if (!(runs >= 1)) {
+                return "Running SWMM for " + catchmentName + ", " + name;
+            }
+            if (runs === 1) {
+                return "Running SWMM — one run for " + catchmentName + ", " + name + " " + number(range[0]) + suffix;
+            }
+            return "Running SWMM — " + runs + " runs for " + catchmentName + ", " + name + " " +
+                number(range[0]) + " → " + number(range[1]) + suffix;
+        }
 
         render();
         return {
             guide: guide,
+            describeRun: describeRun,
             values: function () {
                 return values;
             },

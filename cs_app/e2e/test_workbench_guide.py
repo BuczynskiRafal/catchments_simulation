@@ -1,7 +1,7 @@
 """The workbench leads from model to the first run: step states, the run checklist,
-the parameter card and the suggested range.
+the parameter card, the suggested range and the run status panel.
 
-SWMM runs are marked ``slow``.
+SWMM runs are marked ``slow``; everything else stubs or holds the run request.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from .pages.timeseries_page import TimeseriesPage
 pytestmark = pytest.mark.e2e
 
 SAMPLE_INP = Path(__file__).resolve().parent.parent / "data" / "example.inp"
+SIMULATION_ROUTE = re.compile(r".*/simulation$")
 SUBCATCHMENTS_ROUTE = re.compile(r".*/subcatchments/$")
 DISCARDED_TEXT = "its results were discarded"
 
@@ -299,9 +300,95 @@ class TestRunRightAfterLoading:
         sp.run_simulation()
 
         expect(auth_page.locator("#cs-run-waiting")).to_contain_text("the run starts as soon")
+        expect(sp.run_status).to_have_count(0)
         self._release(auth_page, held)
 
         sp.wait_for_results()
         expect(sp.catchment_name_select).to_have_value("S1")
         expect(auth_page.locator(".toast", has_text=DISCARDED_TEXT)).to_have_count(0)
         expect(auth_page.locator("#cs-run-waiting")).to_have_count(0)
+
+    def test_run_for_a_model_replaced_mid_run_is_discarded(
+        self, auth_page: Page, live_server, tmp_path
+    ) -> None:
+        sp = _open(auth_page, live_server)
+        sp.load_sample_and_select_catchment()
+        held: list[Route] = []
+        auth_page.route(
+            SIMULATION_ROUTE,
+            lambda route: (
+                held.append(route) if route.request.method == "POST" else route.continue_()
+            ),
+        )
+        sp.run_simulation()
+        expect(sp.run_status).to_be_visible()
+
+        sp.upload.upload_file(_two_subcatchment_model(tmp_path))
+        sp.wait_for_catchment_options()
+        held[0].fulfill(
+            status=200,
+            content_type="text/html",
+            body='<div id="simulation-results"><h2 id="simulation-results-heading">Simulation results</h2></div>',
+        )
+
+        expect(auth_page.locator(".toast", has_text=DISCARDED_TEXT)).to_be_visible()
+        expect(sp.results_heading).to_have_count(0)
+        expect(sp.empty_state).to_be_visible()
+
+
+class TestRunStatus:
+    def test_panel_says_what_runs_and_goes_away(self, auth_page: Page, live_server) -> None:
+        sp = _open(auth_page, live_server)
+        sp.load_sample_and_select_catchment()
+        _wait_for_model_value(sp)
+        held: list[Route] = []
+        auth_page.route(
+            SIMULATION_ROUTE,
+            lambda route: (
+                held.append(route) if route.request.method == "POST" else route.continue_()
+            ),
+        )
+
+        sp.run_simulation()
+
+        expect(sp.run_status).to_be_visible()
+        expect(sp.run_status).to_have_attribute("aria-hidden", "true")
+        expect(sp.run_status.locator(".cs-run-status__title")).to_have_text(
+            "Running SWMM — 11 runs for S1, Slope 5 → 15 %"
+        )
+        expect(sp.run_status.locator(".cs-run-status__stage")).to_have_text(
+            ["Copy the model", "Write the value", "Run SWMM", "Collect results"]
+        )
+        expect(sp.run_status.locator(".cs-run-status__elapsed")).to_have_text(
+            re.compile(r"^\d+ s$")
+        )
+        # The existing polite status stays the one announcement.
+        expect(sp.loading_spinner).to_be_visible()
+        assert "%" not in sp.run_status.locator(".cs-run-status__track").inner_text()
+
+        # The empty state's next-step line would still ask for the run.
+        expect(sp.next_step).to_be_hidden()
+
+        held[0].fulfill(status=500, json={"message": "Stubbed failure.", "field_errors": {}})
+
+        expect(sp.run_status).to_have_count(0)
+        expect(sp.error_summary).to_contain_text("Stubbed failure.")
+        expect(sp.next_step).to_be_visible()
+
+    def test_literature_run_and_reduced_motion(self, auth_page: Page, live_server) -> None:
+        auth_page.emulate_media(reduced_motion="reduce")
+        sp = _open(auth_page, live_server)
+        sp.load_sample_and_select_catchment()
+        sp.set_option("simulate_n_imperv")
+        auth_page.route(
+            SIMULATION_ROUTE,
+            lambda route: None if route.request.method == "POST" else route.continue_(),
+        )
+
+        sp.run_simulation()
+
+        expect(sp.run_status).to_contain_text(
+            "one run per literature value of Manning's n, impervious for S1"
+        )
+        bar = sp.run_status.locator(".cs-run-status__track > span")
+        assert bar.evaluate("el => getComputedStyle(el).animationName") == "none"

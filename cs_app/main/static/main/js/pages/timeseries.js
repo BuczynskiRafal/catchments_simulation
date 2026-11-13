@@ -7,7 +7,7 @@
  * silently block the submit). A live "N runs" hint follows the range, and
  * CS.sweepAssist explains the parameter and suggests a range from the model. Runs
  * go through CS.asyncForm, which swaps the server-rendered results fragment into
- * #timeseries-canvas.
+ * #timeseries-canvas and shows what is running meanwhile.
  *
  * Results: the server renders the metrics and the sweep summary table;
  * initResults(root) adds what needs the data — the hydrograph (single) or sweep
@@ -23,6 +23,7 @@
     var CHART_FAILED = "The chart could not be drawn. Download the results to inspect the data.";
 
     var currentConfig = null;
+    var assist = null;
 
     // ── Run form ──────────────────────────────────────────────────────
 
@@ -57,7 +58,7 @@
         syncMode();
         updateHint();
 
-        CS.sweepAssist({
+        assist = CS.sweepAssist({
             form: form,
             parameterSelect: form.elements.namedItem("feature"),
             featureOf: function (feature) {
@@ -69,6 +70,15 @@
             insightEl: document.getElementById("ts-insight"),
             suggestionEl: document.getElementById("ts-range-suggestion"),
         });
+    }
+
+    /** "Running SWMM — 11 runs for S1, Imperviousness 0 → 100 %": what the status panel says. */
+    function describeRun(form) {
+        var catchment = form.elements.namedItem("catchment_name").value;
+        if (form.elements.namedItem("mode").value !== "sweep") {
+            return "Running SWMM — one run for " + catchment;
+        }
+        return assist.describeRun(catchment);
     }
 
     // ── Timestep table ────────────────────────────────────────────────
@@ -239,6 +249,9 @@
             loadingEl: document.getElementById("timeseries-loading-state"),
             successMessage: "Timeseries analysis finished",
             onSuccess: initResults,
+            runStatus: function () {
+                return describeRun(form);
+            },
         });
     });
 })(window.CS);
