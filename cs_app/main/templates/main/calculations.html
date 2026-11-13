@@ -8,6 +8,7 @@
         integrity="sha384-cCVCZkAjYNxaYKbM8lsArLznDF/SvMFr1jcZrvOpSTCa0W40ZAdLzHCEulnUa5i7"
         crossorigin="anonymous" defer></script>
 <script src="{% static 'main/js/charts.js' %}" defer></script>
+<script src="{% static 'main/js/model/network.js' %}" defer></script>
 {% endblock %}
 
 {% block style %}
@@ -72,14 +73,21 @@
             <h2 class="cs-card__title calc-model__title" id="calc-model-title">Catchment Area Neural Network Model</h2>
             <p class="calc-model__lead">A small fully connected network that estimates subcatchment runoff from the same properties SWMM uses, so it can be checked against a full SWMM run.</p>
 
-            {# calculations.js draws the diagram from #calculations-network. #}
+            {# calculations.js draws the diagram from #calculations-network and traces the rows of #calculations-chart-data. #}
             <section class="calc-net" aria-labelledby="calc-network-title">
                 <div class="calc-net__header">
-                    <h3 class="calc-net__title" id="calc-network-title">Inside the network</h3>
+                    <h3 class="calc-net__title" id="calc-network-title" tabindex="-1">Inside the network</h3>
+                    {% if network %}
+                    <div class="calc-net__trace" id="calc-trace-control" hidden>
+                        <label class="calc-net__trace-label" for="calc-trace-select">Trace subcatchment</label>
+                        <select class="form-select form-select-sm calc-net__trace-select" id="calc-trace-select"></select>
+                    </div>
+                    {% endif %}
                 </div>
                 <p class="calc-net__intro">The eight inputs are standardised with the mean and spread of the training data, then pass through two hidden layers of eight neurons to one output neuron. Each neuron adds up its weighted inputs and a bias and applies ReLU: a negative sum switches it off. The network was trained with the Adam optimiser on mean squared error.</p>
 
                 {% if network %}
+                <p class="calc-net__notice" id="calc-network-notice" hidden>This comparison has too many subcatchments to trace individually.</p>
                 <figure class="calc-net__figure">
                     <div class="calc-net__stage" id="calc-network-stage" tabindex="0" role="group" aria-label="Network diagram: use the arrow keys to read each neuron" aria-describedby="calc-network-readout" data-calc-network-js hidden>
                         <svg class="calc-net__svg" id="calc-network-diagram" role="img" aria-label="Diagram of the neural network" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -90,8 +98,9 @@
                         <p class="calc-net__readout" id="calc-network-readout"></p>
                     </figcaption>
                     <p class="visually-hidden" id="calc-network-announce" aria-live="polite"></p>
-                    <noscript><p class="calc-net__noscript">Turn on JavaScript to see the network diagram.</p></noscript>
+                    <noscript><p class="calc-net__noscript">Turn on JavaScript to see the network diagram and trace a subcatchment through it.</p></noscript>
                 </figure>
+                <p class="calc-net__result" id="calc-network-output" hidden></p>
 
                 {% else %}
                 <p class="calc-net__unavailable" id="calc-network-unavailable">The network diagram is not available right now.</p>

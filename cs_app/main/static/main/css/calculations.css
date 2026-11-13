@@ -227,6 +227,27 @@
 .calc-net__title {
     margin: 0;
     font-size: var(--cs-fs-h4);
+    /* The Trace buttons scroll here; keep the heading clear of the sticky header. */
+    scroll-margin-top: calc(var(--cs-header-h) + 1rem);
+}
+
+.calc-net__trace {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem 0.625rem;
+}
+
+.calc-net__trace-label {
+    color: var(--cs-ink-muted);
+    font-size: var(--cs-fs-small);
+    font-weight: 600;
+}
+
+.calc-net__trace-select {
+    width: auto;
+    min-width: 8rem;
+    max-width: 16rem;
 }
 
 .calc-net__intro {
@@ -236,7 +257,8 @@
     font-size: var(--cs-fs-small);
 }
 
-/* Why the diagram is missing. */
+/* Why the diagram shows only the weights, or why it is missing. */
+.calc-net__notice,
 .calc-net__unavailable {
     margin-bottom: 1rem;
     padding: 0.625rem 0.875rem;
@@ -285,6 +307,13 @@
     font-weight: 500;
 }
 
+.calc-net__value {
+    fill: var(--cs-ink-muted);
+    font-family: var(--cs-font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
 .calc-net__edge {
     transition: opacity var(--cs-transition);
 }
@@ -295,6 +324,11 @@
 
 .calc-net__edge--negative {
     stroke: var(--cs-ochre);
+}
+
+/* Connections from a neuron that is off carry nothing for this subcatchment. */
+.calc-net__edge--idle {
+    stroke: var(--cs-line);
 }
 
 .calc-net__svg.is-focusing .calc-net__edge:not(.is-linked) {
@@ -310,6 +344,17 @@
     stroke: var(--cs-ink-muted);
     stroke-width: 1.5;
     transition: stroke var(--cs-transition);
+}
+
+.calc-net__node.is-on .calc-net__dot {
+    fill: var(--cs-water);
+    stroke: var(--cs-water-strong);
+}
+
+/* A ReLU neuron whose weighted sum is negative outputs 0: drawn hollow and dashed. */
+.calc-net__node.is-off .calc-net__dot {
+    fill: var(--cs-surface-sunken);
+    stroke-dasharray: 2 2.5;
 }
 
 .calc-net__node.is-current .calc-net__dot {
@@ -340,10 +385,45 @@
     font-size: var(--cs-fs-small);
 }
 
+.calc-net__result {
+    margin: 0.75rem 0 0;
+    padding: 0.625rem 0.875rem;
+    border-left: 3px solid var(--cs-water);
+    border-radius: var(--cs-radius-sm);
+    background-color: var(--cs-surface-sunken);
+    font-size: var(--cs-fs-small);
+}
+
+.calc-net__result-label {
+    color: var(--cs-ink-muted);
+    font-weight: 600;
+}
+
+.calc-net__result-value {
+    font-family: var(--cs-font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 .calc-net__more {
     margin: 1.25rem 0 0;
     font-size: var(--cs-fs-small);
     font-weight: 600;
+}
+
+/* ── Results table: Trace column ── */
+
+/* Relative, so the cells' visually hidden text stays inside the table's scroll container. */
+.calc-table__trace {
+    position: relative;
+    width: 1%;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.calc-trace-button {
+    --bs-btn-padding-y: 0.125rem;
+    --bs-btn-padding-x: 0.5rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

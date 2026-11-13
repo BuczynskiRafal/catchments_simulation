@@ -209,6 +209,32 @@ def test_page_embeds_the_network_before_any_run(client):
 
 
 @pytest.mark.django_db
+def test_rows_with_inputs_get_a_trace_button(calc_client):
+    calc_client.comparison = _comparison(with_inputs=True)
+
+    html = calc_client.post(reverse("main:calculations"), follow=True).content.decode()
+
+    assert _embedded_json(html, "calculations-chart-data")[0]["inputs"] == EXAMPLE_INPUTS
+    assert html.count('data-calc-trace="') == 2
+    assert 'data-calc-trace="1"' in html
+    assert 'Trace<span class="visually-hidden"> S2 through the network</span>' in html
+
+
+@pytest.mark.django_db
+def test_rows_cached_without_inputs_still_render(calc_client):
+    calc_client.comparison = _comparison(with_inputs=False)
+
+    response = calc_client.post(reverse("main:calculations"), follow=True)
+
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert 'id="calculations-table"' in html
+    assert "2465.94" in html
+    assert "data-calc-trace" not in html
+    assert _embedded_json(html, "calculations-network") is not None
+
+
+@pytest.mark.django_db
 def test_failed_run_page_still_embeds_the_network(client, user):
     """The no-JS error path renders the full page, diagram data included."""
     client.force_login(user)
@@ -240,6 +266,7 @@ def test_page_renders_without_the_diagram_when_the_weights_cannot_be_loaded(clie
     for absent in (
         "calc-network-stage",
         "calc-network-diagram",
+        "calc-trace-select",
     ):
         assert f'id="{absent}"' not in html
     assert 'class="calc-net__intro"' in html
@@ -262,3 +289,19 @@ def test_comparison_too_large_to_trace_is_kept_without_the_inputs(calc_client, m
     rows = _embedded_json(html, "calculations-chart-data")
     assert rows
     assert all("inputs" not in row for row in rows)
+    # Nothing to trace: no Trace column (the page script shows the weights-only note).
+    assert "data-calc-trace" not in html
+
+
+@pytest.mark.django_db
+def test_page_with_the_network_has_the_untraceable_note_ready(client):
+    html = client.get(reverse("main:calculations")).content.decode()
+
+    assert (
+        '<p class="calc-net__notice" id="calc-network-notice" hidden>'
+        "This comparison has too many subcatchments to trace individually.</p>"
+    ) in html
+    assert 'id="calc-network-unavailable"' not in html
+    # Only the keyboard reaches the live region; the visible readout is not live.
+    assert '<p class="visually-hidden" id="calc-network-announce" aria-live="polite"></p>' in html
+    assert re.search(r'<p class="calc-net__readout" id="calc-network-readout">', html)

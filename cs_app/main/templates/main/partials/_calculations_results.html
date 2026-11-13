@@ -69,6 +69,10 @@
                             <th scope="col" class="cs-num">ANN Runoff [{{ comparison.unit }}]</th>
                             <th scope="col" class="cs-num">Difference [{{ comparison.unit }}]</th>
                             <th scope="col" class="cs-num">Difference [%]</th>
+                            {% if comparison.rows.0.inputs %}
+                            {# Traces the row in the network diagram; not part of the data (sorting and Copy table skip it). #}
+                            <th scope="col" class="calc-table__trace" data-cs-sort="false" data-calc-trace-col data-calc-requires-js hidden><span class="visually-hidden">Network trace</span></th>
+                            {% endif %}
                         </tr>
                     </thead>
                     <tbody>
@@ -79,6 +83,11 @@
                             <td class="cs-num" data-sort-value="{{ row.ANN_Runoff|default_if_none:''|unlocalize }}">{{ row.ANN_Runoff|floatformat:2|default:"—" }}</td>
                             <td class="cs-num" data-sort-value="{{ row.Difference|default_if_none:''|unlocalize }}">{{ row.Difference|floatformat:2|default:"—" }}</td>
                             <td class="cs-num" data-sort-value="{{ row.Difference_pct|default_if_none:''|unlocalize }}">{{ row.Difference_pct|floatformat:1|default:"—" }}</td>
+                            {% if comparison.rows.0.inputs %}
+                            <td class="calc-table__trace" data-calc-trace-col data-calc-requires-js hidden>
+                                {% if row.inputs %}<button type="button" class="btn btn-sm btn-outline-primary calc-trace-button" data-calc-trace="{{ forloop.counter0 }}">Trace<span class="visually-hidden"> {{ row.Name }} through the network</span></button>{% endif %}
+                            </td>
+                            {% endif %}
                         </tr>
                         {% endfor %}
                     </tbody>

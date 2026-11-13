@@ -304,7 +304,7 @@ def predict_runoff(swmmio_model: swmmio.Model) -> np.ndarray:
 
 def network_payload() -> dict:
     """
-    The loaded network as JSON-ready data, for drawing it in the browser.
+    The loaded network as JSON-ready data, for drawing and re-running it in the browser.
 
     ``features`` lists the 8 inputs in order (``key``: the SWMM column, ``label``: its
     name in the parameter guide, ``short``: a label that fits the diagram, ``unit``: the
