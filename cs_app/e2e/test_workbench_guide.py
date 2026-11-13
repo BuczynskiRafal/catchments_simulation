@@ -1,5 +1,6 @@
-"""The workbench leads from model to the first run: step states, the run checklist,
-the parameter card, the suggested range and the run status panel.
+"""The workbench leads from model to insight: step states, the run checklist, the
+parameter card, the suggested range, the run status panel and results that explain
+themselves (reading line, model value marker, water balance, links).
 
 SWMM runs are marked ``slow``; everything else stubs or holds the run request.
 """
@@ -13,6 +14,7 @@ import pytest
 from playwright.sync_api import Page, Route, expect
 
 from .pages.calculations_page import CalculationsPage
+from .pages.nav_component import NavComponent
 from .pages.simulation_page import SimulationPage
 from .pages.timeseries_page import TimeseriesPage
 
@@ -392,3 +394,174 @@ class TestRunStatus:
         )
         bar = sp.run_status.locator(".cs-run-status__track > span")
         assert bar.evaluate("el => getComputedStyle(el).animationName") == "none"
+
+
+# Rows of a #chart-config for the reading line: (x, runoff, peak, infiltration).
+def _config(rows, x_label="Percent Slope [%]"):
+    return {
+        "x": "X",
+        "xLabel": x_label,
+        "y": ["runoff", "peak_runoff_rate", "infiltration"],
+        "yLabels": {
+            "runoff": "Total Runoff Volume [m³]",
+            "peak_runoff_rate": "Peak Runoff Rate [CMS]",
+            "infiltration": "Total Infiltration Volume [m³]",
+        },
+        "data": [
+            {"X": x, "runoff": r, "peak_runoff_rate": p, "infiltration": i} for x, r, p, i in rows
+        ],
+    }
+
+
+READINGS = [
+    (
+        "increase",
+        _config([(10, 3360.4, 0.19, 406.7), (1, 2434.6, 0.13, 442.6)]),
+        "Slope",
+        "Raising Slope from 1 to 10\u00a0% increases the runoff volume by 38.0\u00a0% "
+        "(2,434.6 → 3,360.4\u00a0m³) and the peak rate by 46.2\u00a0%; infiltration falls by 8.1\u00a0%.",
+    ),
+    (
+        "decrease",
+        _config([(0.011, 4507.9, 0.27, 292), (0.8, 3516.3, 0.2, 400)], "Manning n (Pervious) [-]"),
+        "",
+        "Raising Manning n (Pervious) from 0.011 to 0.8 decreases the runoff volume by 22.0\u00a0% "
+        "(4,507.9 → 3,516.3\u00a0m³) and the peak rate by 25.9\u00a0%; infiltration rises by 37.0\u00a0%.",
+    ),
+    (
+        "no change",
+        _config([(0, 3360.4, 0.1933, 406.7), (100, 3360.4, 0.1933, 406.7)], "Curb Length [m]"),
+        "Curb length",
+        "Changing Curb length from 0 to 100\u00a0m does not change the runoff: every run gives "
+        "3,360.4\u00a0m³ at a peak rate of 0.1933\u00a0CMS.",
+    ),
+    (
+        "non-monotonic",
+        _config([(1, 10, 1, 5), (2, 30, 2, 5), (3, 20, 3, 5)]),
+        "Slope",
+        "The runoff volume does not move steadily with Slope: it is highest at 2\u00a0% "
+        "(30.00\u00a0m³) and lowest at 1\u00a0% (10.00\u00a0m³).",
+    ),
+    (
+        "single run",
+        _config([(10, 3360.4, 0.1933, 406.7)]),
+        "Slope",
+        "A single run at Slope = 10\u00a0%: the runoff volume is 3,360.4\u00a0m³ and the peak rate "
+        "0.1933\u00a0CMS.",
+    ),
+    (
+        "from zero, opposite peak, missing infiltration",
+        _config([(1, 0, 0.3, None), (2, 12.5, 0.2, None)], "Area [ha]"),
+        "Area",
+        "Raising Area from 1 to 2\u00a0ha increases the runoff volume from 0 to 12.50\u00a0m³, "
+        "while the peak rate falls by 33.3\u00a0%.",
+    ),
+    (
+        "no values",
+        _config([(1, None, None, None)]),
+        "Slope",
+        "SWMM returned no runoff volume for these runs.",
+    ),
+]
+
+
+class TestReading:
+    @pytest.mark.parametrize(
+        ("config", "name", "expected"),
+        [case[1:] for case in READINGS],
+        ids=[case[0] for case in READINGS],
+    )
+    def test_reading_sentence(self, auth_page: Page, live_server, config, name, expected) -> None:
+        _open(auth_page, live_server)
+        sentence = auth_page.evaluate(
+            "([config, name]) => CS.simulation.reading(config, name)", [config, name]
+        )
+        assert sentence == expected
+
+
+class TestResults:
+    @pytest.mark.slow
+    def test_sample_run_explains_itself(self, auth_page: Page, live_server, console_errors) -> None:
+        """Try sample data → Run at once: reading line, marker, balance and links."""
+        sp = _open(auth_page, live_server)
+        sp.upload.click_sample_data()
+        expect(sp.catchment_name_select).to_have_value("S1")
+        _wait_for_model_value(sp)
+
+        sp.run_simulation()
+        sp.wait_for_results()
+
+        expect(sp.reading).to_have_text(
+            re.compile(
+                r"^Raising Slope from 5 to 15\u00a0% increases the runoff volume by [\d.]+\u00a0%"
+            )
+        )
+        expect(sp.guide_link).to_have_text("How Slope enters the model")
+        expect(sp.guide_link).to_have_attribute("href", "/how-it-works#parameter-PercSlope")
+        expect(sp.metric_tiles).to_have_count(5)
+        expect(sp.metric_tiles.last).to_contain_text("Model value")
+        shapes = sp.chart.evaluate("el => el.layout.shapes.map(s => [s.x0, s.line.dash])")
+        assert shapes == [[10, "dash"]] * 4
+        labels = sp.chart.evaluate("el => el.layout.annotations.map(a => a.text)")
+        assert labels == ["Model value"]
+
+        sp.balance_chart.locator(".main-svg").first.wait_for(state="attached")
+        names = sp.balance_chart.evaluate("el => el.data.map(t => t.name)")
+        assert names == ["Runoff", "Infiltration", "Evaporation", "Still on the surface"]
+        totals = sp.balance_chart.evaluate(
+            "el => el.data[0].y.map((_, i) => el.data.reduce((s, t) => s + t.y[i], 0))"
+        )
+        assert all(abs(total - 100) < 0.01 for total in totals)
+        sp.balance_mode("volume").click()
+        expect(sp.balance_chart).to_have_attribute("aria-label", re.compile("as volumes in m³"))
+        title = sp.balance_chart.evaluate("el => el.layout.yaxis.title.text")
+        assert title == "Volume [m³]"
+
+        href = sp.lab_link.get_attribute("href")
+        assert href.startswith("/how-it-works?")
+        assert href.endswith("#lab")
+        assert "vary=PercSlope" in href
+        assert "slope=10" in href
+        assert console_errors == []
+
+    @pytest.mark.slow
+    def test_curb_length_reads_as_no_change_and_restored_range_is_kept(
+        self, auth_page: Page, live_server
+    ) -> None:
+        sp = _open(auth_page, live_server)
+        sp.load_sample_and_select_catchment()
+        sp.set_option("simulate_curb_length")
+        sp.set_range(0, 20, 10)
+        sp.run_simulation()
+        sp.wait_for_results()
+
+        expect(sp.reading).to_contain_text("does not change the runoff")
+
+        # The restored form keeps the user's range instead of the suggestion.
+        sp.navigate_to()
+        sp.wait_for_catchment_options()
+        _wait_for_model_value(sp)
+        assert [float(value) for value in sp.range_values()] == [0, 20, 10]
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_phone_width_has_no_overflow_and_no_serious_a11y_issues(
+        self, auth_page: Page, live_server, theme: str
+    ) -> None:
+        auth_page.set_viewport_size({"width": 390, "height": 844})
+        auth_page.emulate_media(reduced_motion="reduce")
+        sp = _open(auth_page, live_server)
+        NavComponent(auth_page).set_theme(theme)
+        sp.load_sample_and_select_catchment()
+        _wait_for_model_value(sp)
+        sp.set_range(5, 7, 1)
+        sp.run_simulation()
+        sp.wait_for_results()
+        sp.balance_chart.locator(".main-svg").first.wait_for(state="attached")
+
+        overflow = auth_page.evaluate(
+            "document.documentElement.scrollWidth - document.documentElement.clientWidth"
+        )
+        assert overflow <= 0
+        report = sp.run_axe_audit()
+        assert not report.critical + report.serious, report.critical + report.serious

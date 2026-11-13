@@ -2,6 +2,8 @@
 Results fragment of the simulation page. Rendered inside #simulation-canvas on a full
 page load and returned alone to async runs (the canvas receives it as innerHTML), so
 nothing may precede #simulation-results-heading: the client focuses the first heading.
+chart_config.baseline, .balance and .labUrl are optional: results cached before they
+existed render without the marker, the water balance and the link to the interactive model.
 {% endcomment %}
 {% load l10n %}
 <div id="simulation-results">
@@ -12,6 +14,14 @@ nothing may precede #simulation-results-heading: the client focuses the first he
             <p class="sim-results__meta">
                 {{ results_data|length }} run{{ results_data|length|pluralize }} · {{ chart_config.xLabel }}
             </p>
+        </div>
+
+        {# The response in one sentence, written by simulation.js from #chart-config. #}
+        <div class="sim-reading">
+            <p class="sim-reading__text" id="simulation-reading"{% if parameter_guide %} data-parameter-name="{{ parameter_guide.name }}"{% endif %} hidden></p>
+            {% if parameter_guide %}
+            <a class="sim-reading__link" href="{% url 'main:how_it_works' %}#{{ parameter_guide.anchor }}">How {{ parameter_guide.name }} enters the model</a>
+            {% endif %}
         </div>
 
         {# Key figures, filled by simulation.js from #chart-config. #}
@@ -31,6 +41,66 @@ nothing may precede #simulation-results-heading: the client focuses the first he
             </div>
         </section>
         {{ chart_config|json_script:"chart-config" }}
+
+        {% with balance=chart_config.balance %}
+        {% if balance %}
+        <section class="cs-chart-card sim-balance" aria-labelledby="simulation-balance-title">
+            <div class="cs-chart-card__toolbar">
+                <h3 class="cs-chart-card__title" id="simulation-balance-title">Where the rain goes</h3>
+                <div class="sim-balance__tools">
+                    {# Script-only, like the chart it switches. #}
+                    <div class="cs-segmented sim-balance__mode" role="radiogroup" aria-label="Show the water balance as" data-sim-balance-mode hidden>
+                        <input type="radio" class="btn-check" name="balance-mode" id="simulation-balance-share" value="share" autocomplete="off" checked>
+                        <label class="btn cs-segmented__option" for="simulation-balance-share">Share of rainfall</label>
+                        <input type="radio" class="btn-check" name="balance-mode" id="simulation-balance-volume" value="volume" autocomplete="off">
+                        <label class="btn cs-segmented__option" for="simulation-balance-volume">Volume</label>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-sim-action="download-balance-png" hidden
+                            aria-label="Download the water balance chart as PNG"
+                            data-filename="{{ output_file_name|default:'simulation'|cut:'.xlsx' }}_water_balance">Download PNG</button>
+                </div>
+            </div>
+            <div class="cs-chart-card__body">
+                <div id="simulation-balance-chart" class="sim-balance__chart">
+                    <p class="sim-chart__fallback">The chart needs JavaScript. The table below lists the same volumes.</p>
+                </div>
+            </div>
+            <p class="sim-chart-note">Each bar is one run: the rain that fell on the subcatchment, split into what ran off, what infiltrated, what evaporated and what was still on the surface when the simulation ended.</p>
+            <details class="sim-balance__data">
+                <summary class="sim-balance__summary" id="simulation-balance-table-title">Water balance table</summary>
+                <div class="cs-table-wrap" tabindex="0" role="region" aria-labelledby="simulation-balance-table-title">
+                    <table class="table cs-table">
+                        <caption class="visually-hidden">Volumes of each run in {{ balance.unit }}</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col" class="cs-num">{{ chart_config.xLabel }}</th>
+                                <th scope="col" class="cs-num">Rainfall [{{ balance.unit }}]</th>
+                                <th scope="col" class="cs-num">Runon [{{ balance.unit }}]</th>
+                                <th scope="col" class="cs-num">Runoff [{{ balance.unit }}]</th>
+                                <th scope="col" class="cs-num">Infiltration [{{ balance.unit }}]</th>
+                                <th scope="col" class="cs-num">Evaporation [{{ balance.unit }}]</th>
+                                <th scope="col" class="cs-num">Still on the surface [{{ balance.unit }}]</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in balance.rows %}
+                            <tr>
+                                <th scope="row" class="cs-num">{{ row.x|floatformat:"-3" }}</th>
+                                <td class="cs-num">{{ row.rainfall|floatformat:1 }}</td>
+                                <td class="cs-num">{{ row.runon|floatformat:1 }}</td>
+                                <td class="cs-num">{{ row.runoff|floatformat:1 }}</td>
+                                <td class="cs-num">{{ row.infiltration|floatformat:1 }}</td>
+                                <td class="cs-num">{{ row.evaporation|floatformat:1 }}</td>
+                                <td class="cs-num">{{ row.storage|floatformat:1 }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        </section>
+        {% endif %}
+        {% endwith %}
 
         {# Not a <section>: the scrollable wrapper below is the labelled region. #}
         <div class="sim-table">
@@ -70,6 +140,9 @@ nothing may precede #simulation-results-heading: the client focuses the first he
                     form="simulation-download-form">Download Results (.xlsx)</button>
             {% endif %}
             <button type="button" class="btn btn-outline-primary" data-sim-action="copy-table" hidden>Copy table</button>
+            {% if chart_config.labUrl %}
+            <a class="btn btn-outline-primary sim-lab-link" id="simulation-lab-link" href="{{ chart_config.labUrl }}">Explore in the interactive model</a>
+            {% endif %}
         </div>
     </div>
     {% else %}
@@ -77,7 +150,7 @@ nothing may precede #simulation-results-heading: the client focuses the first he
         <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m6 16 4-5 3 3 6-8"/><circle cx="19" cy="6" r="1.2" fill="currentColor"/></svg>
         <h2 class="cs-empty-state__title">No results yet</h2>
         {% include 'main/partials/_workbench_checklist.html' with run_label="Run the simulation" run_next="Next: pick the parameter to vary and select Run Simulation." %}
-        <p class="cs-empty-state__text sim-empty__gives">A run gives key figures, a chart for every output and a table you can download.</p>
+        <p class="cs-empty-state__text sim-empty__gives">A run gives key figures, a chart for every output, where the rain went and a table you can download.</p>
     </div>
     {% endif %}
 </div>

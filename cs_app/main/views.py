@@ -86,6 +86,7 @@ from main.insights import (
     lab_query,
     read_subcatchment_values,
     suggested_ranges,
+    water_balance,
 )
 from main.predictor import predict_runoff
 from main.schemas import ContactMessage
@@ -206,6 +207,7 @@ SIM_SESSION_DEFAULTS = {
     "feature_name": "",
     "output_file_name": None,
     "download_token": None,
+    "parameter_guide": None,
 }
 # Subcatchment values parsed from session models are cached per process, this many at most.
 SUBCATCHMENT_VALUES_CACHE_SIZE = 64
@@ -1387,6 +1389,8 @@ def get_session_variables(request: HttpRequest) -> dict:
         "feature_name": payload.get("feature_name", ""),
         "output_file_name": payload.get("output_file_name"),
         "download_token": token,
+        # From the guide, not the cache: results cached before an edit of the guide stay current.
+        "parameter_guide": PARAMETER_GUIDE.get(payload.get("feature_name", "")),
     }
 
 
@@ -1478,6 +1482,17 @@ def _get_form_initial(
     return initial
 
 
+def _model_values_or_none(
+    request: HttpRequest, path: str, catchment: str
+) -> dict[str, float | None] | None:
+    """The subcatchment's values for a run's context; a model swmmio cannot parse gives None."""
+    try:
+        return _subcatchment_values(path, catchment)
+    except Exception:
+        logger.warning("Failed to read subcatchment values from %s", path, exc_info=True)
+        return None
+
+
 def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
     """Run the parameter sweep and store its results for the current session."""
     option = form.cleaned_data["option"]
@@ -1499,11 +1514,14 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
         df = method()
     else:
         df = method(start=params.start, stop=params.stop, step=params.step)
+    # Every computed output, precipitation and runon included, for the water balance.
+    all_rows = json.loads(df.to_json(orient="records"))
     # The chart, the table and the download all show exactly these columns.
     output_columns = list(SIMULATION_OUTPUT_COLUMNS)
     df = df[[feature_name, *output_columns]]
 
     flow_units = _read_flow_units(uploaded_file_path)
+    values = _model_values_or_none(request, uploaded_file_path, params.catchment_name)
     x_label, y_labels = _build_simulation_axis_labels(
         feature_name=feature_name,
         y_columns=output_columns,
@@ -1517,6 +1535,12 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
         "title": f"Dependence of runoff on subcatchment {feature_name}.",
         "xLabel": x_label,
         "yLabels": y_labels,
+        # The model's own value of the swept parameter, marked on the charts.
+        "baseline": values.get(feature_name) if values else None,
+        "balance": water_balance(
+            all_rows, feature_name, values.get("Area") if values else None, flow_units
+        ),
+        "labUrl": _lab_url(values, flow_units, feature_name) if values else None,
     }
     payload = {
         "chart_config": chart_config,
