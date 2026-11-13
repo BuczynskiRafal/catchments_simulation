@@ -498,6 +498,18 @@ class TestApiCalculations:
         assert get_res.status_code == 200
         assert get_res.json()["rows"] == body["rows"]
 
+    def test_rows_carry_the_network_inputs(self, loaded_model_client, monkeypatch):
+        """The inputs that let the page trace a row through the network are part of the API."""
+        inputs = [25.0, 100.0, 10.0, 0.01, 1.0, 0.05, 0.05, 25.0]
+        df = pd.DataFrame(
+            {"Name": ["S1"], "SWMM_Runoff": [10.0], "ANN_Runoff": [11.0], "Inputs": [inputs]}
+        )
+        monkeypatch.setattr("main.views._compare_swmm_and_ann", lambda path: (df, "m³"))
+
+        body = loaded_model_client.post(reverse("main:api_calculations")).json()
+
+        assert body["rows"][0]["inputs"] == inputs
+
     def test_oversized_api_post_returns_413_json(self, authenticated_client, settings):
         settings.DATA_UPLOAD_MAX_MEMORY_SIZE = 32
         res = authenticated_client.post(
