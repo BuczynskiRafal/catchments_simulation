@@ -3,7 +3,9 @@ This module contains functions to predict runoff using a machine learning model.
 
 The model weights are loaded from the 'swmm_model' directory.
 The predict_runoff function takes a SWMM model object as input and returns an array of
-predicted runoff values for each subcatchment.
+predicted runoff values for each subcatchment; prediction_inputs returns what the
+network reads for each one, and network_payload describes the network itself for the
+diagram on the calculations page.
 
 This is a pure NumPy implementation - no TensorFlow/Keras required.
 """
@@ -12,9 +14,12 @@ import logging
 import os
 import threading
 import time
+from functools import cached_property
 
 import numpy as np
 import swmmio
+
+from main.guide import PARAMETER_GUIDE
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,35 @@ class SimpleMLPModel:
         x = x @ self.dense_2_kernel + self.dense_2_bias
         return self._relu(x)
 
+    @cached_property
+    def payload(self) -> dict:
+        """The network as plain lists and numbers (see ``network_payload``)."""
+        std = np.sqrt(self.norm_variance + 1e-7)
+        layers = (
+            (self.dense_0_kernel, self.dense_0_bias),
+            (self.dense_1_kernel, self.dense_1_bias),
+            (self.dense_2_kernel, self.dense_2_bias),
+        )
+        return {
+            "features": [
+                {
+                    "key": key,
+                    "label": PARAMETER_GUIDE[key].name,
+                    "short": short,
+                    "unit": unit,
+                    "min": 0.0,
+                    "max": PHYSICAL_MAXIMA.get(key),
+                }
+                for key, (short, unit) in NETWORK_INPUTS.items()
+            ],
+            "mean": self.norm_mean.tolist(),
+            "std": std.tolist(),
+            "layers": [
+                {"weights": kernel.tolist(), "bias": bias.tolist()} for kernel, bias in layers
+            ],
+            "output": {"unit": NETWORK_OUTPUT_UNIT},
+        }
+
 
 _model: SimpleMLPModel | None = None
 _model_lock = threading.Lock()
@@ -161,16 +195,26 @@ def preload_model() -> bool:
     return False
 
 
-REQUIRED_SUBCATCHMENT_COLUMNS: tuple[str, ...] = (
-    "PercImperv",
-    "Width",
-    "PercSlope",
-    "N-Imperv",
-    "N-Perv",
-    "S-Imperv",
-    "S-Perv",
-    "PctZero",
-)
+# Shown as the unit of Manning's n, which has none: an en dash.
+NO_UNIT = "\u2013"
+# The network's inputs in the order it reads them: a short label for the diagram and the
+# SI unit it was trained on.
+NETWORK_INPUTS: dict[str, tuple[str, str]] = {
+    "PercImperv": ("Imperviousness", "%"),
+    "Width": ("Width", "m"),
+    "PercSlope": ("Slope", "%"),
+    "N-Imperv": ("n, impervious", NO_UNIT),
+    "N-Perv": ("n, pervious", NO_UNIT),
+    "S-Imperv": ("Storage, imperv.", "mm"),
+    "S-Perv": ("Storage, perv.", "mm"),
+    "PctZero": ("No-storage share", "%"),
+}
+REQUIRED_SUBCATCHMENT_COLUMNS: tuple[str, ...] = tuple(NETWORK_INPUTS)
+# Every input is non-negative, and the two shares cannot exceed 100 %. The others have no
+# upper bound: a slope is rise over run, so 100 % (45°) is not a limit.
+PHYSICAL_MAXIMA: dict[str, float] = {"PercImperv": 100.0, "PctZero": 100.0}
+# The unit of the network's output: SWMM's 10^6 L, i.e. 10^3 m³.
+NETWORK_OUTPUT_UNIT = "10³ m³"
 _FT_TO_M = 0.3048
 _IN_TO_MM = 25.4
 
@@ -186,6 +230,48 @@ def _is_us_flow_units(swmmio_model: object) -> bool:
     return _unit_system(_extract_options_flow_units(options)) == "US"
 
 
+def prediction_inputs(swmmio_model: swmmio.Model) -> np.ndarray:
+    """
+    The network's inputs for every subcatchment of ``swmmio_model``.
+
+    The columns follow ``REQUIRED_SUBCATCHMENT_COLUMNS`` in the units the network was
+    trained on: ``Width`` in meters and ``S-Imperv`` / ``S-Perv`` in millimeters. When
+    ``swmmio_model`` uses US flow units (``CFS``, ``GPM``, ``MGD``) they are converted
+    from feet and inches; the percentages and Manning's n need no conversion.
+
+    Parameters
+    ----------
+    swmmio_model : swmmio.Model
+        A SWMM model object with ``subcatchments.dataframe`` containing all 8
+        required ``[SUBCATCHMENTS]`` and ``[SUBAREAS]`` columns.
+
+    Returns
+    -------
+    np.ndarray
+        ``float32`` array of shape ``(n_subcatchments, 8)``, one row per subcatchment
+        in the order of the dataframe.
+
+    Raises
+    ------
+    KeyError
+        If any required ``[SUBCATCHMENTS]`` or ``[SUBAREAS]`` column is missing.
+    """
+    dataframe = swmmio_model.subcatchments.dataframe
+    missing = [col for col in REQUIRED_SUBCATCHMENT_COLUMNS if col not in dataframe.columns]
+    if missing:
+        raise KeyError(
+            f"SWMM model is missing required subcatchment/subarea columns: {', '.join(missing)}"
+        )
+
+    data = dataframe[list(REQUIRED_SUBCATCHMENT_COLUMNS)].to_numpy(dtype=np.float32, copy=True)
+    if _is_us_flow_units(swmmio_model):
+        # Column 1 is Width (ft -> m); columns 5 and 6 are S-Imperv and S-Perv (in -> mm).
+        data[:, 1] *= _FT_TO_M
+        data[:, 5] *= _IN_TO_MM
+        data[:, 6] *= _IN_TO_MM
+    return data
+
+
 def predict_runoff(swmmio_model: swmmio.Model) -> np.ndarray:
     """
     Predict subcatchment runoff volume using the pre-trained MLP model.
@@ -193,9 +279,7 @@ def predict_runoff(swmmio_model: swmmio.Model) -> np.ndarray:
     The network weights were trained on the reference SI model (``example.inp``,
     ``Area = 5 ha``) with ``Width`` in meters and ``S-Imperv`` / ``S-Perv`` in
     millimeters, and its output is always expressed in ``10^6 L`` (``10^3 m³``).
-    When ``swmmio_model`` uses US flow units (``CFS``, ``GPM``, ``MGD``), ``Width``
-    (ft -> m) and ``S-Imperv`` / ``S-Perv`` (in -> mm) are converted to SI prior
-    to normalization.
+    The inputs come from ``prediction_inputs``, which converts US models to SI.
 
     Parameters
     ----------
@@ -215,18 +299,22 @@ def predict_runoff(swmmio_model: swmmio.Model) -> np.ndarray:
         If any required ``[SUBCATCHMENTS]`` or ``[SUBAREAS]`` column is missing.
     """
     model = _get_model()
-    dataframe = swmmio_model.subcatchments.dataframe
-    missing = [col for col in REQUIRED_SUBCATCHMENT_COLUMNS if col not in dataframe.columns]
-    if missing:
-        raise KeyError(
-            f"SWMM model is missing required subcatchment/subarea columns: {', '.join(missing)}"
-        )
+    return model.predict(prediction_inputs(swmmio_model)).flatten()
 
-    data = dataframe[list(REQUIRED_SUBCATCHMENT_COLUMNS)].to_numpy(dtype=np.float32, copy=True)
-    if _is_us_flow_units(swmmio_model):
-        # Column 1 is Width (ft -> m); columns 5 and 6 are S-Imperv and S-Perv (in -> mm).
-        data[:, 1] *= _FT_TO_M
-        data[:, 5] *= _IN_TO_MM
-        data[:, 6] *= _IN_TO_MM
 
-    return model.predict(data).flatten()
+def network_payload() -> dict:
+    """
+    The loaded network as JSON-ready data, for drawing and re-running it in the browser.
+
+    ``features`` lists the 8 inputs in order (``key``: the SWMM column, ``label``: its
+    name in the parameter guide, ``short``: a label that fits the diagram, ``unit``: the
+    SI unit the network reads it in, ``min`` / ``max``: the values it can physically
+    take, ``max`` None when unbounded). ``mean`` and ``std`` standardise the inputs
+    exactly as the network does (``std = sqrt(variance + 1e-7)``). ``layers`` are the
+    three dense layers, each followed by ReLU; ``weights[i][j]`` connects input ``i`` to
+    neuron ``j``. ``output.unit`` is the unit of the prediction.
+
+    The weights never change in-process, so the payload is built once per loaded model
+    and shared: treat it as read-only.
+    """
+    return _get_model().payload

@@ -86,6 +86,42 @@ class SimulationPage(BasePage):
     def error_summary(self) -> Locator:
         return self.form.locator(".alert-danger[role='alert']")
 
+    def step(self, name: str) -> Locator:
+        """A panel step: "model" or "run" (its data-state is todo, active or done)."""
+        return self.page.locator(f".cs-step[data-cs-step='{name}']")
+
+    @property
+    def catchment_hint(self) -> Locator:
+        return self.page.locator("[data-cs-catchment-hint]")
+
+    @property
+    def attention(self) -> Locator:
+        """Inline messages at a control that needs the user before a run."""
+        return self.page.locator(".cs-attention")
+
+    @property
+    def insight(self) -> Locator:
+        return self.page.locator("#simulation-insight")
+
+    @property
+    def suggestion(self) -> Locator:
+        return self.page.locator("#simulation-range-suggestion")
+
+    @property
+    def use_suggestion_button(self) -> Locator:
+        return self.suggestion.get_by_role("button", name="Use the suggested range")
+
+    @property
+    def run_status(self) -> Locator:
+        return self.canvas.locator(".cs-run-status")
+
+    def range_values(self) -> list[str]:
+        return [
+            self.start_input.input_value(),
+            self.stop_input.input_value(),
+            self.step_input.input_value(),
+        ]
+
     # ------------------------------------------------------------------
     # Results canvas
     # ------------------------------------------------------------------
@@ -97,6 +133,14 @@ class SimulationPage(BasePage):
     @property
     def empty_state(self) -> Locator:
         return self.canvas.locator(".cs-empty-state")
+
+    def checklist_item(self, name: str) -> Locator:
+        """An item of the empty state's checklist: "model", "catchment" or "run"."""
+        return self.empty_state.locator(f"[data-check='{name}']")
+
+    @property
+    def next_step(self) -> Locator:
+        return self.empty_state.locator("[data-cs-next]")
 
     @property
     def results_heading(self) -> Locator:
@@ -117,6 +161,26 @@ class SimulationPage(BasePage):
     @property
     def results_rows(self) -> Locator:
         return self.results_table.locator("tbody tr")
+
+    @property
+    def reading(self) -> Locator:
+        return self.page.locator("#simulation-reading")
+
+    @property
+    def guide_link(self) -> Locator:
+        return self.page.locator(".sim-reading__link")
+
+    @property
+    def balance_chart(self) -> Locator:
+        return self.page.locator("#simulation-balance-chart")
+
+    def balance_mode(self, value: str) -> Locator:
+        """Label of the water balance toggle: "share" or "volume"."""
+        return self.page.locator(f"label[for='simulation-balance-{value}']")
+
+    @property
+    def lab_link(self) -> Locator:
+        return self.page.locator("#simulation-lab-link")
 
     @property
     def download_button(self) -> Locator:
@@ -170,8 +234,8 @@ class SimulationPage(BasePage):
         )
 
     def load_sample_and_select_catchment(self) -> str:
-        """Load the bundled sample model and select its first subcatchment; return its id."""
-        self.upload.click_sample_data()
+        """Load the bundled sample model (unless loaded already), select its first subcatchment."""
+        self.upload.ensure_sample_loaded()
         self.wait_for_catchment_options()
         catchment = next(option for option in self.get_catchment_options() if option)
         self.set_catchment_name(catchment)

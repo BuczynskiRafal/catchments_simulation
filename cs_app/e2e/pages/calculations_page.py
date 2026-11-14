@@ -62,8 +62,67 @@ class CalculationsPage(BasePage):
             "details.calc-details__item", has=self.page.locator("summary", has_text=title)
         )
 
-    def has_nn_architecture_image(self) -> bool:
-        return self.page.get_by_role("img", name="Diagram of the neural network").is_visible()
+    # ------------------------------------------------------------------
+    # Inside the network
+    # ------------------------------------------------------------------
+
+    @property
+    def network_heading(self) -> Locator:
+        return self.page.locator("#calc-network-title")
+
+    @property
+    def network_stage(self) -> Locator:
+        """The keyboard-focusable wrapper of the diagram (arrow keys read the neurons)."""
+        return self.page.locator("#calc-network-stage")
+
+    @property
+    def network_diagram(self) -> Locator:
+        """The ``role="img"`` SVG drawn from ``#calculations-network``."""
+        return self.page.locator("#calc-network-diagram")
+
+    @property
+    def network_caption(self) -> Locator:
+        return self.page.locator("#calc-network-caption")
+
+    @property
+    def network_readout(self) -> Locator:
+        """The line that reads out the neuron under the pointer or the keyboard."""
+        return self.page.locator("#calc-network-readout")
+
+    @property
+    def network_output(self) -> Locator:
+        """ "ANN … · SWMM … (…)" of the traced subcatchment; hidden without a trace."""
+        return self.page.locator("#calc-network-output")
+
+    @property
+    def trace_select(self) -> Locator:
+        return self.page.get_by_label("Trace subcatchment")
+
+    @property
+    def range_summary(self) -> Locator:
+        return self.page.locator("#calc-range-summary")
+
+    @property
+    def range_items(self) -> Locator:
+        return self.page.locator("#calc-range-list > li")
+
+    def trace_button(self, name: str) -> Locator:
+        """The Trace button in the results table row of subcatchment *name*."""
+        return self.results_table.get_by_role("button", name=f"Trace {name} through the network")
+
+    def traced_ann_value(self) -> float:
+        """The ANN value of the network output readout, in the page's volume unit."""
+        text = self.network_output.inner_text()
+        return float(text.split("ANN", 1)[1].split()[0].replace(",", ""))
+
+    def forward(self, inputs: list[float]) -> dict:
+        """``CS.network.forward`` of the embedded network on *inputs*, run in the page."""
+        return self.page.evaluate(
+            """(inputs) => CS.network.forward(
+                JSON.parse(document.getElementById('calculations-network').textContent), inputs
+            )""",
+            inputs,
+        )
 
     # ------------------------------------------------------------------
     # Run
@@ -101,8 +160,9 @@ class CalculationsPage(BasePage):
         return self.results_table.is_visible()
 
     def get_results_columns(self) -> list[str]:
-        """Return column headers of the results table."""
-        return [text.strip() for text in self.results_table.locator("thead th").all_inner_texts()]
+        """Return the data column headers of the results table (not the Trace column)."""
+        headers = self.results_table.locator("thead th:not([data-calc-trace-col])")
+        return [text.strip() for text in headers.all_inner_texts()]
 
     def get_results_row_count(self) -> int:
         return self.results_table.locator("tbody tr").count()

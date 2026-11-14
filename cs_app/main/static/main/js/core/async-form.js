@@ -1,5 +1,5 @@
 /*
- * CS.asyncForm(options) — progressive enhancement for run forms (DESIGN_SPEC §4).
+ * CS.asyncForm(options) — progressive enhancement for run forms (docs/design/design-system.md §4).
  *
  * options:
  *   form          <form> to enhance (without JS it keeps its native POST)
@@ -16,6 +16,15 @@
  *   onSuccess     optional (target) => void, called after the fragment is swapped in
  *   onError       optional ({status, message, field_errors}) => void, after the inline
  *                 errors and the error toast are shown (do not toast again)
+ *   runStatus     optional string, or (form) => string, describing the run in flight
+ *                 ("Running SWMM — 11 runs for S1, Slope 5 → 15 %"); defaults to the
+ *                 form's data-cs-run-status. When set, a .cs-run-status panel is shown at
+ *                 the top of target while the run is in flight: the description, the
+ *                 pipeline stages and the elapsed time, with an indeterminate activity
+ *                 bar (the server reports no progress, so none is invented). The panel is
+ *                 aria-hidden: loadingEl remains the one polite announcement.
+ *   runStages     optional stage names for the panel; defaults to the form's
+ *                 data-cs-run-stages ("|"-separated), else RUN_STAGES
  *
  * Error responses: 4xx/5xx JSON {message, field_errors} render inline Bootstrap
  * field errors plus a role="alert" summary in the form, and a short danger toast;
@@ -24,9 +33,12 @@
  * target) get a .cs-stale-notice above them. Every new run dismisses the toasts and
  * the notice left by the previous one.
  *
- * Loading another model or removing it (the upload zone's cs:model-changed, unless
- * `restored`, and cs:model-cleared) marks the results shown as stale too, and a run
- * still in flight is discarded when it returns: both belong to the previous model.
+ * Loading another model or removing it marks the results shown as stale too, and a run
+ * still in flight is discarded when it returns: both belong to the previous model. The
+ * model is identified by CS.modelGeneration, which the upload zone bumps as soon as the
+ * server takes a different model; the cs:model-changed that follows (once the model's
+ * subcatchments are known) only marks results of an earlier generation as stale, so a
+ * run started between the two belongs to the new model and is kept.
  */
 (function (CS) {
     "use strict";
@@ -46,24 +58,91 @@
     var ERROR_MARK = "data-cs-async-error";
     var INVALID_MARK = "data-cs-async-invalid";
     var STALE_CLASS = "cs-stale-notice";
+    var RUN_STAGES = ["Copy the model", "Write the value", "Run SWMM", "Collect results"];
 
-    function startElapsed(loadingEl) {
-        if (!loadingEl) {
+    function runDescription(options, form) {
+        var status = options.runStatus !== undefined ? options.runStatus : form.dataset.csRunStatus;
+        return typeof status === "function" ? status(form) : status || "";
+    }
+
+    function runStages(options, form) {
+        if (options.runStages) {
+            return options.runStages;
+        }
+        return form.dataset.csRunStages ? form.dataset.csRunStages.split("|") : RUN_STAGES;
+    }
+
+    function textElement(tag, className, text) {
+        var el = document.createElement(tag);
+        el.className = className;
+        el.textContent = text;
+        return el;
+    }
+
+    /** The presentational panel shown at the top of the results while a run is in flight. */
+    function showRunStatus(target, description, stages) {
+        var panel = document.createElement("div");
+        panel.className = "cs-run-status";
+        panel.setAttribute("aria-hidden", "true");
+
+        var head = document.createElement("div");
+        head.className = "cs-run-status__head";
+        head.append(
+            textElement("p", "cs-run-status__title", description),
+            textElement("span", "cs-run-status__elapsed", "0 s")
+        );
+        var list = document.createElement("ol");
+        list.className = "cs-run-status__stages";
+        stages.forEach(function (stage) {
+            list.append(textElement("li", "cs-run-status__stage", stage));
+        });
+        var track = document.createElement("div");
+        track.className = "cs-run-status__track";
+        track.append(document.createElement("span"));
+
+        panel.append(head, list, track);
+        target.prepend(panel);
+        // The run button may sit far below the top of the results: bring the panel into view.
+        var box = panel.getBoundingClientRect();
+        if (box.bottom < 0 || box.top > window.innerHeight) {
+            var still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            panel.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+        }
+        return panel;
+    }
+
+    /** Shows loadingEl and the run status panel (either may be null) with the elapsed seconds. */
+    function startElapsed(loadingEl, panel) {
+        if (!loadingEl && !panel) {
             return function () {};
         }
-        var counter = loadingEl.querySelector("[data-cs-elapsed]");
+        var counters = [];
+        if (loadingEl && loadingEl.querySelector("[data-cs-elapsed]")) {
+            counters.push(loadingEl.querySelector("[data-cs-elapsed]"));
+        }
+        if (panel) {
+            counters.push(panel.querySelector(".cs-run-status__elapsed"));
+        }
         var startedAt = Date.now();
         function render() {
-            if (counter) {
-                counter.textContent = Math.floor((Date.now() - startedAt) / 1000) + " s";
-            }
+            var text = Math.floor((Date.now() - startedAt) / 1000) + " s";
+            counters.forEach(function (counter) {
+                counter.textContent = text;
+            });
         }
         render();
-        loadingEl.hidden = false;
+        if (loadingEl) {
+            loadingEl.hidden = false;
+        }
         var timer = window.setInterval(render, 1000);
         return function stop() {
             window.clearInterval(timer);
-            loadingEl.hidden = true;
+            if (loadingEl) {
+                loadingEl.hidden = true;
+            }
+            if (panel) {
+                panel.remove();
+            }
         };
     }
 
@@ -260,6 +339,11 @@
         target.prepend(notice);
     }
 
+    /** CS.modelGeneration, kept by the upload zone; 0 on pages without one. */
+    function modelGeneration() {
+        return CS.modelGeneration || 0;
+    }
+
     function swap(target, html) {
         target.dispatchEvent(new CustomEvent("cs:beforeswap", { bubbles: true }));
         target.innerHTML = html;
@@ -271,8 +355,8 @@
         var target = options.target;
         var running = false;
         var runToasts = [];
-        // Bumped whenever the model changes, so a run started before can tell it is outdated.
-        var modelVersion = 0;
+        // The model generation the results on screen were computed from.
+        var resultsGeneration = modelGeneration();
 
         function toast(message, level) {
             var toastEl = CS.toast(message, level);
@@ -302,8 +386,10 @@
         async function run(submitter) {
             clearPreviousRun();
             setRunning(true);
-            var runModelVersion = modelVersion;
-            var stopElapsed = startElapsed(options.loadingEl);
+            var runGeneration = modelGeneration();
+            var description = runDescription(options, form);
+            var panel = description ? showRunStatus(target, description, runStages(options, form)) : null;
+            var stopElapsed = startElapsed(options.loadingEl, panel);
             var result;
             try {
                 result = await send(form, submitter);
@@ -315,11 +401,12 @@
                 setRunning(false);
             }
 
-            if (runModelVersion !== modelVersion) {
+            if (runGeneration !== modelGeneration()) {
                 toast(DISCARDED_MESSAGE, "info");
                 return;
             }
             if (result.ok) {
+                resultsGeneration = runGeneration;
                 swap(target, result.html);
                 if (options.onSuccess) {
                     options.onSuccess(target);
@@ -354,10 +441,15 @@
         });
 
         function onModelSwitch(event) {
-            if (event.detail && event.detail.restored) {
+            var detail = event.detail || {};
+            if (detail.restored) {
+                // The same model as before: whatever is shown still belongs to it.
+                resultsGeneration = modelGeneration();
                 return;
             }
-            modelVersion += 1;
+            if (event.type === "cs:model-changed" && detail.generation === resultsGeneration) {
+                return;
+            }
             showStaleNotice(target, MODEL_STALE_MESSAGE);
         }
         document.addEventListener("cs:model-changed", onModelSwitch);

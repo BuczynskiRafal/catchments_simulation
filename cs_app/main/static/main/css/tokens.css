@@ -1,5 +1,5 @@
 /*
- * Design tokens — "survey sheet" palette (docs/ui-modernization/DESIGN_SPEC.md §2).
+ * Design tokens — "survey sheet" palette (docs/design/design-system.md §2).
  *
  * --cs-* tokens are the source of truth; the --bs-* block under each theme maps
  * them onto Bootstrap 5.3 so stock components inherit the palette. Must load
@@ -35,6 +35,7 @@
     /* Chart-only categorical series (§2.1) */
     --cs-soil: #346400;
     --cs-evap: #8A5A9E;
+    --cs-pond: #8796A3; /* water left on the surface; 3:1 on the surface, hatched in charts */
 
     /* Bootstrap mapping */
     --bs-body-color: var(--cs-ink);
@@ -117,6 +118,7 @@
     --cs-success-rgb: 76, 195, 138;
     --cs-soil: #C1EB95;
     --cs-evap: #C29AD6;
+    --cs-pond: #5F7383;
 
     --bs-body-color: var(--cs-ink);
     --bs-body-color-rgb: var(--cs-ink-rgb);

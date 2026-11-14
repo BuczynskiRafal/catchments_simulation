@@ -80,7 +80,15 @@ from main.forms import (
     UserProfileForm,
     parameter_labels,
 )
-from main.predictor import predict_runoff
+from main.guide import PARAMETER_GUIDE, parameter_guide_payload
+from main.insights import (
+    feature_units,
+    lab_query,
+    read_subcatchment_values,
+    suggested_ranges,
+    water_balance,
+)
+from main.predictor import network_payload, predict_runoff, prediction_inputs
 from main.schemas import ContactMessage
 from main.services import send_message
 from main.units import (
@@ -177,6 +185,8 @@ AUTH_REQUIRED_MESSAGE = "Authentication required."
 FORM_INVALID_MESSAGE = "Please correct the highlighted fields."
 NO_MODEL_MESSAGE = "Please upload a file first."
 SUBCATCHMENT_NOT_FOUND_MESSAGE = "Selected catchment was not found in the uploaded model."
+NO_CATCHMENT_MESSAGE = "Choose a subcatchment."
+VALUES_UNREADABLE_MESSAGE = "The subcatchment's values could not be read from the model."
 SWMM_FAILED_MESSAGE = "SWMM could not run the model"
 ENGINE_BUSY_MESSAGE = "Another simulation is currently running. Please retry in a moment."
 NO_RUNOFF_SUMMARY_MESSAGE = (
@@ -197,7 +207,10 @@ SIM_SESSION_DEFAULTS = {
     "feature_name": "",
     "output_file_name": None,
     "download_token": None,
+    "parameter_guide": None,
 }
+# Subcatchment values parsed from session models are cached per process, this many at most.
+SUBCATCHMENT_VALUES_CACHE_SIZE = 64
 
 
 class ResultPayloadTooLargeError(ValueError):
@@ -439,6 +452,18 @@ def _build_home_data() -> dict:
         "hydrograph_summary": _hydrograph_summary(hydrograph, volume_factor),
         "units": {**_unit_labels(flow_units), "volume": volume_unit},
     }
+
+
+@lru_cache(maxsize=1)
+def _sample_digest() -> str | None:
+    """SHA-256 of the bundled sample model, read once per process."""
+    return _file_sha256(HOME_EXAMPLE_MODEL)
+
+
+def _is_sample_model(request: HttpRequest) -> bool:
+    """Whether the session's model has the same content as the bundled sample."""
+    digest = request.session.get(MODEL_DIGEST_SESSION_KEY)
+    return digest is not None and digest == _sample_digest()
 
 
 @lru_cache(maxsize=1)
@@ -686,6 +711,11 @@ def healthz(request: HttpRequest) -> JsonResponse:
 
 def about(request: HttpRequest) -> HttpResponse:
     return render(request, "main/about.html")
+
+
+def how_it_works(request: HttpRequest) -> HttpResponse:
+    """Explain the runoff model, the sweep and the neural network; public."""
+    return render(request, "main/how_it_works.html", {"guides": PARAMETER_GUIDE.values()})
 
 
 def contact(request: HttpRequest) -> HttpResponse:
@@ -1063,7 +1093,14 @@ def _store_upload(request: HttpRequest) -> HttpResponse:
     unchanged = _adopt_model(request, file_path)
     logger.info("File uploaded successfully: %s", file_path)
 
-    return _upload_response(request, {"message": "File was sent.", "unchanged": unchanged})
+    return _upload_response(
+        request,
+        {
+            "message": "File was sent.",
+            "unchanged": unchanged,
+            "is_sample": _is_sample_model(request),
+        },
+    )
 
 
 @require_POST
@@ -1109,6 +1146,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
             "filename": os.path.basename(file_path),
             "size": sample_size,
             "unchanged": unchanged,
+            "is_sample": _is_sample_model(request),
         }
     )
 
@@ -1116,7 +1154,7 @@ def upload_sample(request: HttpRequest) -> JsonResponse:
 @require_GET
 @ajax_login_required
 def upload_status(request: HttpRequest) -> JsonResponse:
-    """Return ``{has_file, filename, size}`` for the current session upload."""
+    """Return ``{has_file, filename, size, is_sample}`` for the current session upload."""
     file_path = request.session.get("uploaded_file_path")
     if file_path:
         if not _is_in_user_upload_dir(file_path, request.user.id):
@@ -1129,6 +1167,7 @@ def upload_status(request: HttpRequest) -> JsonResponse:
                     "has_file": True,
                     "filename": os.path.basename(file_path),
                     "size": size,
+                    "is_sample": _is_sample_model(request),
                 }
             )
         except OSError:
@@ -1209,6 +1248,78 @@ def subcatchments(request: HttpRequest) -> JsonResponse:
     )
 
 
+@lru_cache(maxsize=SUBCATCHMENT_VALUES_CACHE_SIZE)
+def _cached_subcatchment_values(
+    path: str, modified_ns: int, size: int, catchment: str
+) -> tuple[tuple[str, float | None], ...] | None:
+    """
+    Values of one subcatchment of the file at *path*. Its modification time and size
+    are part of the key, so a model written over another one is read again.
+    """
+    values = read_subcatchment_values(path, catchment)
+    return None if values is None else tuple(values.items())
+
+
+def _subcatchment_values(path: str, catchment: str) -> dict[str, float | None] | None:
+    """
+    The model's value of every sweepable feature for *catchment*; None when the model
+    has no such subcatchment. Parsed per request, or taken from a small process cache
+    keyed on the file as it is on disk; nothing is stored in the session.
+    """
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return read_subcatchment_values(path, catchment)
+    cached = _cached_subcatchment_values(path, stat.st_mtime_ns, stat.st_size, catchment)
+    return None if cached is None else dict(cached)
+
+
+def _lab_url(
+    values: dict[str, float | None], flow_units: str | None, vary: str | None = None
+) -> str | None:
+    """Link to the interactive model with these values (SI); None for an unknown unit system."""
+    query = lab_query(values, flow_units, vary)
+    if query is None:
+        return None
+    return f"{reverse('main:how_it_works')}{'?' + query if query else ''}#lab"
+
+
+@require_GET
+@ajax_login_required
+def subcatchment_values(request: HttpRequest) -> JsonResponse:
+    """
+    The session model's values of one subcatchment (``?catchment=<id>``), their units,
+    a suggested sweep range for each range-based parameter and a link to the
+    interactive model. Errors are ``{"message": ...}`` JSON.
+    """
+    try:
+        path = _uploaded_model_path(request)
+    except InputValidationError as error:
+        return JsonResponse({"message": _format_input_error_message(error)}, status=400)
+    catchment = request.GET.get("catchment", "")
+    if not catchment:
+        return JsonResponse({"message": NO_CATCHMENT_MESSAGE}, status=400)
+    try:
+        values = _subcatchment_values(path, catchment)
+    except Exception as exc:
+        logger.warning("Failed to read subcatchment values from %s", path, exc_info=True)
+        error = _coerce_input_validation_error(exc)
+        message = _format_input_error_message(error) if error else VALUES_UNREADABLE_MESSAGE
+        return JsonResponse({"message": message}, status=400)
+    if values is None:
+        return JsonResponse({"message": SUBCATCHMENT_NOT_FOUND_MESSAGE}, status=404)
+    flow_units = _session_flow_units(request)
+    return JsonResponse(
+        {
+            "catchment": catchment,
+            "values": values,
+            "units": feature_units(flow_units),
+            "suggested_ranges": suggested_ranges(values),
+            "lab_url": _lab_url(values, flow_units),
+        }
+    )
+
+
 def get_feature_name(method_name: str) -> str:
     """Map a simulation method name (e.g. ``simulate_area``) to the SWMM column it sweeps."""
     return METHOD_FEATURES.get(method_name, "")
@@ -1278,6 +1389,30 @@ def get_session_variables(request: HttpRequest) -> dict:
         "feature_name": payload.get("feature_name", ""),
         "output_file_name": payload.get("output_file_name"),
         "download_token": token,
+        # From the guide, not the cache: results cached before an edit of the guide stay current.
+        "parameter_guide": PARAMETER_GUIDE.get(payload.get("feature_name", "")),
+    }
+
+
+def _has_session_model(request: HttpRequest) -> bool:
+    """Whether the session holds a model the user can run (what the workbench steps show)."""
+    path = request.session.get("uploaded_file_path")
+    user_id = getattr(getattr(request, "user", None), "id", None)
+    return bool(path) and _is_in_user_upload_dir(path, user_id) and os.path.isfile(path)
+
+
+def _sweep_page_context(request: HttpRequest, initial: dict | None = None) -> dict:
+    """
+    What the sweep pages hand their scripts as data: the parameter guide, whether a
+    model is loaded and whether the range fields hold the user's own values (restored
+    from the session, or posted back with errors), which a range suggestion must keep.
+    """
+    return {
+        "sweep_guide": parameter_guide_payload(),
+        "method_features": METHOD_FEATURES,
+        "has_model": _has_session_model(request),
+        "form_restored": initial is None
+        or any(field in initial for field in SimulationForm.RANGE_FIELDS),
     }
 
 
@@ -1347,6 +1482,17 @@ def _get_form_initial(
     return initial
 
 
+def _model_values_or_none(
+    request: HttpRequest, path: str, catchment: str
+) -> dict[str, float | None] | None:
+    """The subcatchment's values for a run's context; a model swmmio cannot parse gives None."""
+    try:
+        return _subcatchment_values(path, catchment)
+    except Exception:
+        logger.warning("Failed to read subcatchment values from %s", path, exc_info=True)
+        return None
+
+
 def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
     """Run the parameter sweep and store its results for the current session."""
     option = form.cleaned_data["option"]
@@ -1368,11 +1514,14 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
         df = method()
     else:
         df = method(start=params.start, stop=params.stop, step=params.step)
+    # Every computed output, precipitation and runon included, for the water balance.
+    all_rows = json.loads(df.to_json(orient="records"))
     # The chart, the table and the download all show exactly these columns.
     output_columns = list(SIMULATION_OUTPUT_COLUMNS)
     df = df[[feature_name, *output_columns]]
 
     flow_units = _read_flow_units(uploaded_file_path)
+    values = _model_values_or_none(request, uploaded_file_path, params.catchment_name)
     x_label, y_labels = _build_simulation_axis_labels(
         feature_name=feature_name,
         y_columns=output_columns,
@@ -1386,6 +1535,12 @@ def _run_simulation(request: HttpRequest, form: SimulationForm) -> None:
         "title": f"Dependence of runoff on subcatchment {feature_name}.",
         "xLabel": x_label,
         "yLabels": y_labels,
+        # The model's own value of the swept parameter, marked on the charts.
+        "baseline": values.get(feature_name) if values else None,
+        "balance": water_balance(
+            all_rows, feature_name, values.get("Area") if values else None, flow_units
+        ),
+        "labUrl": _lab_url(values, flow_units, feature_name) if values else None,
     }
     payload = {
         "chart_config": chart_config,
@@ -1420,7 +1575,13 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             catchment_choices=catchment_choices, units=_form_units(request), initial=initial
         )
         return render(
-            request, SIMULATION_TEMPLATE, {"form": form, **get_session_variables(request)}
+            request,
+            SIMULATION_TEMPLATE,
+            {
+                "form": form,
+                **_sweep_page_context(request, initial),
+                **get_session_variables(request),
+            },
         )
 
     form = SimulationForm(
@@ -1430,7 +1591,9 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
         if _is_ajax(request):
             return _form_invalid_json(form)
         return render(
-            request, SIMULATION_TEMPLATE, {"form": form, **get_session_variables(request)}
+            request,
+            SIMULATION_TEMPLATE,
+            {"form": form, **_sweep_page_context(request), **get_session_variables(request)},
         )
 
     try:
@@ -1447,7 +1610,7 @@ def simulation_view(request: HttpRequest) -> HttpResponse:
             request,
             failure,
             SIMULATION_TEMPLATE,
-            {"form": form, **get_session_variables(request)},
+            {"form": form, **_sweep_page_context(request), **get_session_variables(request)},
         )
 
     if _is_ajax(request):
@@ -1651,7 +1814,11 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
         return render(
             request,
             TIMESERIES_TEMPLATE,
-            {"form": form, **_get_timeseries_session_variables(request)},
+            {
+                "form": form,
+                **_sweep_page_context(request, initial),
+                **_get_timeseries_session_variables(request),
+            },
         )
 
     form = TimeseriesForm(
@@ -1663,7 +1830,11 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
         return render(
             request,
             TIMESERIES_TEMPLATE,
-            {"form": form, **_get_timeseries_session_variables(request)},
+            {
+                "form": form,
+                **_sweep_page_context(request),
+                **_get_timeseries_session_variables(request),
+            },
         )
 
     try:
@@ -1680,7 +1851,11 @@ def timeseries_view(request: HttpRequest) -> HttpResponse:
             request,
             failure,
             TIMESERIES_TEMPLATE,
-            {"form": form, **_get_timeseries_session_variables(request)},
+            {
+                "form": form,
+                **_sweep_page_context(request),
+                **_get_timeseries_session_variables(request),
+            },
         )
 
     if _is_ajax(request):
@@ -1709,7 +1884,22 @@ def calculations(request: HttpRequest) -> HttpResponse:
     """
     if request.method == "POST":
         return _run_calculations(request)
-    return render(request, CALCULATIONS_TEMPLATE, {"comparison": _load_comparison(request)})
+    return render(request, CALCULATIONS_TEMPLATE, _calculations_page_context(request))
+
+
+def _calculations_page_context(request: HttpRequest) -> dict:
+    """The session's last comparison and the network the page draws next to it."""
+    try:
+        network = network_payload()
+    except Exception:
+        # The page still compares and explains; only the diagram is left out.
+        logger.exception("The network weights could not be loaded for the calculations page")
+        network = None
+    return {
+        "comparison": _load_comparison(request),
+        "network": network,
+        "has_model": _has_session_model(request),
+    }
 
 
 def _load_comparison(request: HttpRequest) -> dict | None:
@@ -1785,6 +1975,7 @@ def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
             if "TotalRunoffMG" not in subcatchments.columns:
                 raise InputValidationError("no_runoff_summary")
             ann_predictions = predict_runoff(swmmio_model)
+            network_inputs = prediction_inputs(swmmio_model)
             flow_units = _read_flow_units(work_inp)
             swmm_factor, unit = _report_runoff_unit(flow_units)
             ann_factor = _ann_runoff_factor(flow_units)
@@ -1795,6 +1986,8 @@ def _compare_swmm_and_ann(inp_path: str) -> tuple[pd.DataFrame, str]:
                     * swmm_factor,
                     # predict_runoff() always outputs 10^6 L (10^3 m³) from the SI-trained network.
                     "ANN_Runoff": np.round(ann_predictions.astype(float) * ann_factor, 2),
+                    # What the network read for each subcatchment, so the page can trace it.
+                    "Inputs": network_inputs.tolist(),
                 },
             )
             return comparison, unit
@@ -1817,6 +2010,9 @@ def _summarise_comparison(df: pd.DataFrame, unit: str) -> dict | None:
     ANN minus SWMM. Its percentage is None where SWMM runoff is 0, and the mean
     absolute percentage error skips those rows (``mape_excluded`` counts them).
     ``unit`` is the volume unit of every runoff value and is kept with the result.
+    When ``df`` has an ``Inputs`` column, each row also carries ``inputs``: the
+    network's 8 inputs for that subcatchment (comparisons cached before it existed
+    have none, and the page then cannot trace them).
 
     Returns None for an empty comparison.
     """
@@ -1826,18 +2022,23 @@ def _summarise_comparison(df: pd.DataFrame, unit: str) -> dict | None:
     ann = df["ANN_Runoff"].astype(float)
     difference = ann - swmm
     difference_pct = difference / swmm.where(swmm != 0) * 100
-    rows = [
-        {
+    inputs = df["Inputs"] if "Inputs" in df.columns else [None] * len(df)
+    rows = []
+    for name, swmm_value, ann_value, diff, pct, row_inputs in zip(
+        df["Name"], swmm, ann, difference, difference_pct, inputs, strict=True
+    ):
+        row = {
             "Name": str(name),
             "SWMM_Runoff": _finite_or_none(swmm_value),
             "ANN_Runoff": _finite_or_none(ann_value),
             "Difference": _finite_or_none(diff),
             "Difference_pct": _finite_or_none(pct),
         }
-        for name, swmm_value, ann_value, diff, pct in zip(
-            df["Name"], swmm, ann, difference, difference_pct, strict=True
-        )
-    ]
+        if row_inputs is not None:
+            # The network reads float32, which holds about 7 significant digits; more
+            # would only carry conversion noise (0.01 -> 0.009999999776) into the JSON.
+            row["inputs"] = [_finite_or_none(f"{value:.7g}") for value in row_inputs]
+        rows.append(row)
     return {
         "unit": unit,
         "rows": rows,
@@ -1855,7 +2056,16 @@ def _run_comparison(request: HttpRequest) -> None:
     """Compare SWMM and ANN runoff on the session's model and store the result for the session."""
     uploaded_file_path = _uploaded_model_path(request)
     comparison = _summarise_comparison(*_compare_swmm_and_ann(uploaded_file_path))
-    _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
+    try:
+        _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
+    except ResultPayloadTooLargeError:
+        if not comparison:
+            raise
+        # The network inputs only make the rows traceable in the diagram: a model with
+        # too many subcatchments to keep them still gets its comparison.
+        for row in comparison["rows"]:
+            row.pop("inputs", None)
+        _replace_session_result(request, "calc", CALC_RESULT_TOKEN_SESSION_KEY, comparison)
 
 
 @ajax_login_required
@@ -1877,10 +2087,7 @@ def _run_calculations(request: HttpRequest) -> HttpResponse:
         )
         # A failed run leaves the previous comparison in place, so the page keeps showing it.
         return _run_failed(
-            request,
-            failure,
-            CALCULATIONS_TEMPLATE,
-            {"comparison": _load_comparison(request)},
+            request, failure, CALCULATIONS_TEMPLATE, _calculations_page_context(request)
         )
 
     if _is_ajax(request):

@@ -101,8 +101,9 @@ ignore = [
     "E501",  # line length is the formatter's job; long strings and URLs stay unbroken
 ]
 # The web app's copy uses typographic characters on purpose ("model flow units × s",
-# "didn’t match"); the tests and page objects match that text.
-allowed-confusables = ["×", "’"]
+# "didn’t match", and the formulas "α = W·√S / (A·n)" and "(1 − I)·A"); the tests and
+# page objects match that text.
+allowed-confusables = ["×", "’", "α", "−"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

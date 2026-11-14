@@ -43,7 +43,7 @@
     // ~265 px on phones), for turning those px into domain fractions.
     var PLOT_MARGINS_ESTIMATE = 200;
 
-    // DESIGN_SPEC §2.1 values, used when a token is not defined by tokens.css.
+    // The design system's §2.1 values, used when a token is not defined by tokens.css.
     var FALLBACK_TOKENS = {
         light: {
             "--cs-ink": "#0F2233",
@@ -56,6 +56,7 @@
             "--cs-ochre": "#B7791F",
             "--cs-soil": "#346400",
             "--cs-evap": "#8A5A9E",
+            "--cs-pond": "#8796A3",
         },
         dark: {
             "--cs-ink": "#E3ECF2",
@@ -68,6 +69,7 @@
             "--cs-ochre": "#E0A546",
             "--cs-soil": "#C1EB95",
             "--cs-evap": "#C29AD6",
+            "--cs-pond": "#5F7383",
         },
     };
 
@@ -119,6 +121,7 @@
             ochre: token("--cs-ochre"),
             soil: token("--cs-soil"),
             evap: token("--cs-evap"),
+            pond: token("--cs-pond"),
         };
     }
 
@@ -418,6 +421,8 @@
      * @param {Object} [opts.yLabels]   Field → axis label.
      * @param {number[]} [opts.xRange]
      * @param {number} [opts.height]    Default 420, or 300 per grid row.
+     * @param {{x: number, label: string}} [opts.reference]  A vertical dashed line at x
+     *        in every panel (e.g. the model's own value), labelled once, in the first panel.
      * @param {string} [opts.ariaLabel]
      * @param {string} [opts.fileName]  PNG export name (defaults to the title).
      * @returns {Promise|null}
@@ -457,8 +462,43 @@
                     marker: { color: theme.water, size: 6 },
                 };
             });
+            if (opts.reference && isFinite(opts.reference.x)) {
+                addReferenceLine(layout, theme, fields.length, opts.reference);
+            }
             return { data: data, layout: layout };
         }, opts, "Line chart");
+    }
+
+    /** Dashed vertical line at reference.x in each of `panels` subplots, labelled above the first. */
+    function addReferenceLine(layout, theme, panels, reference) {
+        layout.shapes = [];
+        for (var i = 0; i < panels; i += 1) {
+            var suffix = axisSuffix(i);
+            layout.shapes.push({
+                type: "line",
+                xref: "x" + suffix,
+                yref: "y" + suffix + " domain",
+                x0: reference.x,
+                x1: reference.x,
+                y0: 0,
+                y1: 1,
+                line: { color: theme.ochre, width: 1.5, dash: "dash" },
+            });
+        }
+        layout.annotations = (layout.annotations || []).concat({
+            x: reference.x,
+            y: 1,
+            xref: "x",
+            yref: "y domain",
+            yanchor: "bottom",
+            text: reference.label,
+            showarrow: false,
+            font: { family: FONT_UI, size: 11, color: theme.ink },
+            bgcolor: theme.surface,
+            borderpad: 2,
+        });
+        // Room above the first row for the label.
+        layout.margin.t += 16;
     }
 
     function compareParameterValues(a, b) {
@@ -1046,6 +1086,86 @@
         }, opts, "Grouped bar chart");
     }
 
+    // Water balance parts: field, label, palette key; the last is hatched as well, so it
+    // reads apart from its neighbours without relying on colour.
+    var BALANCE_PARTS = [
+        { field: "runoff", label: "Runoff", color: "water" },
+        { field: "infiltration", label: "Infiltration", color: "soil" },
+        { field: "evaporation", label: "Evaporation", color: "evap" },
+        { field: "storage", label: "Still on the surface", color: "pond", pattern: "/" },
+    ];
+
+    /**
+     * Water balance of a sweep: one stacked bar per run (swept value), split into
+     * runoff, infiltration, evaporation and the water still on the surface at the end.
+     * Shares are of the water that reached the surface (rainfall + runon).
+     *
+     * @param {Element|string} el
+     * @param {Object[]} rows  {x, rainfall, runon, runoff, infiltration, evaporation, storage}
+     * @param {Object} [opts]
+     * @param {string} [opts.mode="share"]  "share" (% of rainfall + runon) or "volume".
+     * @param {string} [opts.unit]    Volume unit, e.g. "m³".
+     * @param {string} [opts.xLabel]  Swept parameter with its unit.
+     * @param {number} [opts.height=360]
+     * @param {string} [opts.ariaLabel]
+     * @param {string} [opts.fileName]
+     * @returns {Promise|null}
+     */
+    function balance(el, rows, opts) {
+        opts = opts || {};
+        var share = opts.mode !== "volume";
+        var unit = opts.unit || "";
+        // Category labels keep one evenly spaced bar per run, whatever the swept values.
+        var categories = rows.map(function (row) {
+            return CS.format.parameter(row.x);
+        });
+        var totals = rows.map(function (row) {
+            return Number(row.rainfall) + Number(row.runon || 0);
+        });
+
+        return render(el, function (theme) {
+            var layout = baseLayout(theme, opts, resolveElement(el), true);
+            layout.hovermode = "x unified";
+            layout.height = opts.height || 360;
+            layout.barmode = "stack";
+            layout.bargap = rows.length > 1 ? 0.3 : 0.6;
+            layout.legend.traceorder = "normal";
+            layout.xaxis = axis(theme, opts.xLabel, { type: "category", showgrid: false });
+            layout.yaxis = axis(theme, share ? "Share of rainfall and runon [%]" : "Volume [" + unit + "]", {
+                rangemode: "tozero",
+                range: share ? [0, 100] : undefined,
+                ticksuffix: share ? " %" : "",
+            });
+            var data = BALANCE_PARTS.map(function (part) {
+                var volumes = rows.map(function (row) {
+                    return Number(row[part.field]);
+                });
+                var shares = volumes.map(function (volume, i) {
+                    return totals[i] > 0 ? (volume / totals[i]) * 100 : null;
+                });
+                var color = theme[part.color];
+                return {
+                    type: "bar",
+                    name: part.label,
+                    x: categories,
+                    y: share ? shares : volumes,
+                    customdata: volumes.map(function (volume, i) {
+                        return [volume, shares[i]];
+                    }),
+                    hovertemplate: part.label + ": %{customdata[0]:,.1f} " + unit + " (%{customdata[1]:.1f} %)<extra></extra>",
+                    marker: {
+                        color: color,
+                        line: { color: theme.surface, width: 1 },
+                        pattern: part.pattern
+                            ? { shape: part.pattern, fillmode: "overlay", fgcolor: theme.surface, fgopacity: 0.55, size: 7, solidity: 0.3 }
+                            : undefined,
+                    },
+                };
+            });
+            return { data: data, layout: layout };
+        }, opts, "Stacked bar chart of the water balance");
+    }
+
     /**
      * Download a rendered chart as a 2x PNG painted on the current surface colour.
      *
@@ -1082,6 +1202,7 @@
         hydrograph: hydrograph,
         parity: parity,
         bars: bars,
+        balance: balance,
         downloadPng: downloadPng,
     };
 })();

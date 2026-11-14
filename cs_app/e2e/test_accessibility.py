@@ -22,6 +22,7 @@ from .pages.about_page import AboutPage
 from .pages.calculations_page import CalculationsPage
 from .pages.contact_page import ContactPage
 from .pages.home_page import HomePage
+from .pages.how_it_works_page import HowItWorksPage
 from .pages.login_page import LoginPage
 from .pages.register_page import RegisterPage
 from .pages.simulation_page import SimulationPage
@@ -77,6 +78,11 @@ class TestAccessibilityPublicPages:
         hp = HomePage(page, live_server.url)
         hp.navigate_to()
         _assert_a11y(hp, "home")
+
+    def test_how_it_works_page_a11y(self, page: Page, live_server) -> None:
+        hp = HowItWorksPage(page, live_server.url)
+        hp.navigate_to()
+        _assert_a11y(hp, "how it works")
 
     def test_about_page_a11y(self, page: Page, live_server) -> None:
         ap = AboutPage(page, live_server.url)

@@ -2,12 +2,13 @@
 
 Each run's result is kept server-side for the session, so a tool's page renders its
 latest results again when the user comes back to it. Loading the same model again
-(the sample data, from another tool's page) keeps them too.
+(a file with the sample's content) keeps them too.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -20,6 +21,7 @@ from .pages.timeseries_page import TimeseriesPage
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
 STALE_NOTICE = ".cs-stale-notice"
+SAMPLE_INP = Path(__file__).resolve().parent.parent / "data" / "example.inp"
 
 
 def _expect_simulation_results(page: Page, sp: SimulationPage) -> None:
@@ -91,8 +93,9 @@ def test_loading_the_same_model_again_keeps_results(auth_page: Page, live_server
 
     _expect_simulation_results(auth_page, sp)
 
-    # On the page itself, reloading the model it shows does not mark its results stale.
+    # On the page itself, reloading the model it shows does not mark its results stale. The
+    # sample button is gone while the sample is loaded, so the same content is uploaded.
     sp.upload.record_model_events()
-    sp.upload.sample_button.click()
+    sp.upload.upload_file(str(SAMPLE_INP))
     assert sp.upload.wait_for_model_changed()["restored"] is True
     expect(auth_page.locator(STALE_NOTICE)).to_have_count(0)

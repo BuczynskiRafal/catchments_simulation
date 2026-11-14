@@ -4,13 +4,24 @@
  * Upload zone (main/_upload_zone.html).
  *
  * Events dispatched on `document`:
- *   "cs:model-changed"  detail: {filename, size, subcatchments: [name, ...], restored}
+ *   "cs:model-changed"  detail: {filename, size, subcatchments: [name, ...], restored, isSample}
  *                       fired once the subcatchment list of a newly loaded model
  *                       (upload, sample data or restored session) is known;
  *                       `restored` is true when the session's model is unchanged: shown
  *                       on page load, or the same content loaded again (the server
- *                       answers `unchanged`), so results computed from it stay valid.
+ *                       answers `unchanged`), so results computed from it stay valid;
+ *                       `isSample` is true when the model is the bundled sample;
+ *                       `generation` is the model's CS.modelGeneration (see below).
  *   "cs:model-cleared"  fired after the user removes the loaded model.
+ *
+ * CS.modelGeneration counts the models the server has taken for this session since the
+ * page loaded: it goes up the moment the server accepts a different model (the upload or
+ * sample response) or drops it, not when the events above fire after the subcatchment
+ * list arrives. A run started in between belongs to the new model already (CS.asyncForm).
+ *
+ * A model with a single subcatchment selects it (and fires `change` on the select).
+ * The sample button is shown once the session's model is known: hidden while the
+ * sample itself is loaded, "Use sample data instead" while another model is.
  *
  * The sweep parameter options (#id_option, #id_feature) name the units of the model's
  * FLOW_UNITS, e.g. "Area (ha)" or "Area (acre)"; they are relabelled from the server's
@@ -55,6 +66,12 @@ document.addEventListener("DOMContentLoaded", function () {
     var trigger = dropzoneForm.querySelector(".upload-trigger");
 
     var currentModel = null;
+    var sampleButton = document.getElementById("load-sample-data-button");
+    var SAMPLE_TEXT = "Try sample data";
+    var SAMPLE_INSTEAD_TEXT = "Use sample data instead";
+    var focusSelectWhenReady = false;
+    var CS = (window.CS = window.CS || {});
+    CS.modelGeneration = CS.modelGeneration || 0;
     // Incremented per subcatchment request so a stale response cannot overwrite a newer model.
     var subcatchmentsRequestId = 0;
     var preferredCatchmentValue = "";
@@ -113,7 +130,10 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    /** names: the model's subcatchments, or null when they could not be read. */
+    /**
+     * names: the model's subcatchments, or null when they could not be read. Returns
+     * true when it selected the only subcatchment, so the caller can fire `change`.
+     */
     function populateCatchmentSelect(select, names, previousValue) {
         select.innerHTML = "";
         if (!names || names.length === 0) {
@@ -145,6 +165,13 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!hasSelectedValue) {
             preferredCatchmentValue = "";
         }
+        // Nothing to choose between: the only subcatchment is the one to run.
+        if (names.length === 1 && !hasSelectedValue) {
+            select.value = names[0];
+            preferredCatchmentValue = names[0];
+            return true;
+        }
+        return false;
     }
 
     /** labels: option value -> label, from the subcatchments or the clear endpoint. */
@@ -178,8 +205,19 @@ document.addEventListener("DOMContentLoaded", function () {
                 size: currentModel.size,
                 subcatchments: (subcatchments || []).slice(),
                 restored: currentModel.restored,
+                isSample: currentModel.isSample,
+                generation: currentModel.generation,
             },
         }));
+    }
+
+    /** Shown once the session's model is known; hidden while the sample itself is loaded. */
+    function updateSampleButton() {
+        if (!sampleButton || !sampleUploadUrl || sampleButton.disabled) {
+            return;
+        }
+        sampleButton.hidden = Boolean(currentModel && currentModel.isSample);
+        sampleButton.textContent = currentModel ? SAMPLE_INSTEAD_TEXT : SAMPLE_TEXT;
     }
 
     function fetchSubcatchments() {
@@ -216,11 +254,22 @@ document.addEventListener("DOMContentLoaded", function () {
                 relabelParameterOptions(data && data.option_labels);
                 // Re-query in case the page swapped its form while the request was in flight.
                 select = document.getElementById("id_catchment_name");
+                var autoSelected = false;
                 if (select) {
-                    populateCatchmentSelect(select, names, previousValue);
+                    autoSelected = populateCatchmentSelect(select, names, previousValue);
                     select.disabled = false;
                 }
                 announceModel(names);
+                if (autoSelected) {
+                    select.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+                if (focusSelectWhenReady) {
+                    focusSelectWhenReady = false;
+                    // Only if the user has not moved on to another control meanwhile.
+                    if (document.activeElement === document.body) {
+                        (select || trigger).focus();
+                    }
+                }
             });
     }
 
@@ -234,8 +283,19 @@ document.addEventListener("DOMContentLoaded", function () {
         select.innerHTML = '<option value="">--- Upload a file first ---</option>';
     }
 
-    function setModel(filename, size, restored) {
-        currentModel = { filename: filename, size: size || 0, restored: restored };
+    function setModel(filename, size, restored, isSample) {
+        // The same content again (restored) is still the same model.
+        if (!restored) {
+            CS.modelGeneration += 1;
+        }
+        currentModel = {
+            filename: filename,
+            size: size || 0,
+            restored: restored,
+            isSample: Boolean(isSample),
+            generation: CS.modelGeneration,
+        };
+        updateSampleButton();
         if (statusText) {
             statusText.textContent = filename;
         }
@@ -286,7 +346,12 @@ document.addEventListener("DOMContentLoaded", function () {
         },
         init: function () {
             this.on("success", function (file, response) {
-                setModel(file.name, file.size, Boolean(file.restored || (response && response.unchanged)));
+                setModel(
+                    file.name,
+                    file.size,
+                    Boolean(file.restored || (response && response.unchanged)),
+                    file.isSample || Boolean(response && response.is_sample)
+                );
             });
             this.on("removedfile", function () {
                 // Dismissing a preview removes the focused button; keep focus in the upload zone.
@@ -325,7 +390,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     /** Show a model the server already holds (sample data, or `restored` from the session). */
-    function showMockFile(filename, size, restored) {
+    function showMockFile(filename, size, restored, isSample) {
         dzInstance.removeAllFiles();
 
         var mockFile = {
@@ -334,6 +399,7 @@ document.addEventListener("DOMContentLoaded", function () {
             status: Dropzone.SUCCESS,
             accepted: true,
             restored: restored,
+            isSample: isSample === true,
         };
 
         dzInstance.files.push(mockFile);
@@ -345,10 +411,12 @@ document.addEventListener("DOMContentLoaded", function () {
     function clearModel() {
         // Also discards a subcatchment request still in flight for the removed model.
         var requestId = ++subcatchmentsRequestId;
+        CS.modelGeneration += 1;
         currentModel = null;
         dzInstance.removeAllFiles(true);
         setChipVisible(false);
         resetCatchmentDropdown();
+        updateSampleButton();
         if (clearUrl) {
             fetch(clearUrl, {
                 method: "POST",
@@ -367,7 +435,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 console.warn("upload clear failed:", error);
             });
         }
-        document.dispatchEvent(new CustomEvent("cs:model-cleared"));
+        document.dispatchEvent(new CustomEvent("cs:model-cleared", {
+            detail: { generation: CS.modelGeneration },
+        }));
         // The remove button just disappeared; keep keyboard users inside the upload zone.
         if (trigger) {
             trigger.focus();
@@ -378,10 +448,7 @@ document.addEventListener("DOMContentLoaded", function () {
         removeButton.addEventListener("click", clearModel);
     }
 
-    var sampleButton = document.getElementById("load-sample-data-button");
     if (sampleButton && sampleUploadUrl) {
-        sampleButton.hidden = false;
-        var defaultText = sampleButton.textContent;
         sampleButton.addEventListener("click", function () {
             var hadFocus = document.activeElement === sampleButton;
             sampleButton.disabled = true;
@@ -408,7 +475,8 @@ document.addEventListener("DOMContentLoaded", function () {
                 })
                 .then(function (data) {
                     if (data) {
-                        showMockFile(data.filename || "example.inp", data.size, data.unchanged === true);
+                        showMockFile(data.filename || "example.inp", data.size, data.unchanged === true,
+                                     data.is_sample === true);
                     }
                 })
                 .catch(function (error) {
@@ -416,10 +484,16 @@ document.addEventListener("DOMContentLoaded", function () {
                 })
                 .finally(function () {
                     sampleButton.disabled = false;
-                    sampleButton.textContent = defaultText;
-                    // Disabling the button dropped its focus; give it back to keyboard users.
+                    updateSampleButton();
+                    // Disabling the button dropped its focus: give it back to keyboard users, or,
+                    // when the sample is now loaded and the button gone, move on to the
+                    // subcatchment select once it is filled.
                     if (hadFocus && document.activeElement === document.body) {
-                        sampleButton.focus();
+                        if (sampleButton.hidden) {
+                            focusSelectWhenReady = true;
+                        } else {
+                            sampleButton.focus();
+                        }
                     }
                 });
         });
@@ -435,11 +509,14 @@ document.addEventListener("DOMContentLoaded", function () {
             .then(function (data) {
                 // Ignore the restored state if the user loaded a model while this was in flight.
                 if (data && data.has_file && !currentModel) {
-                    showMockFile(data.filename, data.size, true);
+                    showMockFile(data.filename, data.size, true, data.is_sample === true);
                 }
             })
             .catch(function (error) {
                 console.warn("upload status check failed:", error);
-            });
+            })
+            .finally(updateSampleButton);
+    } else {
+        updateSampleButton();
     }
 });

@@ -1,13 +1,14 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Calculations: SWMM vs ANN runoff{% endblock %}
+{% block title %}Calculations: SWMM vs ANN runoff · Catchment Simulation{% endblock %}
 
 {% block head_scripts %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
         integrity="sha384-cCVCZkAjYNxaYKbM8lsArLznDF/SvMFr1jcZrvOpSTCa0W40ZAdLzHCEulnUa5i7"
         crossorigin="anonymous" defer></script>
 <script src="{% static 'main/js/charts.js' %}" defer></script>
+<script src="{% static 'main/js/model/network.js' %}" defer></script>
 {% endblock %}
 
 {% block style %}
@@ -19,39 +20,43 @@
 <header class="cs-page-header">
     <p class="cs-eyebrow">Model comparison</p>
     <h1 class="cs-page-header__title">SWMM vs neural network runoff</h1>
-    <p class="cs-page-header__lead">Run your SWMM model and see how closely the neural network reproduces its runoff for every subcatchment.</p>
+    <p class="cs-page-header__lead">Compare subcatchment runoff computed by EPA SWMM against predictions from a feedforward neural network.</p>
 </header>
 
 <div class="cs-workbench">
     <section class="cs-panel" aria-label="Calculation controls">
-        <div class="cs-step">
+        {# data-state: core/steps.js keeps it current as models are loaded and removed. #}
+        <div class="cs-step" data-cs-step="model" data-state="{% if has_model %}done{% else %}active{% endif %}">
             <div class="cs-step__header">
                 <span class="cs-step__num" aria-hidden="true">1</span>
-                <h2 class="cs-step__title"><span class="visually-hidden">Step 1: </span>Model</h2>
+                <h2 class="cs-step__title"><span class="visually-hidden">Step 1: </span>Model<span class="visually-hidden" data-cs-step-status>{% if has_model %} (completed){% endif %}</span></h2>
             </div>
             {% include 'main/_upload_zone.html' with compact=True %}
         </div>
 
-        <div class="cs-step">
+        <div class="cs-step" data-cs-step="run" data-state="{% if has_model %}active{% else %}todo{% endif %}">
             <div class="cs-step__header">
                 <span class="cs-step__num" aria-hidden="true">2</span>
-                <h2 class="cs-step__title"><span class="visually-hidden">Step 2: </span>Compare</h2>
+                <h2 class="cs-step__title"><span class="visually-hidden">Step 2: </span>Compare<span class="visually-hidden" data-cs-step-status>{% if not has_model %} (load a model first){% endif %}</span></h2>
             </div>
-            <form method="post" action="{% url 'main:calculations' %}" id="calculations-form">
+            {# data-cs-run-*: the status panel CS.asyncForm shows over the results while the comparison runs. #}
+            <form method="post" action="{% url 'main:calculations' %}" id="calculations-form"
+                  data-cs-run-status="Running SWMM and the neural network"
+                  data-cs-run-stages="Copy the model|Run SWMM|Read the report|Predict with the network">
                 {% csrf_token %}
-                <p class="cs-hint">SWMM runs the model, then the network predicts runoff from the same subcatchment properties.</p>
+                <p class="cs-hint">SWMM computes physical runoff, and the neural network predicts runoff from identical catchment features.</p>
                 <button type="submit" class="btn btn-primary w-100" id="run-calculations-button" data-authenticated="{{ request.user.is_authenticated }}">Run Calculations</button>
                 <div class="cs-progress" id="calculations-loading-state" hidden>
                     <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
                     <span class="cs-progress__elapsed" data-cs-elapsed aria-hidden="true"></span>
-                    <span role="status">Running SWMM and the neural network…</span>
+                    <span role="status">Executing SWMM simulation and neural network inference...</span>
                 </div>
             </form>
             <div class="calc-note" role="note" aria-labelledby="calc-validity-title">
                 <svg class="calc-note__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg>
                 <div>
                     <p class="calc-note__title" id="calc-validity-title">Validity range</p>
-                    <p class="calc-note__text">Trained on a small data set, the network is reliable only within a limited precipitation range. Treat results outside it as indicative.</p>
+                    <p class="calc-note__text">Trained on synthetic simulation data, the model is reliable within a limited precipitation range and for subcatchments sharing similar geometric features. <a href="#calc-network-title">The network diagram</a> flags any subcatchment inputs that fall outside the training data.</p>
                 </div>
             </div>
         </div>
@@ -66,47 +71,72 @@
         <section class="cs-card calc-model" aria-labelledby="calc-model-title">
             <p class="cs-eyebrow">About the model</p>
             <h2 class="cs-card__title calc-model__title" id="calc-model-title">Catchment Area Neural Network Model</h2>
-            <p class="calc-model__lead">A small fully connected network that estimates subcatchment runoff from the same properties SWMM uses, so it can be checked against a full SWMM run.</p>
+            <p class="calc-model__lead">A multilayer perceptron that estimates subcatchment runoff from geometric and hydrological properties, benchmarked against SWMM simulations.</p>
+
+            {# calculations.js draws the diagram and the training-range list from #calculations-network and traces the rows of #calculations-chart-data. #}
+            <section class="calc-net" aria-labelledby="calc-network-title">
+                <div class="calc-net__header">
+                    <h3 class="calc-net__title" id="calc-network-title" tabindex="-1">Inside the network</h3>
+                    {% if network %}
+                    <div class="calc-net__trace" id="calc-trace-control" hidden>
+                        <label class="calc-net__trace-label" for="calc-trace-select">Trace subcatchment</label>
+                        <select class="form-select form-select-sm calc-net__trace-select" id="calc-trace-select"></select>
+                    </div>
+                    {% endif %}
+                </div>
+                <p class="calc-net__intro">Eight subcatchment features are standardized using training set statistics, then processed through two hidden layers of eight neurons to a single output neuron. Each neuron computes an affine combination with bias and applies ReLU activation. The network was trained using the Adam optimizer with mean squared error loss.</p>
+
+                {% if network %}
+                <p class="calc-net__notice" id="calc-network-notice" hidden>This comparison has too many subcatchments to trace individually.</p>
+                <figure class="calc-net__figure">
+                    <div class="calc-net__stage" id="calc-network-stage" tabindex="0" role="group" aria-label="Network diagram: use the arrow keys to read each neuron" aria-describedby="calc-network-readout" data-calc-network-js hidden>
+                        <svg class="calc-net__svg" id="calc-network-diagram" role="img" aria-label="Diagram of the neural network" xmlns="http://www.w3.org/2000/svg"></svg>
+                    </div>
+                    <figcaption class="calc-net__caption" data-calc-network-js hidden>
+                        <p class="calc-net__legend" id="calc-network-caption">Line thickness indicates connection weight magnitude; teal represents positive weights, ochre represents negative weights.</p>
+                        {# Updates on pointer and keyboard; only the arrow keys announce, through #calc-network-announce. #}
+                        <p class="calc-net__readout" id="calc-network-readout"></p>
+                    </figcaption>
+                    <p class="visually-hidden" id="calc-network-announce" aria-live="polite"></p>
+                    <noscript><p class="calc-net__noscript">Turn on JavaScript to see the network diagram and trace a subcatchment through it.</p></noscript>
+                </figure>
+                <p class="calc-net__result" id="calc-network-output" hidden></p>
+
+                <section class="calc-range" aria-labelledby="calc-range-title" data-calc-network-js hidden>
+                    <h4 class="calc-range__title" id="calc-range-title">Inputs compared with the training data</h4>
+                    <p class="calc-range__summary" id="calc-range-summary"></p>
+                    <ul class="calc-range__list" id="calc-range-list" role="list"></ul>
+                    <p class="calc-range__note">Each bar spans ±2 standard deviations around the training mean, bounded by physical parameter constraints; the tick marks the mean.</p>
+                </section>
+                {% else %}
+                <p class="calc-net__unavailable" id="calc-network-unavailable">The network diagram is not available right now.</p>
+                {% endif %}
+
+                <p class="calc-net__more"><a href="{% url 'main:how_it_works' %}#network">The equations behind the network</a></p>
+            </section>
 
             <div class="calc-details">
                 <details class="calc-details__item">
                     <summary class="calc-details__title">Features</summary>
                     <div class="calc-details__body">
-                        <p>The network reads eight properties of each subcatchment from the SWMM model:</p>
+                        <p>The network reads eight properties of each subcatchment from the SWMM model, in SI units (a US model's widths and storage depths are converted first):</p>
                         <dl class="calc-features">
-                            <dt>Imperv (%)</dt><dd>Share of the land surface, excluding LID, that is impervious.</dd>
-                            <dt>Width</dt><dd>Characteristic width of the overland flow path.</dd>
+                            <dt>Imperviousness (%)</dt><dd>Share of the land surface, excluding LID, that is impervious.</dd>
+                            <dt>Width (m)</dt><dd>Characteristic width of the overland flow path.</dd>
                             <dt>Slope (%)</dt><dd>Average surface slope.</dd>
-                            <dt>N-Imperv</dt><dd>Manning's n for overland flow over the impervious area.</dd>
-                            <dt>N-Perv</dt><dd>Manning's n for overland flow over the pervious area.</dd>
-                            <dt>Dstore-Imperv</dt><dd>Depression storage depth on the impervious area.</dd>
-                            <dt>Dstore-Perv</dt><dd>Depression storage depth on the pervious area.</dd>
-                            <dt>Zero-Imperv (%)</dt><dd>Share of the impervious area without depression storage.</dd>
+                            <dt>Manning's n, impervious</dt><dd>Roughness for overland flow over the impervious area.</dd>
+                            <dt>Manning's n, pervious</dt><dd>Roughness for overland flow over the pervious area.</dd>
+                            <dt>Depression storage, impervious (mm)</dt><dd>Depth of water held back on the impervious area.</dd>
+                            <dt>Depression storage, pervious (mm)</dt><dd>Depth of water held back on the pervious area.</dd>
+                            <dt>Impervious area without storage (%)</dt><dd>Share of the impervious area without depression storage.</dd>
                         </dl>
+                        <p>Subcatchment area is excluded from the input vector: the network was trained exclusively on 5 ha catchments, so predictions represent runoff for standard 5 ha reference units.</p>
                     </div>
                 </details>
                 <details class="calc-details__item">
-                    <summary class="calc-details__title">Architecture</summary>
+                    <summary class="calc-details__title">Surrogate modeling context</summary>
                     <div class="calc-details__body">
-                        <figure class="calc-model__diagram">
-                            <img src="{% static 'main/img/nn.png' %}" width="1208" height="937" loading="lazy" alt="Diagram of the neural network: 8 inputs, 8 hidden neurons, 1 output">
-                        </figure>
-                        <ul>
-                            <li>Input layer: 8 neurons, ReLU activation.</li>
-                            <li>Hidden layer: 8 neurons, ReLU activation.</li>
-                            <li>Output layer: 1 neuron, ReLU activation.</li>
-                            <li>Trained with the Adam optimiser and mean squared error (MSE) loss; evaluated with mean absolute error (MAE) and MSE.</li>
-                        </ul>
-                    </div>
-                </details>
-                <details class="calc-details__item">
-                    <summary class="calc-details__title">Applications</summary>
-                    <div class="calc-details__body">
-                        <ul>
-                            <li><strong>Water resource management:</strong> predicting catchment runoff informs water allocation and conservation decisions.</li>
-                            <li><strong>Flood control:</strong> understanding what drives runoff helps locate areas at risk and design mitigation measures.</li>
-                            <li><strong>Environmental conservation:</strong> estimating the effect of land-use or climate changes supports conservation strategies.</li>
-                        </ul>
+                        <p>Neural network surrogates provide near-instantaneous runoff estimates for catchment screening and sensitivity sweeps, bypassing full numerical differential equation solvers when evaluating many design variations.</p>
                     </div>
                 </details>
             </div>
@@ -116,5 +146,6 @@
 {% endblock %}
 
 {% block additional_scripts %}
+{{ network|json_script:"calculations-network" }}
 <script src="{% static 'main/js/pages/calculations.js' %}"></script>
 {% endblock %}

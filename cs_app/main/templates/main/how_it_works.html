@@ -1,0 +1,644 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}How it works · Catchment Simulation{% endblock %}
+
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.js"
+        integrity="sha384-a1WQdjRj162i159OYq041X6I4K8NenkrI09LlPmiHg0YOb7CR+wJOraXwK9abpnE"
+        crossorigin="anonymous" defer></script>
+{% endblock %}
+
+{% block style %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.css"
+      integrity="sha384-WwGtaC6ywCHxA5cstpj/3+xIZvTez8dq2IcBQaXRkenHZ7FVVq1ZROtURwfbtTlG" crossorigin="anonymous">
+<link rel="stylesheet" href="{% static 'main/css/home.css' %}">
+<link rel="stylesheet" href="{% static 'main/css/how_it_works.css' %}">
+{% endblock %}
+
+{% block content %}
+<header class="cs-page-header hiw-header">
+    <p class="cs-eyebrow">How it works</p>
+    <h1 class="cs-page-header__title">How the simulation works</h1>
+    <p class="cs-page-header__lead">Every simulation result derives from the EPA Storm Water Management Model (SWMM). This page presents the governing hydrological equations for subcatchments, provides an in-browser numerical solver, and explains the computational mechanics of parameter sweeps and surrogate modeling.</p>
+</header>
+
+<div class="hiw-docs">
+    <nav class="home-toc hiw-toc d-none d-lg-block" id="hiw-toc" aria-labelledby="hiw-toc-title">
+        <p class="cs-eyebrow" id="hiw-toc-title">On this page</p>
+        <ul class="nav flex-column">
+            <li class="nav-item"><a class="nav-link" href="#pipeline">Running a tool</a></li>
+            <li class="nav-item"><a class="nav-link" href="#model">Runoff model</a></li>
+            <li class="nav-item"><a class="nav-link" href="#lab">Interactive model</a></li>
+            <li class="nav-item"><a class="nav-link" href="#parameters">Parameters</a></li>
+            <li class="nav-item"><a class="nav-link" href="#infiltration">Infiltration</a></li>
+            <li class="nav-item"><a class="nav-link" href="#numerics">Numerical solution</a></li>
+            <li class="nav-item"><a class="nav-link" href="#sweep">Parameter sweep</a></li>
+            <li class="nav-item"><a class="nav-link" href="#network">Neural network</a></li>
+            <li class="nav-item"><a class="nav-link" href="#references">References</a></li>
+        </ul>
+    </nav>
+
+    <div class="hiw-docs__body" data-bs-spy="scroll" data-bs-target="#hiw-toc" data-bs-root-margin="0px 0px -60%">
+
+        {# ── 1. Pipeline ─────────────────────────────────────────────── #}
+        <section class="hiw-section" id="pipeline" aria-labelledby="pipeline-title">
+            <p class="cs-eyebrow">Running a tool</p>
+            <h2 id="pipeline-title">What happens when you run a tool</h2>
+            <ol class="hiw-pipeline" role="list">
+                <li class="hiw-pipeline__step">
+                    <span class="cs-step__num" aria-hidden="true">1</span>
+                    <h3 class="hiw-pipeline__title">Load the model</h3>
+                    <p class="hiw-pipeline__text">The uploaded <span class="cs-mono">.inp</span> file is stored for your active session and remains immutable.</p>
+                </li>
+                <li class="hiw-pipeline__loop">
+                    <p class="hiw-pipeline__loop-label">
+                        <svg class="hiw-pipeline__loop-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 9a6 6 0 1 0-1.8 4.3"/><path d="M16.5 4.5V9H12"/></svg>
+                        Iterated across each parameter value
+                    </p>
+                    <ol class="hiw-pipeline__inner" role="list">
+                        <li class="hiw-pipeline__step">
+                            <span class="cs-step__num" aria-hidden="true">2</span>
+                            <h3 class="hiw-pipeline__title">Write one value</h3>
+                            <p class="hiw-pipeline__text">swmmio writes the perturbed parameter value into an isolated working copy of the model file.</p>
+                        </li>
+                        <li class="hiw-pipeline__step">
+                            <span class="cs-step__num" aria-hidden="true">3</span>
+                            <h3 class="hiw-pipeline__title">Run SWMM</h3>
+                            <p class="hiw-pipeline__text">pyswmm executes the SWMM computational engine on that copy, extracting subcatchment runoff, infiltration, and evaporation.</p>
+                        </li>
+                    </ol>
+                </li>
+                <li class="hiw-pipeline__step">
+                    <span class="cs-step__num" aria-hidden="true">4</span>
+                    <h3 class="hiw-pipeline__title">Collect and compare</h3>
+                    <p class="hiw-pipeline__text">Aggregated metrics from each run populate the interactive charts, data table, and export files.</p>
+                </li>
+            </ol>
+            <p class="hiw-prose">The timeseries tool records full temporal hydrographs rather than aggregate totals, while the calculations view evaluates subcatchment runoff against neural network inferences.</p>
+        </section>
+
+        {# ── 2. Runoff model ─────────────────────────────────────────── #}
+        <section class="hiw-section" id="model" aria-labelledby="model-title">
+            <p class="cs-eyebrow">Runoff model</p>
+            <h2 id="model-title">The runoff model: a nonlinear reservoir</h2>
+            <p class="hiw-prose">SWMM conceptualizes each subcatchment as a sloped reservoir receiving precipitation and generating outflow. The surface is partitioned into three distinct sub-areas: pervious ground, impervious area with depression storage, and impervious area without depression storage. The model tracks the ponded water depth on each zone independently.</p>
+
+            <figure class="hiw-figure hiw-schematic">
+                <svg class="hiw-schematic__svg" viewBox="0 0 480 276" role="img" aria-labelledby="schematic-title schematic-desc">
+                    <title id="schematic-title">One sub-area as a nonlinear reservoir</title>
+                    <desc id="schematic-desc">Cross-section of a sloped surface. Rainfall i falls on it, evaporation e rises from the ponded water and infiltration f seeps into the soil below. Water stands at depth d; once d exceeds the depression storage d_s, held back by a lip at the lower edge, it flows over the lip as runoff q. The outflow edge has the width W, and the surface the slope S.</desc>
+                    <defs>
+                        <pattern id="schematic-soil" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                            <line x1="0" y1="0" x2="0" y2="8" class="hiw-schematic__hatch"/>
+                        </pattern>
+                        <marker id="schematic-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                            <path d="M0 1 9 5 0 9z" class="hiw-schematic__arrowhead"/>
+                        </marker>
+                        <marker id="schematic-arrow-water" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                            <path d="M0 1 9 5 0 9z" class="hiw-schematic__arrowhead--water"/>
+                        </marker>
+                        <marker id="schematic-tick" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+                            <path d="M5 0v10" class="hiw-schematic__dim"/>
+                        </marker>
+                    </defs>
+
+                    {# Soil block cut along the slope, seen at an angle; depths exaggerated. #}
+                    <path class="hiw-schematic__soil" d="M40 124 400 184V266H40z"/>
+                    <path class="hiw-schematic__soil-hatch" d="M40 124 400 184V266H40z"/>
+
+                    {# Ponded water: its top surface and its cut face. #}
+                    <path class="hiw-schematic__water-top" d="M40 104 400 164 452 132 92 72z"/>
+                    <path class="hiw-schematic__water" d="M40 104 400 164V184L40 124z"/>
+                    <path class="hiw-schematic__storage" d="M40 115 400 175"/>
+                    {# The lip along the lower edge that holds back the depression storage. #}
+                    <path class="hiw-schematic__lip" d="M400 184 452 152V143L400 175z"/>
+                    <path class="hiw-schematic__edge" d="M40 124 400 184V266H40zM400 184 452 152"/>
+
+                    {# Rainfall #}
+                    <path class="hiw-schematic__rain" d="M128 14l-4 14M168 32l-4 14M206 12l-4 14M244 34l-4 14M326 14l-4 14M364 32l-4 14M142 50l-4 14M226 52l-4 14M344 52l-4 14"/>
+                    <path class="hiw-schematic__flow" d="M100 10v44" marker-end="url(#schematic-arrow)"/>
+                    <text class="hiw-schematic__symbol" x="84" y="38">i</text>
+
+                    {# Evaporation from the water surface #}
+                    <path class="hiw-schematic__flow hiw-schematic__flow--evap" d="M290 126c-6-6 6-10 0-16s6-10 0-16s6-10 0-14" marker-end="url(#schematic-arrow)"/>
+                    <text class="hiw-schematic__symbol" x="302" y="96">e</text>
+
+                    {# Infiltration into the soil #}
+                    <path class="hiw-schematic__flow hiw-schematic__flow--soil" d="M110 145v38" marker-end="url(#schematic-arrow)"/>
+                    <path class="hiw-schematic__flow hiw-schematic__flow--soil" d="M160 154v38" marker-end="url(#schematic-arrow)"/>
+                    <text class="hiw-schematic__symbol" x="174" y="190">f</text>
+
+                    {# Slope: a rise of S over a run of 1 #}
+                    <path class="hiw-schematic__dim" d="M232 158V171.3H312"/>
+                    <text class="hiw-schematic__symbol" x="216" y="170">S</text>
+                    <text class="hiw-schematic__label" x="272" y="188">1</text>
+
+                    {# Ponded depth and depression storage #}
+                    <path class="hiw-schematic__dim" d="M200 131V150.7" marker-start="url(#schematic-tick)" marker-end="url(#schematic-tick)"/>
+                    <text class="hiw-schematic__symbol" x="184" y="146">d</text>
+                    <path class="hiw-schematic__dim" d="M372 170.3V179.3" marker-start="url(#schematic-tick)" marker-end="url(#schematic-tick)"/>
+                    <text class="hiw-schematic__symbol" x="346" y="168">d<tspan class="hiw-schematic__sub" dy="4">s</tspan></text>
+
+                    {# Outflow over the lip #}
+                    <path class="hiw-schematic__flow hiw-schematic__flow--water" d="M402 168c16 0 24 14 26 46" marker-end="url(#schematic-arrow-water)"/>
+                    <text class="hiw-schematic__symbol" x="404" y="240">q</text>
+
+                    {# Width: the edge across the flow, as long as the outflow edge #}
+                    <path class="hiw-schematic__dim" d="M22 102 74 70" marker-start="url(#schematic-tick)" marker-end="url(#schematic-tick)"/>
+                    <text class="hiw-schematic__symbol" x="20" y="80">W</text>
+                </svg>
+                <figcaption class="hiw-figure__caption">Sub-area reservoir dynamics: precipitation <span data-cs-math>i</span> enters the surface, evaporation <span data-cs-math>e</span> and infiltration <span data-cs-math>f</span> deplete stored water, and ponding above depression storage <span data-cs-math>d_s</span> discharges as overland runoff <span data-cs-math>q</span> across width <span class="hiw-nobreak"><span data-cs-math>W</span>.</span> Vertical scale is exaggerated.</figcaption>
+            </figure>
+
+            <p class="hiw-prose">Water balance of a sub-area:</p>
+            {% verbatim %}
+            <div class="hiw-equation" id="eq-1">
+                <div class="hiw-equation__body" data-cs-math="display">\frac{\mathrm{d}d}{\mathrm{d}t} = i - e - f - q</div>
+                <span class="hiw-equation__number">(1)</span>
+            </div>
+            {% endverbatim %}
+            <p class="hiw-prose">Overland runoff initiates when ponded depth exceeds depression storage. SWMM models sheet flow as uniform open-channel flow in a wide rectangular channel governed by Manning's equation:</p>
+            {% verbatim %}
+            <div class="hiw-equation" id="eq-2">
+                <div class="hiw-equation__body" data-cs-math="display">Q = \frac{1}{n}\, W\, (d - d_s)^{5/3}\, S^{1/2}</div>
+                <span class="hiw-equation__number">(2)</span>
+            </div>
+            {% endverbatim %}
+            <p class="hiw-prose">Expressed per unit surface area:</p>
+            {% verbatim %}
+            <div class="hiw-equation" id="eq-3">
+                <div class="hiw-equation__body" data-cs-math="display">q = \frac{Q}{A} = \alpha\,(d - d_s)^{5/3}, \qquad \alpha = \frac{W\,S^{1/2}}{A\,n}</div>
+                <span class="hiw-equation__number">(3)</span>
+            </div>
+            {% endverbatim %}
+            <p class="hiw-prose">This yields an ordinary differential equation representing a nonlinear reservoir where discharge rate increases nonlinearly with ponded depth:</p>
+            {% verbatim %}
+            <div class="hiw-equation" id="eq-4">
+                <div class="hiw-equation__body" data-cs-math="display">\frac{\mathrm{d}d}{\mathrm{d}t} = i - e - f - \alpha\,(d - d_s)^{5/3}</div>
+                <span class="hiw-equation__number">(4)</span>
+            </div>
+            {% endverbatim %}
+            <p class="hiw-prose">Precipitation applies uniformly across all three sub-areas, while hydrologic abstractions differ:</p>
+            {% verbatim %}
+            <div class="hiw-equation" id="eq-5">
+                <div class="hiw-equation__body" data-cs-math="display">A_{\mathrm{perv}} = (1 - I)\,A, \qquad A_{\mathrm{imp}} = I\,(1 - z)\,A, \qquad A_{0} = I\,z\,A</div>
+                <span class="hiw-equation__number">(5)</span>
+            </div>
+            <div class="hiw-equation" id="eq-6">
+                <div class="hiw-equation__body" data-cs-math="display">Q(t) = \sum_k q_k(t)\,A_k</div>
+                <span class="hiw-equation__number">(6)</span>
+            </div>
+            <p class="hiw-prose">Infiltration occurs exclusively on the pervious sub-area (<span data-cs-math>f = 0</span> on impervious surfaces). Sub-area <span data-cs-math>A_0</span> possesses zero depression storage (<span data-cs-math>d_s = 0</span>), generating immediate runoff from rainfall onset. Both impervious sub-areas utilize roughness <span data-cs-math>n_{\mathrm{imp}}</span> and total impervious area <span data-cs-math>I\,A</span> within coefficient <span data-cs-math>\alpha</span>; the pervious sub-area utilizes <span data-cs-math>n_{\mathrm{perv}}</span> and area <span data-cs-math>(1 - I)\,A</span>.</p>
+            <p class="hiw-note">Formulations are presented in SI units (in US customary units, Manning's equation includes the 1.49 conversion factor). Slope <span data-cs-math>S</span> is expressed as a dimensionless gradient (<span class="cs-mono">PercSlope</span> / 100).</p>
+
+            <h3 class="hiw-subtitle" id="symbols-title">Symbols</h3>
+            <div class="hiw-table-wrap" data-hiw-scroll>
+                <table class="table cs-table hiw-symbols" aria-labelledby="symbols-title">
+                    <thead>
+                        <tr>
+                            <th scope="col">Symbol</th>
+                            <th scope="col">Meaning</th>
+                            <th scope="col">Unit</th>
+                            <th scope="col"><span class="cs-mono">.inp</span> column</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><th scope="row"><span data-cs-math>d</span></th><td>Depth of water ponded on a sub-area</td><td><span data-cs-math>\mathrm{m}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>d_s</span></th><td>Depression storage: depth retained prior to runoff initiation</td><td><span data-cs-math>\mathrm{m}</span></td><td><span class="cs-mono">S-Imperv</span>, <span class="cs-mono">S-Perv</span> (mm)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>i</span></th><td>Rainfall intensity</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>e</span></th><td>Evaporation rate</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>f</span></th><td>Infiltration rate</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>q</span></th><td>Runoff rate per unit area</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>Q</span></th><td>Volumetric runoff rate</td><td><span data-cs-math>\mathrm{m^3/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>W</span></th><td>Characteristic overland flow width</td><td><span data-cs-math>\mathrm{m}</span></td><td><span class="cs-mono">Width</span> (m)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>S</span></th><td>Average surface slope</td><td><span data-cs-math>\mathrm{m/m}</span></td><td><span class="cs-mono">PercSlope</span> (%)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>A</span></th><td>Subcatchment surface area</td><td><span data-cs-math>\mathrm{m^2}</span></td><td><span class="cs-mono">Area</span> (ha)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>n</span></th><td>Manning's roughness coefficient</td><td><span data-cs-math>\mathrm{s/m^{1/3}}</span></td><td><span class="cs-mono">N-Imperv</span>, <span class="cs-mono">N-Perv</span></td></tr>
+                        <tr><th scope="row"><span data-cs-math>I</span></th><td>Impervious area fraction</td><td>[-]</td><td><span class="cs-mono">PercImperv</span> (%)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>z</span></th><td>Fraction of impervious area without depression storage</td><td>[-]</td><td><span class="cs-mono">PctZero</span> (%)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>\alpha</span></th><td>Overland flow routing coefficient</td><td><span data-cs-math>\mathrm{m^{-2/3}/s}</span></td><td>N/A</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            {% endverbatim %}
+        </section>
+
+        {# ── 3. Interactive model ────────────────────────────────────── #}
+        <section class="hiw-section" id="lab" aria-labelledby="lab-title">
+            <p class="cs-eyebrow">Interactive model</p>
+            <h2 id="lab-title">Try it: the interactive model</h2>
+            <p class="hiw-prose">An in-browser implementation of the governing SWMM equations, executing the fifth-order Runge-Kutta Cash-Karp solver in real time for a single subcatchment under synthetic design storms. Adjusting parameter sliders dynamically updates storage states across all three sub-areas and recalculates the resulting outflow hydrograph. Baseline parameters correspond to subcatchment <span class="cs-mono">S1</span> of the example model.</p>
+
+            <noscript>
+                <p class="cs-hint cs-hint--note hiw-lab__noscript">The interactive numerical solver runs client-side and needs JavaScript. Theoretical equations and documentation remain accessible without scripts.</p>
+            </noscript>
+
+            <div class="hiw-lab" id="hiw-lab" hidden>
+                <div class="hiw-lab__controls" id="lab-controls">
+                    {# The column's contents stick under the site header beside the stage (≥ xl). #}
+                    <div class="hiw-lab__controls-inner">
+                    <fieldset class="hiw-fieldset">
+                        <legend class="hiw-fieldset__legend">Storm</legend>
+                        <div class="cs-segmented hiw-storms" id="lab-storms"></div>
+                        <p class="hiw-storms__description" id="lab-storm-description"></p>
+                    </fieldset>
+
+                    {% verbatim %}
+                    <fieldset class="hiw-fieldset">
+                        <legend class="hiw-fieldset__legend">Surface</legend>
+                        <div class="hiw-slider" data-hiw-param="area" data-scale="log" data-min="0.5" data-max="50" data-unit="ha">
+                            <label class="hiw-slider__label" for="lab-area">Area <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>A</span></label>
+                            <output class="hiw-slider__value" id="lab-area-value" for="lab-area"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-area" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="imperviousness" data-scale="linear" data-min="0" data-max="100" data-unit="%">
+                            <label class="hiw-slider__label" for="lab-imperviousness">Imperviousness <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>I</span></label>
+                            <output class="hiw-slider__value" id="lab-imperviousness-value" for="lab-imperviousness"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-imperviousness" min="0" max="100" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="width" data-scale="log" data-min="5" data-max="1000" data-unit="m">
+                            <label class="hiw-slider__label" for="lab-width">Width <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>W</span></label>
+                            <output class="hiw-slider__value" id="lab-width-value" for="lab-width"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-width" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="slope" data-scale="linear" data-min="0.1" data-max="30" data-unit="%">
+                            <label class="hiw-slider__label" for="lab-slope">Slope <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>S</span></label>
+                            <output class="hiw-slider__value" id="lab-slope-value" for="lab-slope"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-slope" min="0" max="299" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="hiw-fieldset">
+                        <legend class="hiw-fieldset__legend">Roughness and storage</legend>
+                        <div class="hiw-slider" data-hiw-param="nImperv" data-scale="log" data-min="0.005" data-max="0.05" data-unit="">
+                            <label class="hiw-slider__label" for="lab-nImperv">Manning's <i>n</i>, impervious <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>n_{\mathrm{imp}}</span></label>
+                            <output class="hiw-slider__value" id="lab-nImperv-value" for="lab-nImperv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-nImperv" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="nPerv" data-scale="log" data-min="0.02" data-max="1" data-unit="">
+                            <label class="hiw-slider__label" for="lab-nPerv">Manning's <i>n</i>, pervious <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>n_{\mathrm{perv}}</span></label>
+                            <output class="hiw-slider__value" id="lab-nPerv-value" for="lab-nPerv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-nPerv" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="storageImperv" data-scale="linear" data-min="0" data-max="5" data-unit="mm">
+                            <label class="hiw-slider__label" for="lab-storageImperv" title="Depression storage, impervious">Storage, impervious <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>d_{s,\mathrm{imp}}</span></label>
+                            <output class="hiw-slider__value" id="lab-storageImperv-value" for="lab-storageImperv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-storageImperv" aria-label="Depression storage, impervious" min="0" max="100" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="storagePerv" data-scale="linear" data-min="0" data-max="10" data-unit="mm">
+                            <label class="hiw-slider__label" for="lab-storagePerv" title="Depression storage, pervious">Storage, pervious <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>d_{s,\mathrm{perv}}</span></label>
+                            <output class="hiw-slider__value" id="lab-storagePerv-value" for="lab-storagePerv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-storagePerv" aria-label="Depression storage, pervious" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                        <div class="hiw-slider" data-hiw-param="zeroImperv" data-scale="linear" data-min="0" data-max="100" data-unit="%">
+                            <label class="hiw-slider__label" for="lab-zeroImperv" title="Impervious area without storage">Impervious without storage <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>z</span></label>
+                            <output class="hiw-slider__value" id="lab-zeroImperv-value" for="lab-zeroImperv"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-zeroImperv" aria-label="Impervious area without storage" min="0" max="100" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="hiw-fieldset">
+                        <legend class="hiw-fieldset__legend">Soil</legend>
+                        <div class="hiw-slider" data-hiw-param="conductivity" data-scale="log" data-min="0.1" data-max="50" data-unit="mm/h">
+                            <label class="hiw-slider__label" for="lab-conductivity" title="Saturated hydraulic conductivity">Conductivity <span class="hiw-slider__symbol" aria-hidden="true" data-cs-math>K_s</span></label>
+                            <output class="hiw-slider__value" id="lab-conductivity-value" for="lab-conductivity"></output>
+                            <div class="hiw-slider__track"><input class="form-range hiw-slider__input" type="range" id="lab-conductivity" aria-label="Saturated hydraulic conductivity" min="0" max="200" step="1"><span class="hiw-slider__tick" aria-hidden="true"></span></div>
+                            <span class="hiw-slider__bound" aria-hidden="true"></span><span class="hiw-slider__bound hiw-slider__bound--max" aria-hidden="true"></span>
+                        </div>
+                    </fieldset>
+                    {% endverbatim %}
+
+                    <div class="hiw-lab__reset">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="lab-reset">Reset to starting values</button>
+                        <p class="hiw-lab__reset-hint" id="lab-start-note">Tick marks indicate baseline parameter values.</p>
+                    </div>
+                    </div>
+                </div>
+
+                <div class="hiw-lab__stage">
+                    <figure class="hiw-panel hiw-reservoirs">
+                        <figcaption class="hiw-panel__header">
+                            <h3 class="hiw-panel__title">The three sub-areas</h3>
+                            <p class="hiw-panel__meta">Storage depths displayed on a square-root scale</p>
+                        </figcaption>
+                        <div class="hiw-reservoirs__canvas" id="lab-reservoirs" role="img" aria-label="The three sub-areas"></div>
+                        <div class="hiw-time">
+                            <button type="button" class="btn btn-primary btn-sm hiw-time__play" id="lab-play">
+                                <svg class="hiw-time__icon hiw-time__icon--play" aria-hidden="true" viewBox="0 0 16 16"><path d="M4.5 2.8v10.4L13 8z" fill="currentColor"/></svg>
+                                <svg class="hiw-time__icon hiw-time__icon--pause" aria-hidden="true" viewBox="0 0 16 16"><path d="M4 3h3v10H4zM9 3h3v10H9z" fill="currentColor"/></svg>
+                                <span class="hiw-time__play-text">Play</span>
+                            </button>
+                            <label class="visually-hidden" for="lab-time">Time</label>
+                            <input class="form-range hiw-time__scrubber" type="range" id="lab-time" min="0" max="720" step="1" value="0">
+                            <p class="hiw-time__readout" aria-hidden="true">
+                                <span class="hiw-time__item"><span class="hiw-time__key">t</span> <span id="lab-time-value">0:00</span></span>
+                                <span class="hiw-time__item"><span class="hiw-time__key">i</span> <span id="lab-rain-value">0</span>&nbsp;mm/h</span>
+                            </p>
+                        </div>
+                    </figure>
+
+                    <figure class="hiw-panel hiw-hydrograph-card">
+                        <figcaption class="hiw-panel__header">
+                            <h3 class="hiw-panel__title">Hydrograph</h3>
+                            <ul class="hiw-legend" role="list" id="lab-legend">
+                                <li class="hiw-legend__item hiw-legend__item--rain">Rainfall</li>
+                                <li class="hiw-legend__item hiw-legend__item--runoff" data-hiw-legend="runoff">Runoff</li>
+                                <li class="hiw-legend__item hiw-legend__item--ghost" data-hiw-legend="ghost" hidden>Starting values</li>
+                                <li class="hiw-legend__item hiw-legend__item--sweep" data-hiw-legend="sweep" hidden>One line per value</li>
+                                <li class="hiw-legend__item hiw-legend__item--peak" data-hiw-legend="peak">Peak</li>
+                            </ul>
+                        </figcaption>
+                        <div class="hiw-hydrograph" id="lab-hydrograph" role="img" aria-label="Hydrograph"></div>
+                        <p class="hiw-panel__hint" id="lab-hydrograph-hint">Drag horizontally across the chart or adjust the time slider to inspect hydrologic conditions throughout the event.</p>
+                    </figure>
+                </div>
+
+                <div class="hiw-lab__results">
+                    <h3 class="visually-hidden">Key numbers</h3>
+                    <dl class="cs-metrics hiw-metrics" id="lab-metrics">
+                        <div class="cs-metric" data-hiw-metric="peak">
+                            <dt class="cs-metric__label">Peak runoff</dt>
+                            <dd class="cs-metric__value"><span data-hiw-value></span><span class="cs-metric__unit">m³/s</span></dd>
+                            <dd class="hiw-metric__delta" data-hiw-delta></dd>
+                        </div>
+                        <div class="cs-metric" data-hiw-metric="timeToPeak">
+                            <dt class="cs-metric__label">Time to peak</dt>
+                            <dd class="cs-metric__value"><span data-hiw-value></span></dd>
+                            <dd class="hiw-metric__delta" data-hiw-delta></dd>
+                        </div>
+                        <div class="cs-metric" data-hiw-metric="volume">
+                            <dt class="cs-metric__label">Runoff volume</dt>
+                            <dd class="cs-metric__value"><span data-hiw-value></span><span class="cs-metric__unit">m³</span></dd>
+                            <dd class="hiw-metric__delta" data-hiw-delta></dd>
+                        </div>
+                        <div class="cs-metric" data-hiw-metric="coefficient">
+                            <dt class="cs-metric__label">Runoff coefficient</dt>
+                            <dd class="cs-metric__value"><span data-hiw-value></span><span class="cs-metric__unit">%</span></dd>
+                            <dd class="hiw-metric__delta" data-hiw-delta></dd>
+                        </div>
+                    </dl>
+
+                    <div class="hiw-balance">
+                        <h3 class="hiw-balance__title" id="lab-balance-title">Where the rain went</h3>
+                        <p class="hiw-balance__total" id="lab-balance-total"></p>
+                        <div class="hiw-balance__bar" id="lab-balance-bar" aria-hidden="true">
+                            <span class="hiw-balance__part hiw-balance__part--runoff" data-hiw-part="runoff"></span>
+                            <span class="hiw-balance__part hiw-balance__part--infiltration" data-hiw-part="infiltration"></span>
+                            <span class="hiw-balance__part hiw-balance__part--storage" data-hiw-part="storage"></span>
+                            <span class="hiw-balance__part hiw-balance__part--evaporation" data-hiw-part="evaporation"></span>
+                        </div>
+                        <dl class="hiw-balance__legend" aria-labelledby="lab-balance-title">
+                            <div class="hiw-balance__item hiw-balance__item--runoff" data-hiw-part="runoff"><dt>Runoff</dt><dd></dd></div>
+                            <div class="hiw-balance__item hiw-balance__item--infiltration" data-hiw-part="infiltration"><dt>Infiltration</dt><dd></dd></div>
+                            <div class="hiw-balance__item hiw-balance__item--storage" data-hiw-part="storage"><dt>Still on the surface</dt><dd></dd></div>
+                            <div class="hiw-balance__item hiw-balance__item--evaporation" data-hiw-part="evaporation"><dt>Evaporation</dt><dd></dd></div>
+                        </dl>
+                    </div>
+                </div>
+
+                <section class="hiw-lab__sweep hiw-sweep" aria-labelledby="lab-sweep-title">
+                    <div class="hiw-sweep__controls">
+                        <h3 class="hiw-sweep__title" id="lab-sweep-title">See a sweep</h3>
+                        <p class="hiw-sweep__lead">Execute nine sequential simulations across the parameter range while holding other inputs constant.</p>
+                        <label class="form-label" for="lab-sweep-parameter">Parameter</label>
+                        <select class="form-select" id="lab-sweep-parameter">
+                            {% for guide in guides %}{% if guide.lab_key %}
+                            <option value="{{ guide.feature }}" data-hiw-param="{{ guide.lab_key }}"{% if guide.feature == 'PercImperv' %} selected{% endif %}>{{ guide.name }}</option>
+                            {% endif %}{% endfor %}
+                        </select>
+                        <button type="button" class="btn btn-primary hiw-sweep__run" id="lab-sweep-run">Run sweep</button>
+                        <p class="hiw-sweep__progress cs-mono" id="lab-sweep-progress" aria-hidden="true"></p>
+                        <div class="hiw-sweep__status" id="lab-sweep-status" role="status"></div>
+                    </div>
+                    <figure class="hiw-sweep__response">
+                        <figcaption class="hiw-sweep__response-header">
+                            <span class="hiw-sweep__response-title" id="lab-response-title">Response</span>
+                            <span class="cs-segmented hiw-sweep__toggle" role="radiogroup" aria-label="Quantity on the response curve">
+                                <input type="radio" class="btn-check" name="lab-response" id="lab-response-volume" value="volume" checked>
+                                <label class="btn cs-segmented__option" for="lab-response-volume">Volume</label>
+                                <input type="radio" class="btn-check" name="lab-response" id="lab-response-peak" value="peak">
+                                <label class="btn cs-segmented__option" for="lab-response-peak">Peak rate</label>
+                            </span>
+                        </figcaption>
+                        <div class="hiw-response" id="lab-response" role="img" aria-label="Response curve: run a sweep to fill it."></div>
+                        <table class="visually-hidden" id="lab-response-table">
+                            <caption>Results of the sweep</caption>
+                            <thead><tr><th scope="col">Value</th><th scope="col">Runoff volume [m³]</th><th scope="col">Peak runoff [m³/s]</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </figure>
+                </section>
+
+                {# Below xl: the run's headline numbers, docked while the sliders are in view and the hydrograph is not. #}
+                <div class="hiw-dock" id="lab-dock" aria-hidden="true">
+                    <svg class="hiw-dock__spark" viewBox="0 0 120 36" preserveAspectRatio="none" focusable="false">
+                        <path class="hiw-dock__ghost"/>
+                        <path class="hiw-dock__line"/>
+                    </svg>
+                    <p class="hiw-dock__numbers">
+                        <span class="hiw-dock__item"><span class="hiw-dock__key">Peak</span> <span data-hiw-dock="peak"></span>&nbsp;m³/s <span class="hiw-dock__change" data-hiw-dock="peakChange"></span></span>
+                        <span class="hiw-dock__item"><span class="hiw-dock__key">Volume</span> <span data-hiw-dock="volume"></span>&nbsp;m³ <span class="hiw-dock__change" data-hiw-dock="volumeChange"></span></span>
+                    </p>
+                </div>
+            </div>
+            <p class="hiw-note hiw-lab__footnote">Calculations in SI units. The interactive model simulates an isolated subcatchment discharging to an outfall, excluding snowpack, groundwater interaction, and LID controls.</p>
+            <template id="lab-sweep-done">
+                <p class="hiw-sweep__done">Parameter sweep complete: each run evaluates one perturbed value with all other parameters fixed. The <a href="{% url 'main:simulation' %}">Simulation tool</a> executes this workflow directly with the full EPA SWMM engine on custom models.</p>
+            </template>
+        </section>
+
+        {# ── 4. Parameters ───────────────────────────────────────────── #}
+        <section class="hiw-section" id="parameters" aria-labelledby="parameters-title">
+            <p class="cs-eyebrow">Parameters</p>
+            <h2 id="parameters-title">What each parameter does</h2>
+            <p class="hiw-prose">A parameter sweep systematically perturbs a single attribute in the SWMM input file while holding remaining model parameters fixed. The interactive model above simulates all parameters except curb length, which is solely reserved for water quality and pollutant wash-off.</p>
+            <div class="hiw-params">
+                {% for guide in guides %}
+                <article class="hiw-param" id="{{ guide.anchor }}" aria-labelledby="{{ guide.anchor }}-title">
+                    <div class="hiw-param__head">
+                        <h3 class="hiw-param__title" id="{{ guide.anchor }}-title">{{ guide.name }} <span class="hiw-param__symbol" data-cs-math>{{ guide.tex }}</span></h3>
+                        <p class="hiw-param__column"><span class="cs-mono">{{ guide.section }}</span> <span class="cs-mono hiw-param__feature">{{ guide.feature }}</span></p>
+                        {% if guide.lab_key %}
+                        <button type="button" class="btn btn-sm btn-outline-primary hiw-param__try" data-hiw-try="{{ guide.feature }}" hidden>Try it in the model<span class="visually-hidden">: {{ guide.name }}</span></button>
+                        {% endif %}
+                    </div>
+                    <dl class="hiw-param__body">
+                        <dt>Enters</dt>
+                        <dd>{{ guide.where }}</dd>
+                        <dt>Role</dt>
+                        <dd>{{ guide.role }}</dd>
+                        <dt>Effect</dt>
+                        <dd>{{ guide.effect }}</dd>
+                    </dl>
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+
+        {# ── 5. Infiltration ─────────────────────────────────────────── #}
+        {% verbatim %}
+        <section class="hiw-section" id="infiltration" aria-labelledby="infiltration-title">
+            <p class="cs-eyebrow">Infiltration</p>
+            <h2 id="infiltration-title">Infiltration</h2>
+            <p class="hiw-prose">Precipitation falling on the pervious sub-area infiltrates into the unsaturated soil zone. The baseline example model applies the Modified Green-Ampt infiltration method; SWMM also supports Horton and SCS Curve Number models as specified in the <span class="cs-mono">INFILTRATION</span> section of the input file.</p>
+            <div class="hiw-equation" id="eq-7">
+                <div class="hiw-equation__body" data-cs-math="display">f = K_s \left( 1 + \frac{(\psi + d)\,\theta_d}{F} \right)</div>
+                <span class="hiw-equation__number">(7)</span>
+            </div>
+            <p class="hiw-prose"><span data-cs-math>K_s</span> is saturated hydraulic conductivity, <span data-cs-math>\psi</span> is suction head at the wetting front, <span data-cs-math>\theta_d</span> is initial moisture deficit, <span data-cs-math>F</span> is cumulative infiltration volume, and <span data-cs-math>d</span> is ponded surface depth. Prior to upper soil layer saturation, potential infiltration capacity exceeds precipitation, so all incoming rainfall infiltrates. When rainfall intensity exceeds hydraulic conductivity (<span data-cs-math>i > K_s</span>), surface saturation occurs once cumulative infiltration reaches:</p>
+            <div class="hiw-equation" id="eq-8">
+                <div class="hiw-equation__body" data-cs-math="display">F_s = \frac{K_s\,(\psi + d)\,\theta_d}{i - K_s}</div>
+                <span class="hiw-equation__number">(8)</span>
+            </div>
+            <p class="hiw-prose">From saturation onset, SWMM advances cumulative infiltration <span data-cs-math>F</span> over each time step <span data-cs-math>\Delta t</span> using the integrated formulation of equation (7) solved via Newton-Raphson iteration, yielding infiltration rate <span class="hiw-nobreak"><span data-cs-math>f = (F_2 - F_1) / \Delta t</span>:</span></p>
+            <div class="hiw-equation" id="eq-9">
+                <div class="hiw-equation__body" data-cs-math="display">F_2 - F_1 - c\,\ln\frac{F_2 + c}{F_1 + c} = K_s\,\Delta t, \qquad c = (\psi + d)\,\theta_d</div>
+                <span class="hiw-equation__number">(9)</span>
+            </div>
+        </section>
+
+        <section class="hiw-section" id="numerics" aria-labelledby="numerics-title">
+            <p class="cs-eyebrow">Numerical solution</p>
+            <h2 id="numerics-title">How the equations are solved</h2>
+            <p class="hiw-prose">Equation (4) has no closed-form solution. Across each hydrologic time step (<span class="cs-mono">WET_STEP</span> during precipitation or active ponding, <span class="cs-mono">DRY_STEP</span> during dry periods), SWMM evaluates evaporation and infiltration abstractions, satisfies depression storage thresholds, and integrates depth using a fifth-order Cash-Karp adaptive Runge-Kutta scheme with a local error tolerance of <span class="hiw-nobreak"><span data-cs-math>10^{-4}</span>.</span> Instantaneous runoff rate at step completion is computed as <span data-cs-math>\alpha\,(d - d_s)^{5/3}</span>.</p>
+            <div class="hiw-equation" id="eq-10">
+                <div class="hiw-equation__body" data-cs-math="display">d(t + \Delta t) = d(t) + \int_{t}^{t + \Delta t} \left[\, i - e - f - \alpha\,(d - d_s)^{5/3} \right] \mathrm{d}\tau</div>
+                <span class="hiw-equation__number">(10)</span>
+            </div>
+            <p class="hiw-prose">The in-browser interactive simulator executes this identical numerical integration procedure. Benchmarked against the EPA SWMM computational engine on the baseline model, numerical agreement for cumulative runoff, peak discharge, and infiltration falls within a 0.02% error margin; the test suite verifies this directly against SWMM.</p>
+        </section>
+
+        <section class="hiw-section" id="sweep" aria-labelledby="sweep-title">
+            <p class="cs-eyebrow">Parameter sweep</p>
+            <h2 id="sweep-title">What a sweep measures</h2>
+            <p class="hiw-prose">A parameter sweep iteratively executes hydrodynamic simulations while systematically perturbing a single target parameter <span data-cs-math>p</span> across a defined interval:</p>
+            <div class="hiw-equation" id="eq-11">
+                <div class="hiw-equation__body" data-cs-math="display">y_j = \mathcal{M}(p_j), \qquad p_j = p_{\mathrm{start}} + j\,\Delta p, \qquad j = 0, \dots, N - 1</div>
+                <span class="hiw-equation__number">(11)</span>
+            </div>
+            <p class="hiw-prose">Each simulation run is reduced to scalar diagnostic metrics:</p>
+            <div class="hiw-equation" id="eq-12">
+                <div class="hiw-equation__body" data-cs-math="display">V = \int_0^T Q\,\mathrm{d}t, \qquad Q_p = \max_t Q(t)</div>
+                <span class="hiw-equation__number">(12)</span>
+            </div>
+            <p class="hiw-prose">These metrics encompass total runoff volume, peak discharge rate, cumulative infiltration, and evaporative losses. Global sensitivity across the sampled range is quantified as relative percentage change between terminal and initial parameter states:</p>
+            <div class="hiw-equation" id="eq-13">
+                <div class="hiw-equation__body" data-cs-math="display">\Delta = \frac{y_{N-1} - y_0}{\lvert y_0 \rvert} \cdot 100\,\%</div>
+                <span class="hiw-equation__number">(13)</span>
+            </div>
+            <p class="hiw-prose">The hydrograph analysis tool computes time to peak and evaluates total event volume via numerical trapezoidal integration:</p>
+            <div class="hiw-equation" id="eq-14">
+                <div class="hiw-equation__body" data-cs-math="display">t_p = \operatorname*{arg\,max}_t Q(t) - t_0, \qquad V \approx \sum_k \tfrac{1}{2}\,(Q_k + Q_{k+1})\,(t_{k+1} - t_k)</div>
+                <span class="hiw-equation__number">(14)</span>
+            </div>
+        {% endverbatim %}
+            <div class="hiw-actions">
+                <a class="btn btn-primary" href="{% url 'main:simulation' %}">Run a parameter sweep</a>
+                <a class="btn btn-outline-primary" href="{% url 'main:timeseries' %}">Analyse a hydrograph</a>
+            </div>
+        </section>
+
+        {# ── 8. Neural network ───────────────────────────────────────── #}
+        {% verbatim %}
+        <section class="hiw-section" id="network" aria-labelledby="network-title">
+            <p class="cs-eyebrow">Neural network</p>
+            <h2 id="network-title">The neural network</h2>
+            <p class="hiw-prose">The surrogate modeling module estimates subcatchment runoff volume using a multilayer perceptron (MLP) as a fast alternative to full hydrodynamic simulation. The network ingests eight subcatchment parameters:</p>
+            <div class="hiw-equation" id="eq-15">
+                <div class="hiw-equation__body" data-cs-math="display">x = \left( I,\; W,\; S,\; n_{\mathrm{imp}},\; n_{\mathrm{perv}},\; d_{s,\mathrm{imp}},\; d_{s,\mathrm{perv}},\; z \right)</div>
+                <span class="hiw-equation__number">(15)</span>
+            </div>
+            <p class="hiw-prose">Input features are standardized using the empirical mean <span data-cs-math>\mu</span> and standard deviation <span data-cs-math>\sigma</span> from the training set, followed by forward propagation through two hidden layers of eight neurons each:</p>
+            <div class="hiw-equation" id="eq-16">
+                <div class="hiw-equation__body" data-cs-math="display">\tilde{x} = \frac{x - \mu}{\sigma}, \qquad h^{(1)} = \mathrm{ReLU}\!\left(W_1 \tilde{x} + b_1\right), \qquad h^{(2)} = \mathrm{ReLU}\!\left(W_2 h^{(1)} + b_2\right)</div>
+                <span class="hiw-equation__number">(16)</span>
+            </div>
+            <div class="hiw-equation" id="eq-17">
+                <div class="hiw-equation__body" data-cs-math="display">\hat{V} = \mathrm{ReLU}\!\left(w_3^{\top} h^{(2)} + b_3\right), \qquad \mathrm{ReLU}(u) = \max(0, u)</div>
+                <span class="hiw-equation__number">(17)</span>
+            </div>
+
+            <figure class="hiw-figure hiw-net">
+                <svg class="hiw-net__svg" viewBox="0 0 500 292" role="img" aria-labelledby="network-figure-title network-figure-desc">
+                    <title id="network-figure-title">The network: 8 inputs, two hidden layers of 8 neurons, 1 output</title>
+                    <desc id="network-figure-desc">Each of the eight inputs I, W, S, n imp, n perv, d s imp, d s perv and z connects to every neuron of the first hidden layer, every neuron of that layer to every neuron of the second, and every neuron of the second to the single output, the estimated runoff volume V hat.</desc>
+                    <path class="hiw-net__edges" d="M111 26L217 26M111 26L217 57M111 26L217 88M111 26L217 119M111 26L217 150M111 26L217 181M111 26L217 212M111 26L217 243M111 57L217 26M111 57L217 57M111 57L217 88M111 57L217 119M111 57L217 150M111 57L217 181M111 57L217 212M111 57L217 243M111 88L217 26M111 88L217 57M111 88L217 88M111 88L217 119M111 88L217 150M111 88L217 181M111 88L217 212M111 88L217 243M111 119L217 26M111 119L217 57M111 119L217 88M111 119L217 119M111 119L217 150M111 119L217 181M111 119L217 212M111 119L217 243M111 150L217 26M111 150L217 57M111 150L217 88M111 150L217 119M111 150L217 150M111 150L217 181M111 150L217 212M111 150L217 243M111 181L217 26M111 181L217 57M111 181L217 88M111 181L217 119M111 181L217 150M111 181L217 181M111 181L217 212M111 181L217 243M111 212L217 26M111 212L217 57M111 212L217 88M111 212L217 119M111 212L217 150M111 212L217 181M111 212L217 212M111 212L217 243M111 243L217 26M111 243L217 57M111 243L217 88M111 243L217 119M111 243L217 150M111 243L217 181M111 243L217 212M111 243L217 243M231 26L337 26M231 26L337 57M231 26L337 88M231 26L337 119M231 26L337 150M231 26L337 181M231 26L337 212M231 26L337 243M231 57L337 26M231 57L337 57M231 57L337 88M231 57L337 119M231 57L337 150M231 57L337 181M231 57L337 212M231 57L337 243M231 88L337 26M231 88L337 57M231 88L337 88M231 88L337 119M231 88L337 150M231 88L337 181M231 88L337 212M231 88L337 243M231 119L337 26M231 119L337 57M231 119L337 88M231 119L337 119M231 119L337 150M231 119L337 181M231 119L337 212M231 119L337 243M231 150L337 26M231 150L337 57M231 150L337 88M231 150L337 119M231 150L337 150M231 150L337 181M231 150L337 212M231 150L337 243M231 181L337 26M231 181L337 57M231 181L337 88M231 181L337 119M231 181L337 150M231 181L337 181M231 181L337 212M231 181L337 243M231 212L337 26M231 212L337 57M231 212L337 88M231 212L337 119M231 212L337 150M231 212L337 181M231 212L337 212M231 212L337 243M231 243L337 26M231 243L337 57M231 243L337 88M231 243L337 119M231 243L337 150M231 243L337 181M231 243L337 212M231 243L337 243"/>
+                    <path class="hiw-net__edges hiw-net__edges--out" d="M351 26L443 134.5M351 57L443 134.5M351 88L443 134.5M351 119L443 134.5M351 150L443 134.5M351 181L443 134.5M351 212L443 134.5M351 243L443 134.5"/>
+                    <g class="hiw-net__inputs">
+                        <circle cx="104" cy="26" r="7"/><circle cx="104" cy="57" r="7"/><circle cx="104" cy="88" r="7"/><circle cx="104" cy="119" r="7"/><circle cx="104" cy="150" r="7"/><circle cx="104" cy="181" r="7"/><circle cx="104" cy="212" r="7"/><circle cx="104" cy="243" r="7"/>
+                    </g>
+                    <g class="hiw-net__hidden">
+                        <circle cx="224" cy="26" r="7"/><circle cx="224" cy="57" r="7"/><circle cx="224" cy="88" r="7"/><circle cx="224" cy="119" r="7"/><circle cx="224" cy="150" r="7"/><circle cx="224" cy="181" r="7"/><circle cx="224" cy="212" r="7"/><circle cx="224" cy="243" r="7"/>
+                        <circle cx="344" cy="26" r="7"/><circle cx="344" cy="57" r="7"/><circle cx="344" cy="88" r="7"/><circle cx="344" cy="119" r="7"/><circle cx="344" cy="150" r="7"/><circle cx="344" cy="181" r="7"/><circle cx="344" cy="212" r="7"/><circle cx="344" cy="243" r="7"/>
+                    </g>
+                    <circle class="hiw-net__output" cx="452" cy="134.5" r="9"/>
+                    <g class="hiw-net__labels" aria-hidden="true">
+                        <text x="88" y="31">I</text>
+                        <text x="88" y="62">W</text>
+                        <text x="88" y="93">S</text>
+                        <text x="88" y="124">n<tspan class="hiw-net__sub" dy="4">imp</tspan></text>
+                        <text x="88" y="155">n<tspan class="hiw-net__sub" dy="4">perv</tspan></text>
+                        <text x="88" y="186">d<tspan class="hiw-net__sub" dy="4">s,imp</tspan></text>
+                        <text x="88" y="217">d<tspan class="hiw-net__sub" dy="4">s,perv</tspan></text>
+                        <text x="88" y="248">z</text>
+                        <text class="hiw-net__output-label" x="470" y="140">V&#770;</text>
+                    </g>
+                    <g class="hiw-net__captions" aria-hidden="true">
+                        <text x="104" y="282">Inputs</text>
+                        <text x="224" y="282">Hidden 1</text>
+                        <text x="344" y="282">Hidden 2</text>
+                        <text x="452" y="282">Output</text>
+                    </g>
+                </svg>
+                <figcaption class="hiw-figure__caption">Architecture of the 8-8-8-1 neural network: fully connected topology across input, hidden, and output layers.</figcaption>
+            </figure>
+
+            <p class="hiw-prose">Network weights were trained via the Adam optimizer to minimize mean squared error (MSE) relative to reference SWMM simulation runs. The surrogate model assumes a fixed precipitation event and uniform 5 ha subcatchment areas, making predictions valid strictly within the training domain. Model fidelity is assessed through standard error metrics:</p>
+            <div class="hiw-equation" id="eq-18">
+                <div class="hiw-equation__body" data-cs-math="display">\begin{gathered} \mathrm{MAE} = \frac{1}{N} \sum_k \lvert \hat{V}_k - V_k \rvert, \qquad \mathrm{RMSE} = \sqrt{\frac{1}{N} \sum_k (\hat{V}_k - V_k)^2}, \\[0.5em] \mathrm{MAPE} = \frac{100\,\%}{N} \sum_k \left\lvert \frac{\hat{V}_k - V_k}{V_k} \right\rvert \end{gathered}</div>
+                <span class="hiw-equation__number">(18)</span>
+            </div>
+        {% endverbatim %}
+            <div class="hiw-actions">
+                <a class="btn btn-primary" href="{% url 'main:calculations' %}">Compare SWMM and the network</a>
+            </div>
+        </section>
+
+        {# ── 9. References ───────────────────────────────────────────── #}
+        <section class="hiw-section" id="references" aria-labelledby="references-title">
+            <p class="cs-eyebrow">References</p>
+            <h2 id="references-title">References</h2>
+            <ul class="hiw-references" role="list">
+                <li>Rossman, L. A., &amp; Huber, W. C. (2016). <cite>Storm Water Management Model Reference Manual, Volume I – Hydrology (Revised)</cite>. EPA/600/R-15/162A. U.S. Environmental Protection Agency.</li>
+                <li>Green, W. H., &amp; Ampt, G. A. (1911). Studies on soil physics, 1: The flow of air and water through soils. <cite>Journal of Agricultural Science</cite>, 4(1), 1–24.</li>
+                <li>Mein, R. G., &amp; Larson, C. L. (1973). Modeling infiltration during a steady rain. <cite>Water Resources Research</cite>, 9(2), 384–394.</li>
+                <li>Cash, J. R., &amp; Karp, A. H. (1990). A variable order Runge–Kutta method for initial value problems with rapidly varying right-hand sides. <cite>ACM Transactions on Mathematical Software</cite>, 16(3), 201–222.</li>
+                <li>McCuen, R. H., Johnson, P. A., &amp; Ragan, R. M. (1996). <cite>Highway Hydrology</cite>. Hydraulic Design Series No. 2, FHWA-SA-96-067. Federal Highway Administration.</li>
+                <li>ASCE (1992). <cite>Design and Construction of Urban Stormwater Management Systems</cite>. American Society of Civil Engineers.</li>
+            </ul>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_scripts %}
+<script src="{% static 'main/js/core/math.js' %}"></script>
+<script src="{% static 'main/js/model/runoff-model.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/svg.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/format.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/controls.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/reservoirs.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/hydrograph.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works/response.js' %}"></script>
+<script src="{% static 'main/js/pages/how_it_works.js' %}"></script>
+{% endblock %}

@@ -27,6 +27,34 @@ os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
 # ------------------------------------------------------------------
 
 
+@pytest.fixture(scope="session")
+def django_db_modify_db_settings(
+    django_db_modify_db_settings_parallel_suffix: None, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """
+    Run the end-to-end tests on a database file instead of the in-memory one.
+
+    An in-memory SQLite database is a single connection shared by the test and by
+    every thread of the live server. The pages send requests in parallel, and
+    queries that overlap on that connection now and then return nothing: a session
+    is "not found", the response clears its cookie and the test finds itself logged
+    out. With a file each thread opens its own connection.
+    """
+    from django.conf import settings
+
+    database = tmp_path_factory.mktemp("database") / "e2e.sqlite3"
+    settings.DATABASES["default"].setdefault("TEST", {})["NAME"] = str(database)
+
+
+@pytest.fixture(scope="session")
+def live_server(django_db_setup: None, live_server):
+    """
+    Start the live server only once the test database exists. Started earlier, it
+    would still see the in-memory name and hand its threads the test's connection.
+    """
+    return live_server
+
+
 def _generate_password() -> str:
     """Return a strong random password safe for Django validators."""
     return f"T!{uuid.uuid4().hex}"
