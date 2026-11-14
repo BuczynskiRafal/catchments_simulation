@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Calculations: SWMM vs ANN runoff{% endblock %}
+{% block title %}Calculations: SWMM vs ANN runoff · Catchment Simulation{% endblock %}
 
 {% block head_scripts %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
@@ -20,7 +20,7 @@
 <header class="cs-page-header">
     <p class="cs-eyebrow">Model comparison</p>
     <h1 class="cs-page-header__title">SWMM vs neural network runoff</h1>
-    <p class="cs-page-header__lead">Run your SWMM model and see how closely the neural network reproduces its runoff for every subcatchment.</p>
+    <p class="cs-page-header__lead">Compare subcatchment runoff computed by EPA SWMM against predictions from a feedforward neural network.</p>
 </header>
 
 <div class="cs-workbench">
@@ -44,19 +44,19 @@
                   data-cs-run-status="Running SWMM and the neural network"
                   data-cs-run-stages="Copy the model|Run SWMM|Read the report|Predict with the network">
                 {% csrf_token %}
-                <p class="cs-hint">SWMM runs the model, then the network predicts runoff from the same subcatchment properties.</p>
+                <p class="cs-hint">SWMM computes physical runoff, and the neural network predicts runoff from identical catchment features.</p>
                 <button type="submit" class="btn btn-primary w-100" id="run-calculations-button" data-authenticated="{{ request.user.is_authenticated }}">Run Calculations</button>
                 <div class="cs-progress" id="calculations-loading-state" hidden>
                     <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
                     <span class="cs-progress__elapsed" data-cs-elapsed aria-hidden="true"></span>
-                    <span role="status">Running SWMM and the neural network…</span>
+                    <span role="status">Executing SWMM simulation and neural network inference...</span>
                 </div>
             </form>
             <div class="calc-note" role="note" aria-labelledby="calc-validity-title">
                 <svg class="calc-note__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg>
                 <div>
                     <p class="calc-note__title" id="calc-validity-title">Validity range</p>
-                    <p class="calc-note__text">Trained on a small data set, the network is reliable only within a limited precipitation range and for subcatchments like those it learned from. <a href="#calc-network-title">The network diagram</a> shows, for each subcatchment, which inputs fall outside the training data.</p>
+                    <p class="calc-note__text">Trained on synthetic simulation data, the model is reliable within a limited precipitation range and for subcatchments sharing similar geometric features. <a href="#calc-network-title">The network diagram</a> flags any subcatchment inputs that fall outside the training data.</p>
                 </div>
             </div>
         </div>
@@ -71,7 +71,7 @@
         <section class="cs-card calc-model" aria-labelledby="calc-model-title">
             <p class="cs-eyebrow">About the model</p>
             <h2 class="cs-card__title calc-model__title" id="calc-model-title">Catchment Area Neural Network Model</h2>
-            <p class="calc-model__lead">A small fully connected network that estimates subcatchment runoff from the same properties SWMM uses, so it can be checked against a full SWMM run.</p>
+            <p class="calc-model__lead">A multilayer perceptron that estimates subcatchment runoff from geometric and hydrological properties, benchmarked against SWMM simulations.</p>
 
             {# calculations.js draws the diagram and the training-range list from #calculations-network and traces the rows of #calculations-chart-data. #}
             <section class="calc-net" aria-labelledby="calc-network-title">
@@ -84,7 +84,7 @@
                     </div>
                     {% endif %}
                 </div>
-                <p class="calc-net__intro">The eight inputs are standardised with the mean and spread of the training data, then pass through two hidden layers of eight neurons to one output neuron. Each neuron adds up its weighted inputs and a bias and applies ReLU: a negative sum switches it off. The network was trained with the Adam optimiser on mean squared error.</p>
+                <p class="calc-net__intro">Eight subcatchment features are standardized using training set statistics, then processed through two hidden layers of eight neurons to a single output neuron. Each neuron computes an affine combination with bias and applies ReLU activation. The network was trained using the Adam optimizer with mean squared error loss.</p>
 
                 {% if network %}
                 <p class="calc-net__notice" id="calc-network-notice" hidden>This comparison has too many subcatchments to trace individually.</p>
@@ -93,7 +93,7 @@
                         <svg class="calc-net__svg" id="calc-network-diagram" role="img" aria-label="Diagram of the neural network" xmlns="http://www.w3.org/2000/svg"></svg>
                     </div>
                     <figcaption class="calc-net__caption" data-calc-network-js hidden>
-                        <p class="calc-net__legend" id="calc-network-caption">Line weight shows the strength of each connection; teal adds to the next neuron, ochre subtracts.</p>
+                        <p class="calc-net__legend" id="calc-network-caption">Line thickness indicates connection weight magnitude; teal represents positive weights, ochre represents negative weights.</p>
                         {# Updates on pointer and keyboard; only the arrow keys announce, through #calc-network-announce. #}
                         <p class="calc-net__readout" id="calc-network-readout"></p>
                     </figcaption>
@@ -106,7 +106,7 @@
                     <h4 class="calc-range__title" id="calc-range-title">Inputs compared with the training data</h4>
                     <p class="calc-range__summary" id="calc-range-summary"></p>
                     <ul class="calc-range__list" id="calc-range-list" role="list"></ul>
-                    <p class="calc-range__note">Each bar spans the training data from two standard deviations below its mean to two above, cut at the values an input can physically take; the tick marks the mean.</p>
+                    <p class="calc-range__note">Each bar spans ±2 standard deviations around the training mean, bounded by physical parameter constraints; the tick marks the mean.</p>
                 </section>
                 {% else %}
                 <p class="calc-net__unavailable" id="calc-network-unavailable">The network diagram is not available right now.</p>
@@ -130,17 +130,13 @@
                             <dt>Depression storage, pervious (mm)</dt><dd>Depth of water held back on the pervious area.</dd>
                             <dt>Impervious area without storage (%)</dt><dd>Share of the impervious area without depression storage.</dd>
                         </dl>
-                        <p>The area is not among them: the network learned from subcatchments of 5 ha, so its prediction does not change with the area.</p>
+                        <p>Subcatchment area is excluded from the input vector: the network was trained exclusively on 5 ha catchments, so predictions represent runoff for standard 5 ha reference units.</p>
                     </div>
                 </details>
                 <details class="calc-details__item">
-                    <summary class="calc-details__title">Applications</summary>
+                    <summary class="calc-details__title">Surrogate modeling context</summary>
                     <div class="calc-details__body">
-                        <ul>
-                            <li><strong>Water resource management:</strong> predicting catchment runoff informs water allocation and conservation decisions.</li>
-                            <li><strong>Flood control:</strong> understanding what drives runoff helps locate areas at risk and design mitigation measures.</li>
-                            <li><strong>Environmental conservation:</strong> estimating the effect of land-use or climate changes supports conservation strategies.</li>
-                        </ul>
+                        <p>Neural network surrogates provide near-instantaneous runoff estimates for catchment screening and sensitivity sweeps, bypassing full numerical differential equation solvers when evaluating many design variations.</p>
                     </div>
                 </details>
             </div>

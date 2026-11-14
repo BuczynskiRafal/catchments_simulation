@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Catchment Simulation — SWMM subcatchment toolkit{% endblock %}
+{% block title %}Catchment Simulation: SWMM subcatchment toolkit{% endblock %}
 
 {% block head_scripts %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
@@ -28,8 +28,8 @@
         <p class="cs-eyebrow">Catchment Simulation · SWMM toolkit</p>
         <h1 class="home-hero__title" id="home-title">See how a subcatchment turns rain into runoff.</h1>
         <p class="home-hero__lead">
-            Change the slope, area, width or imperviousness of any subcatchment in your SWMM model,
-            rerun it and compare the runoff — here in the browser or from Python.
+            Run sensitivity sweeps on subcatchment slope, area, width, or imperviousness in SWMM
+            and inspect the runoff response directly in the browser or via Python.
         </p>
         <div class="home-hero__actions">
             <a class="btn btn-primary" href="{% url 'main:simulation' %}">Run a simulation</a>
@@ -62,7 +62,7 @@
                 </div>
                 <div class="cs-metric">
                     <dt class="cs-metric__label">Time to peak</dt>
-                    <dd class="cs-metric__value">{{ summary.time_to_peak|default:"—" }}</dd>
+                    <dd class="cs-metric__value">{{ summary.time_to_peak|default:"N/A" }}</dd>
                 </div>
                 <div class="cs-metric">
                     <dt class="cs-metric__label">Runoff volume</dt>
@@ -82,27 +82,27 @@
 <section class="home-tools" aria-labelledby="tools-title">
     <div class="cs-page-header">
         <p class="cs-eyebrow">Tools</p>
-        <h2 class="cs-page-header__title" id="tools-title">One model, three ways to read it</h2>
-        <p class="cs-page-header__lead">Upload a SWMM <span class="cs-mono">.inp</span> file once, or start from the sample data, and every tool works on the same subcatchments.</p>
+        <h2 class="cs-page-header__title" id="tools-title">Three analysis tools for one model</h2>
+        <p class="cs-page-header__lead">Upload a SWMM <span class="cs-mono">.inp</span> file or load the sample model to inspect subcatchments across each tool.</p>
     </div>
     <ul class="home-tools__list" role="list">
         <li class="cs-card home-tool">
             <svg class="home-tool__icon" aria-hidden="true" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 27h24M4 27V5"/><path d="M6 24c6-1 10-5 20-15"/><path d="M6 25c7-1 12-4 20-10" opacity=".6"/><path d="M6 26c8-1 14-3 20-5" opacity=".35"/></svg>
             <p class="cs-eyebrow">Simulation</p>
             <h3 class="home-tool__title"><a class="stretched-link" href="{% url 'main:simulation' %}">Parameter sweep</a></h3>
-            <p class="home-tool__text">Vary one subcatchment parameter over a range and see how runoff volume, peak rate and losses respond.</p>
+            <p class="home-tool__text">Sweep a subcatchment parameter across a range to observe changes in runoff volume, peak discharge, and water losses.</p>
         </li>
         <li class="cs-card home-tool">
             <svg class="home-tool__icon" aria-hidden="true" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 27h24"/><path d="M8 4v5M12 4v9M16 4v6M20 4v3"/><path d="M4 26c5 0 6-10 11-10s6 10 13 10"/></svg>
             <p class="cs-eyebrow">Timeseries</p>
             <h3 class="home-tool__title"><a class="stretched-link" href="{% url 'main:timeseries' %}">Hydrograph</a></h3>
-            <p class="home-tool__text">Follow rainfall and runoff minute by minute, read the time to peak and runoff volume, and export the series.</p>
+            <p class="home-tool__text">Track precipitation and runoff step by step, check peak timing and total volume, and export the timeseries.</p>
         </li>
         <li class="cs-card home-tool">
             <svg class="home-tool__icon" aria-hidden="true" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 27h24M4 27V5"/><path d="M6 25 27 6" stroke-dasharray="2 3"/><circle cx="11" cy="19" r="1.6"/><circle cx="16" cy="16" r="1.6"/><circle cx="20" cy="10" r="1.6"/><circle cx="24" cy="11" r="1.6"/></svg>
             <p class="cs-eyebrow">Calculations</p>
             <h3 class="home-tool__title"><a class="stretched-link" href="{% url 'main:calculations' %}">SWMM vs. neural network</a></h3>
-            <p class="home-tool__text">Compare the runoff SWMM computes for every subcatchment with the prediction of a trained neural network.</p>
+            <p class="home-tool__text">Compare SWMM runoff results for each subcatchment against predictions from a feedforward neural network.</p>
         </li>
     </ul>
 </section>
@@ -111,13 +111,13 @@
     <div class="cs-page-header">
         <p class="cs-eyebrow">How it works</p>
         <h2 class="cs-page-header__title" id="how-title">From rain to runoff</h2>
-        <p class="cs-page-header__lead">What SWMM computes for a subcatchment at every time step of a storm.</p>
+        <p class="cs-page-header__lead">How SWMM solves the surface water balance at each routing step.</p>
     </div>
     <ol class="cs-card home-how__steps" role="list">
         <li class="home-how__step">
             <svg class="home-how__icon" aria-hidden="true" focusable="false" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 4 8 9M17 4l-2 5M24 4l-2 5M13 12l-2 5M20 12l-2 5"/><path d="M4 23h11"/><path d="M18 23h10"/><path d="M5 27l2-2.5M9 27l2-2.5M13 27l2-2.5" opacity=".6"/></svg>
             <h3 class="home-how__title">Rain falls on the subcatchment</h3>
-            <p class="home-how__text">Pervious ground and impervious surfaces collect it.</p>
+            <p class="home-how__text">Rainfall is partitioned across pervious and impervious sub-areas.</p>
         </li>
         <li class="home-how__step">
             <svg class="home-how__icon" aria-hidden="true" focusable="false" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11h6l3 7h8l3-7h6"/><path d="M13 15h6" opacity=".6"/><path d="M16 21v6M13.5 24.5 16 27l2.5-2.5"/><path d="M23 6h6M27 4l2 2-2 2"/></svg>
@@ -128,7 +128,7 @@
         <li class="home-how__step">
             <svg class="home-how__icon" aria-hidden="true" focusable="false" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 27h24M4 27V5"/><path d="M5 26c4 0 5-15 9-15s6 13 13 14"/><path d="M5 26c5 0 7-9 11-9s5 8 11 8.5" opacity=".45"/></svg>
             <h3 class="home-how__title">SWMM adds it up into a hydrograph</h3>
-            <p class="home-how__text">Change one parameter and the curve changes with it.</p>
+            <p class="home-how__text">Routing across time steps generates the subcatchment runoff hydrograph.</p>
         </li>
     </ol>
     <div class="home-how__links">
@@ -162,9 +162,9 @@
         <section class="home-doc" id="overview" aria-labelledby="overview-title">
             <p class="cs-eyebrow">Documentation</p>
             <h2 id="overview-title">The Python package</h2>
-            <p>Everything this site does comes from the open-source <code>catchment_simulation</code> package, which drives the Storm Water Management Model (SWMM) through pyswmm and swmmio. Its <code>FeaturesSimulation</code> class holds all the methods.</p>
-            <p>The constructor takes two arguments: <code>subcatchment_id</code>, the identifier of the subcatchment you want to simulate, and <code>raw_file</code>, the path to the SWMM input file (a string or a <code>pathlib.Path</code>). It raises <code>FileNotFoundError</code> when the file does not exist and <code>SubcatchmentNotFoundError</code> when the subcatchment is not in the model. Every call cleans up after itself, so no <code>with</code> block is needed. <code>example_model_path()</code> returns the example model that ships with the package, the same one the examples below use.</p>
-            <p>Install it with pip:</p>
+            <p>The web interface is powered by the open-source <code>catchment_simulation</code> package, which automates EPA SWMM simulations through <code>pyswmm</code> and edits input files with <code>swmmio</code>. Its <code>FeaturesSimulation</code> class orchestrates model runs and parameter sweeps.</p>
+            <p>The constructor accepts two arguments: <code>subcatchment_id</code> (the subcatchment identifier) and <code>raw_file</code> (path to the SWMM <span class="cs-mono">.inp</span> file as a string or <code>pathlib.Path</code>). It raises <code>FileNotFoundError</code> if the model file is missing and <code>SubcatchmentNotFoundError</code> if the ID is not in the model. Temporary simulation files are cleaned up automatically after each run. Helper function <code>example_model_path()</code> provides the sample model used in the examples below.</p>
+            <p>Install via pip:</p>
             <div class="cs-code">
 <pre class="code-snippet"><code>pip install catchment-simulation</code></pre>
                 <button type="button" class="btn btn-sm btn-outline-secondary cs-code__copy">Copy<span class="visually-hidden"> the install command</span></button>
@@ -173,68 +173,68 @@
 
         <section class="home-doc" id="simulation-methods" aria-labelledby="simulation-methods-title">
             <h3 id="simulation-methods-title">Simulation methods</h3>
-            <p>Every method runs SWMM on a temporary copy of your model, so the original file is never changed and every call starts from it. Sweeps return one row per simulated value: the swept feature first, named as its column in the input file (for example <code>PercSlope</code> or <code>S-Imperv</code>), then the results of <code>calculate()</code>. Values outside a feature's physical range, such as a slope of 0, raise <code>InvalidParameterError</code> before any run, and a model SWMM cannot run raises <code>SimulationError</code> with the errors from its report.</p>
+            <p>Each simulation executes SWMM on a temporary copy of the input file, leaving the original model file unchanged. Sweep methods return a DataFrame with one row per value: the swept parameter column (such as <code>PercSlope</code> or <code>S-Imperv</code>) followed by the runoff summary statistics from <code>calculate()</code>. Values outside physically valid bounds raise <code>InvalidParameterError</code> prior to simulation, and engine errors raise <code>SimulationError</code> containing diagnostic output from the SWMM report.</p>
 
             <h4 class="home-methods__group">Model and single runs</h4>
             <dl class="home-methods">
                 <dt><code>calculate()</code></dt>
-                <dd>Runs the model once and returns summary statistics for the subcatchment as a dict: <code>runoff</code>, <code>infiltration</code>, <code>evaporation</code> and <code>runon</code> are total volumes (m³, or ft³ in US-unit models), <code>peak_runoff_rate</code> is in the model's <code>FLOW_UNITS</code> and <code>precipitation</code> is the total depth (mm or in).</dd>
+                <dd>Runs the model once and returns subcatchment summary statistics as a dict: total volumes (<code>runoff</code>, <code>infiltration</code>, <code>evaporation</code>, and <code>runon</code> in m³, or ft³ in US models), <code>peak_runoff_rate</code> in model flow units, and total <code>precipitation</code> depth (mm or in).</dd>
                 <dt><code>calculate_timeseries()</code></dt>
-                <dd>Runs one simulation and collects every time step. Returns a DataFrame with a <code>DatetimeIndex</code> and the columns <code>rainfall</code>, <code>runoff</code>, <code>infiltration_loss</code>, <code>evaporation_loss</code> and <code>runon</code>. Rainfall and infiltration loss are in mm/h (in/h in US-unit models), evaporation loss in mm/day (in/day), runoff and runon in the model's <code>FLOW_UNITS</code>.</dd>
+                <dd>Runs a single simulation and collects all routing timesteps. Returns a DataFrame with a <code>DatetimeIndex</code> containing <code>rainfall</code> and <code>infiltration_loss</code> (depth rates), <code>evaporation_loss</code>, plus <code>runoff</code> and <code>runon</code> in model flow units.</dd>
             </dl>
 
             <h4 class="home-methods__group">Parameter sweeps</h4>
             <dl class="home-methods">
                 <dt><code>simulate(feature, values)</code></dt>
-                <dd>Runs the model once for every value of a feature (<code>Area</code>, <code>PercImperv</code>, <code>Width</code>, <code>PercSlope</code>, <code>CurbLength</code>, <code>N-Imperv</code>, <code>N-Perv</code>, <code>S-Imperv</code>, <code>S-Perv</code> or <code>PctZero</code>) and returns the summary statistics of each run.</dd>
+                <dd>Runs the model for specified values of a parameter (<code>Area</code>, <code>PercImperv</code>, <code>Width</code>, <code>PercSlope</code>, <code>CurbLength</code>, <code>N-Imperv</code>, <code>N-Perv</code>, <code>S-Imperv</code>, <code>S-Perv</code>, or <code>PctZero</code>) and returns summary statistics for each run.</dd>
                 <dt><code>simulate_timeseries(feature, values)</code></dt>
-                <dd>Like <code>simulate</code>, but keeps the full timeseries of every run: returns a <code>dict[float, pd.DataFrame]</code> keyed by value.</dd>
+                <dd>Runs the model across specified values and returns the complete timeseries for each run as a <code>dict[float, pd.DataFrame]</code> keyed by value.</dd>
                 <dt><code>build_range(start, stop, step)</code></dt>
-                <dd>The values <code>start</code>, <code>start + step</code>, … up to <code>stop</code>, never past it. The range methods below use it.</dd>
+                <dd>Generates a sequence of values from <code>start</code> to <code>stop</code> spaced by <code>step</code>. Used by the range sweep methods below.</dd>
                 <dt><code>simulate_subcatchment(feature, start, stop, step)</code> · <code>simulate_subcatchment_timeseries(feature, start, stop, step)</code></dt>
-                <dd><code>simulate</code> and <code>simulate_timeseries</code> over <code>build_range(start, stop, step)</code>.</dd>
+                <dd>Combines <code>simulate</code> or <code>simulate_timeseries</code> with <code>build_range(start, stop, step)</code>.</dd>
                 <dt><code>simulate_area(start=1, stop=10, step=1)</code></dt>
-                <dd>Sweeps the subcatchment area.</dd>
+                <dd>Sweeps subcatchment area.</dd>
                 <dt><code>simulate_percent_impervious(start=0, stop=100, step=10)</code></dt>
-                <dd>Sweeps the percentage of impervious area.</dd>
+                <dd>Sweeps percentage of impervious area.</dd>
                 <dt><code>simulate_percent_slope(start=10, stop=100, step=10)</code></dt>
-                <dd>Sweeps the percent slope.</dd>
+                <dd>Sweeps percent slope.</dd>
                 <dt><code>simulate_width(start=10, stop=100, step=10)</code></dt>
-                <dd>Sweeps the characteristic width of the overland flow path.</dd>
+                <dd>Sweeps characteristic overland flow width.</dd>
                 <dt><code>simulate_curb_length(start=0, stop=100, step=10)</code></dt>
-                <dd>Sweeps the total curb length.</dd>
+                <dd>Sweeps curb length.</dd>
                 <dt><code>simulate_percent_zero_imperv(start=0, stop=100, step=10)</code></dt>
-                <dd>Sweeps the percentage of impervious area with no depression storage.</dd>
+                <dd>Sweeps percentage of impervious area without depression storage.</dd>
             </dl>
 
             <h4 class="home-methods__group">Literature values</h4>
             <dl class="home-methods">
                 <dt><code>simulate_manning_n(param)</code></dt>
-                <dd>Runs the subcatchment with Manning's n values from the literature (McCuen et al., 1996). Takes no range.</dd>
+                <dd>Simulates the subcatchment across typical Manning's n roughness values from McCuen et al. (1996).</dd>
                 <dt><code>simulate_n_imperv()</code> · <code>simulate_n_perv()</code></dt>
-                <dd>Manning's n for the impervious or the pervious area.</dd>
+                <dd>Sweeps Manning's n for impervious or pervious surfaces.</dd>
                 <dt><code>simulate_destore(param)</code></dt>
-                <dd>Runs the subcatchment with depression storage depths from the literature (ASCE, 1992), in millimetres or, for a US-unit model, inches. Takes no range.</dd>
+                <dd>Simulates the subcatchment across standard depression storage depths from ASCE (1992), in millimetres (or inches for US models).</dd>
                 <dt><code>simulate_s_imperv()</code> · <code>simulate_s_perv()</code></dt>
-                <dd>Depression storage depth for the impervious or the pervious area.</dd>
+                <dd>Sweeps depression storage depth for impervious or pervious surfaces.</dd>
             </dl>
         </section>
 
         <section class="home-doc" id="analysis-functions" aria-labelledby="analysis-functions-title">
             <h3 id="analysis-functions-title">Analysis functions</h3>
-            <p>The <code>catchment_simulation.analysis</code> module reads the DataFrame returned by <code>calculate_timeseries()</code>.</p>
+            <p>The <code>catchment_simulation.analysis</code> module extracts hydrological metrics from timeseries DataFrames returned by <code>calculate_timeseries()</code>.</p>
             <dl class="home-methods">
                 <dt><code>time_to_peak(timeseries, column="runoff", *, start=None)</code></dt>
-                <dd>Time from <code>start</code> (by default the first time step) to the peak value, as a <code>pd.Timedelta</code>.</dd>
+                <dd>Elapsed time from <code>start</code> (or the first timestep) to peak discharge as a <code>pd.Timedelta</code>.</dd>
                 <dt><code>runoff_volume(timeseries, column="runoff", start=None, end=None)</code></dt>
-                <dd>Total volume from integrating the flow rate over time (trapezoidal rule), optionally between <code>start</code> and <code>end</code>. The result is in flow units × seconds, so cubic metres for a model in CMS.</dd>
+                <dd>Total runoff volume obtained by trapezoidal numerical integration of discharge over time, optionally bounded by <code>start</code> and <code>end</code> timestamps. Returns cubic metres for CMS models (or cubic feet for CFS).</dd>
             </dl>
         </section>
 
         <section class="home-doc" id="examples" aria-labelledby="examples-title">
             <p class="cs-eyebrow">Examples</p>
             <h2 id="examples-title">Examples on the bundled model</h2>
-            <p>Each chart below comes from running the snippet next to it on the example model that ships with the package (<code>example_model_path()</code>, subcatchment <span class="cs-mono">S1</span>). Load the same model in any tool with <em>Try sample data</em>.</p>
+            <p>The charts below are generated by running each code snippet against the bundled example model (<code>example_model_path()</code>, subcatchment <span class="cs-mono">S1</span>). The same model can be loaded into any tool via <em>Try sample data</em>.</p>
 
             <article class="home-example" id="example-slope" aria-labelledby="example-slope-title">
                 <h3 id="example-slope-title">Sweep the slope</h3>
@@ -285,7 +285,7 @@ df = model.simulate_n_imperv()</code></pre>
 
             <article class="home-example" id="example-timeseries" aria-labelledby="example-timeseries-title">
                 <h3 id="example-timeseries-title">Collect a timeseries and its metrics</h3>
-                <p>This is how the storm at the top of the page was computed.</p>
+                <p>Computes the hydrograph and summary metrics displayed in the hero chart above.</p>
                 <div class="cs-code">
 <pre class="code-snippet"><code class="language-python">from catchment_simulation import (
     FeaturesSimulation,

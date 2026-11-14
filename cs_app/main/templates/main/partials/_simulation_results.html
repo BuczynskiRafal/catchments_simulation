@@ -65,7 +65,7 @@ existed render without the marker, the water balance and the link to the interac
                     <p class="sim-chart__fallback">The chart needs JavaScript. The table below lists the same volumes.</p>
                 </div>
             </div>
-            <p class="sim-chart-note">Each bar is one run: the rain that fell on the subcatchment, split into what ran off, what infiltrated, what evaporated and what was still on the surface when the simulation ended.</p>
+            <p class="sim-chart-note">Each bar represents one simulation run, partitioning total precipitation into surface runoff, infiltration, evaporation, and surface ponding.</p>
             <details class="sim-balance__data">
                 <summary class="sim-balance__summary" id="simulation-balance-table-title">Water balance table</summary>
                 <div class="cs-table-wrap" tabindex="0" role="region" aria-labelledby="simulation-balance-table-title">
@@ -150,7 +150,7 @@ existed render without the marker, the water balance and the link to the interac
         <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m6 16 4-5 3 3 6-8"/><circle cx="19" cy="6" r="1.2" fill="currentColor"/></svg>
         <h2 class="cs-empty-state__title">No results yet</h2>
         {% include 'main/partials/_workbench_checklist.html' with run_label="Run the simulation" run_next="Next: pick the parameter to vary and select Run Simulation." %}
-        <p class="cs-empty-state__text sim-empty__gives">A run gives key figures, a chart for every output, where the rain went and a table you can download.</p>
+        <p class="cs-empty-state__text sim-empty__gives">Simulation output includes key hydrological metrics, response charts, the water balance, and an exportable data table.</p>
     </div>
     {% endif %}
 </div>

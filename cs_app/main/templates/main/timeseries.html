@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static crispy_forms_tags %}
 
-{% block title %}Timeseries Analysis{% endblock %}
+{% block title %}Timeseries analysis · Catchment Simulation{% endblock %}
 
 {% block head_scripts %}
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"
@@ -19,7 +19,7 @@
 <header class="cs-page-header">
     <p class="cs-eyebrow">Hydrograph analysis</p>
     <h1 class="cs-page-header__title">Timeseries analysis</h1>
-    <p class="cs-page-header__lead">See how a subcatchment turns rainfall into runoff over time, or how its hydrograph shifts as you vary one parameter.</p>
+    <p class="cs-page-header__lead">Analyze continuous rainfall-runoff dynamics or compare hydrograph transformations across a parameter sweep.</p>
 </header>
 
 <div class="cs-workbench">
@@ -60,8 +60,8 @@
                         <label class="btn cs-segmented__option" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label>
                         {% endfor %}
                     </div>
-                    <p class="form-text ts-mode__hint" data-ts-mode-hint="single">Runs the model once and plots rainfall against runoff.</p>
-                    <p class="form-text ts-mode__hint" data-ts-mode-hint="sweep">Re-runs the model for each value of one parameter and overlays the hydrographs.</p>
+                    <p class="form-text ts-mode__hint" data-ts-mode-hint="single">Simulates a single storm event and plots hyetograph rainfall against the runoff hydrograph.</p>
+                    <p class="form-text ts-mode__hint" data-ts-mode-hint="sweep">Executes a parameter sweep and overlays the resulting runoff hydrographs.</p>
                     {% for error in form.mode.errors %}
                     <div class="invalid-feedback d-block">{{ error }}</div>
                     {% endfor %}
@@ -88,7 +88,7 @@
                 <div id="timeseries-loading-state" class="cs-progress" hidden>
                     <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
                     <span class="cs-progress__elapsed" data-cs-elapsed aria-hidden="true"></span>
-                    <span role="status">Running SWMM… a sweep runs it once per value, so it can take a while.</span>
+                    <span role="status">Executing SWMM timeseries simulation...</span>
                 </div>
             </form>
         </section>

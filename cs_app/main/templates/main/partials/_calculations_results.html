@@ -9,15 +9,15 @@
         <dl class="cs-metrics calc-metrics">
             <div class="cs-metric">
                 <dt class="cs-metric__label">Mean absolute error</dt>
-                <dd class="cs-metric__value">{{ metrics.mae|floatformat:2|default:"—" }}<span class="cs-metric__unit">{{ comparison.unit }}</span></dd>
+                <dd class="cs-metric__value">{{ metrics.mae|floatformat:2|default:"N/A" }}<span class="cs-metric__unit">{{ comparison.unit }}</span></dd>
             </div>
             <div class="cs-metric">
                 <dt class="cs-metric__label">Root mean square error</dt>
-                <dd class="cs-metric__value">{{ metrics.rmse|floatformat:2|default:"—" }}<span class="cs-metric__unit">{{ comparison.unit }}</span></dd>
+                <dd class="cs-metric__value">{{ metrics.rmse|floatformat:2|default:"N/A" }}<span class="cs-metric__unit">{{ comparison.unit }}</span></dd>
             </div>
             <div class="cs-metric">
                 <dt class="cs-metric__label">Mean absolute % error</dt>
-                <dd class="cs-metric__value">{{ metrics.mape|floatformat:1|default:"—" }}{% if metrics.mape is not None %}<span class="cs-metric__unit">%</span>{% endif %}</dd>
+                <dd class="cs-metric__value">{{ metrics.mape|floatformat:1|default:"N/A" }}{% if metrics.mape is not None %}<span class="cs-metric__unit">%</span>{% endif %}</dd>
                 {% if metrics.mape_excluded %}
                 <dd class="calc-metric__note">Excludes {{ metrics.mape_excluded }} subcatchment{{ metrics.mape_excluded|pluralize }} with zero SWMM runoff</dd>
                 {% endif %}
@@ -38,7 +38,7 @@
                 <div class="cs-chart-card__body">
                     <div id="calculations-parity-chart" class="calc-chart calc-chart--parity" aria-describedby="calculations-parity-caption"></div>
                     <p class="calc-chart__caption" id="calculations-parity-caption">
-                        One point per subcatchment. Points on the dashed 1:1 line match SWMM exactly; points above it mean the network predicts more runoff.
+                        Parity plot comparing SWMM against neural network predictions. Points on the dashed 1:1 line indicate exact agreement; points above indicate overestimation by the network.
                     </p>
                 </div>
             </section>
@@ -49,7 +49,7 @@
                 <div class="cs-chart-card__body">
                     <div id="calculations-bars-chart" class="calc-chart calc-chart--bars" aria-describedby="calculations-bars-caption"></div>
                     <p class="calc-chart__caption" id="calculations-bars-caption">
-                        SWMM and ANN runoff side by side; exact values are in the table below.
+                        Side-by-side runoff comparison across subcatchments. Numerical differences are tabulated below.
                     </p>
                 </div>
             </section>
@@ -79,10 +79,10 @@
                         {% for row in comparison.rows %}
                         <tr>
                             <th scope="row">{{ row.Name }}</th>
-                            <td class="cs-num" data-sort-value="{{ row.SWMM_Runoff|default_if_none:''|unlocalize }}">{{ row.SWMM_Runoff|floatformat:2|default:"—" }}</td>
-                            <td class="cs-num" data-sort-value="{{ row.ANN_Runoff|default_if_none:''|unlocalize }}">{{ row.ANN_Runoff|floatformat:2|default:"—" }}</td>
-                            <td class="cs-num" data-sort-value="{{ row.Difference|default_if_none:''|unlocalize }}">{{ row.Difference|floatformat:2|default:"—" }}</td>
-                            <td class="cs-num" data-sort-value="{{ row.Difference_pct|default_if_none:''|unlocalize }}">{{ row.Difference_pct|floatformat:1|default:"—" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.SWMM_Runoff|default_if_none:''|unlocalize }}">{{ row.SWMM_Runoff|floatformat:2|default:"N/A" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.ANN_Runoff|default_if_none:''|unlocalize }}">{{ row.ANN_Runoff|floatformat:2|default:"N/A" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.Difference|default_if_none:''|unlocalize }}">{{ row.Difference|floatformat:2|default:"N/A" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.Difference_pct|default_if_none:''|unlocalize }}">{{ row.Difference_pct|floatformat:1|default:"N/A" }}</td>
                             {% if comparison.rows.0.inputs %}
                             <td class="calc-table__trace" data-calc-trace-col data-calc-requires-js hidden>
                                 {% if row.inputs %}<button type="button" class="btn btn-sm btn-outline-primary calc-trace-button" data-calc-trace="{{ forloop.counter0 }}">Trace<span class="visually-hidden"> {{ row.Name }} through the network</span></button>{% endif %}
@@ -94,7 +94,7 @@
                 </table>
             </div>
             {# Outside the scroll wrapper, so it wraps to the column width instead of the table's. #}
-            <p class="calc-table__note" id="calculations-table-note">Difference = ANN − SWMM: a positive value means the network predicts more runoff than SWMM.</p>
+            <p class="calc-table__note" id="calculations-table-note">Difference = ANN − SWMM. Positive values indicate neural network overestimation relative to SWMM.</p>
         </div>
         {{ comparison.rows|json_script:"calculations-chart-data" }}
     </div>
@@ -102,7 +102,7 @@
     <div class="cs-empty-state">
         <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 17 19 5" stroke-dasharray="2 2.5"/><circle cx="9" cy="13" r="1.3"/><circle cx="13" cy="10.5" r="1.3"/><circle cx="16" cy="6" r="1.3"/><circle cx="11.5" cy="15" r="1.3"/></svg>
         <h2 class="cs-empty-state__title">No comparison yet</h2>
-        <p class="cs-empty-state__text">Load a model and run the calculations to see error metrics, charts and a per-subcatchment table.</p>
+        <p class="cs-empty-state__text">Load a model and run calculations to inspect error metrics, parity charts, and comparative runoff tables.</p>
     </div>
     {% endif %}
 </div>

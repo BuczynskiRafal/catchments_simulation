@@ -20,7 +20,7 @@
 <header class="cs-page-header hiw-header">
     <p class="cs-eyebrow">How it works</p>
     <h1 class="cs-page-header__title">How the simulation works</h1>
-    <p class="cs-page-header__lead">Every result on this site comes from the EPA Storm Water Management Model. This page shows the equations it solves for a subcatchment, runs them live in your browser, and explains what a parameter sweep and the neural network do with them.</p>
+    <p class="cs-page-header__lead">Every simulation result derives from the EPA Storm Water Management Model (SWMM). This page presents the governing hydrological equations for subcatchments, provides an in-browser numerical solver, and explains the computational mechanics of parameter sweeps and surrogate modeling.</p>
 </header>
 
 <div class="hiw-docs">
@@ -49,40 +49,40 @@
                 <li class="hiw-pipeline__step">
                     <span class="cs-step__num" aria-hidden="true">1</span>
                     <h3 class="hiw-pipeline__title">Load the model</h3>
-                    <p class="hiw-pipeline__text">Your <span class="cs-mono">.inp</span> file is stored for your session. It is never changed.</p>
+                    <p class="hiw-pipeline__text">The uploaded <span class="cs-mono">.inp</span> file is stored for your active session and remains immutable.</p>
                 </li>
                 <li class="hiw-pipeline__loop">
                     <p class="hiw-pipeline__loop-label">
                         <svg class="hiw-pipeline__loop-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 9a6 6 0 1 0-1.8 4.3"/><path d="M16.5 4.5V9H12"/></svg>
-                        Once for every value
+                        Iterated across each parameter value
                     </p>
                     <ol class="hiw-pipeline__inner" role="list">
                         <li class="hiw-pipeline__step">
                             <span class="cs-step__num" aria-hidden="true">2</span>
                             <h3 class="hiw-pipeline__title">Write one value</h3>
-                            <p class="hiw-pipeline__text">swmmio writes the next value of the chosen parameter into a temporary copy of the model.</p>
+                            <p class="hiw-pipeline__text">swmmio writes the perturbed parameter value into an isolated working copy of the model file.</p>
                         </li>
                         <li class="hiw-pipeline__step">
                             <span class="cs-step__num" aria-hidden="true">3</span>
                             <h3 class="hiw-pipeline__title">Run SWMM</h3>
-                            <p class="hiw-pipeline__text">pyswmm runs the SWMM engine on that copy and reads the subcatchment's runoff, infiltration and evaporation.</p>
+                            <p class="hiw-pipeline__text">pyswmm executes the SWMM computational engine on that copy, extracting subcatchment runoff, infiltration, and evaporation.</p>
                         </li>
                     </ol>
                 </li>
                 <li class="hiw-pipeline__step">
                     <span class="cs-step__num" aria-hidden="true">4</span>
                     <h3 class="hiw-pipeline__title">Collect and compare</h3>
-                    <p class="hiw-pipeline__text">One row per run goes into the charts, the table and the downloads.</p>
+                    <p class="hiw-pipeline__text">Aggregated metrics from each run populate the interactive charts, data table, and export files.</p>
                 </li>
             </ol>
-            <p class="hiw-prose">A timeseries analysis keeps every time step of each run instead of its totals; the comparison runs the model once and asks the neural network for the same runoff.</p>
+            <p class="hiw-prose">The timeseries tool records full temporal hydrographs rather than aggregate totals, while the calculations view evaluates subcatchment runoff against neural network inferences.</p>
         </section>
 
         {# ── 2. Runoff model ─────────────────────────────────────────── #}
         <section class="hiw-section" id="model" aria-labelledby="model-title">
             <p class="cs-eyebrow">Runoff model</p>
             <h2 id="model-title">The runoff model: a nonlinear reservoir</h2>
-            <p class="hiw-prose">SWMM treats a subcatchment as a shallow, sloped surface that stores rain and releases it. It splits the surface into up to three sub-areas — pervious ground, impervious surface with depression storage and impervious surface without it — and follows the depth of water ponded on each of them.</p>
+            <p class="hiw-prose">SWMM conceptualizes each subcatchment as a sloped reservoir receiving precipitation and generating outflow. The surface is partitioned into three distinct sub-areas: pervious ground, impervious area with depression storage, and impervious area without depression storage. The model tracks the ponded water depth on each zone independently.</p>
 
             <figure class="hiw-figure hiw-schematic">
                 <svg class="hiw-schematic__svg" viewBox="0 0 480 276" role="img" aria-labelledby="schematic-title schematic-desc">
@@ -148,7 +148,7 @@
                     <path class="hiw-schematic__dim" d="M22 102 74 70" marker-start="url(#schematic-tick)" marker-end="url(#schematic-tick)"/>
                     <text class="hiw-schematic__symbol" x="20" y="80">W</text>
                 </svg>
-                <figcaption class="hiw-figure__caption">One sub-area as a reservoir: rain <span data-cs-math>i</span> fills it, evaporation <span data-cs-math>e</span> and infiltration <span data-cs-math>f</span> drain it, and the water above the depression storage <span data-cs-math>d_s</span> leaves as runoff <span data-cs-math>q</span> across the width <span class="hiw-nobreak"><span data-cs-math>W</span>.</span> Depths are exaggerated.</figcaption>
+                <figcaption class="hiw-figure__caption">Sub-area reservoir dynamics: precipitation <span data-cs-math>i</span> enters the surface, evaporation <span data-cs-math>e</span> and infiltration <span data-cs-math>f</span> deplete stored water, and ponding above depression storage <span data-cs-math>d_s</span> discharges as overland runoff <span data-cs-math>q</span> across width <span class="hiw-nobreak"><span data-cs-math>W</span>.</span> Vertical scale is exaggerated.</figcaption>
             </figure>
 
             <p class="hiw-prose">Water balance of a sub-area:</p>
@@ -158,28 +158,28 @@
                 <span class="hiw-equation__number">(1)</span>
             </div>
             {% endverbatim %}
-            <p class="hiw-prose">Runoff starts once the depth exceeds the depression storage. SWMM then treats the sheet of water as flow in a very wide channel and applies Manning's equation:</p>
+            <p class="hiw-prose">Overland runoff initiates when ponded depth exceeds depression storage. SWMM models sheet flow as uniform open-channel flow in a wide rectangular channel governed by Manning's equation:</p>
             {% verbatim %}
             <div class="hiw-equation" id="eq-2">
                 <div class="hiw-equation__body" data-cs-math="display">Q = \frac{1}{n}\, W\, (d - d_s)^{5/3}\, S^{1/2}</div>
                 <span class="hiw-equation__number">(2)</span>
             </div>
             {% endverbatim %}
-            <p class="hiw-prose">Per unit of area this is</p>
+            <p class="hiw-prose">Expressed per unit surface area:</p>
             {% verbatim %}
             <div class="hiw-equation" id="eq-3">
                 <div class="hiw-equation__body" data-cs-math="display">q = \frac{Q}{A} = \alpha\,(d - d_s)^{5/3}, \qquad \alpha = \frac{W\,S^{1/2}}{A\,n}</div>
                 <span class="hiw-equation__number">(3)</span>
             </div>
             {% endverbatim %}
-            <p class="hiw-prose">so the depth follows one ordinary differential equation — a nonlinear reservoir: the fuller it is, the faster it drains.</p>
+            <p class="hiw-prose">This yields an ordinary differential equation representing a nonlinear reservoir where discharge rate increases nonlinearly with ponded depth:</p>
             {% verbatim %}
             <div class="hiw-equation" id="eq-4">
                 <div class="hiw-equation__body" data-cs-math="display">\frac{\mathrm{d}d}{\mathrm{d}t} = i - e - f - \alpha\,(d - d_s)^{5/3}</div>
                 <span class="hiw-equation__number">(4)</span>
             </div>
             {% endverbatim %}
-            <p class="hiw-prose">The three sub-areas share the rain but not the losses:</p>
+            <p class="hiw-prose">Precipitation applies uniformly across all three sub-areas, while hydrologic abstractions differ:</p>
             {% verbatim %}
             <div class="hiw-equation" id="eq-5">
                 <div class="hiw-equation__body" data-cs-math="display">A_{\mathrm{perv}} = (1 - I)\,A, \qquad A_{\mathrm{imp}} = I\,(1 - z)\,A, \qquad A_{0} = I\,z\,A</div>
@@ -189,8 +189,8 @@
                 <div class="hiw-equation__body" data-cs-math="display">Q(t) = \sum_k q_k(t)\,A_k</div>
                 <span class="hiw-equation__number">(6)</span>
             </div>
-            <p class="hiw-prose">Only the pervious sub-area infiltrates <span class="hiw-nobreak">(<span data-cs-math>f = 0</span></span> elsewhere), and <span data-cs-math>A_0</span> has no depression storage <span class="hiw-nobreak"><span data-cs-math>(d_s = 0)</span>,</span> so it runs off from the first drop. Both impervious sub-areas use the roughness&nbsp;<span data-cs-math>n_{\mathrm{imp}}</span> and the whole impervious area <span data-cs-math>I\,A</span> in <span class="hiw-nobreak"><span data-cs-math>\alpha</span>;</span> the pervious one uses <span data-cs-math>n_{\mathrm{perv}}</span> and <span class="hiw-nobreak"><span data-cs-math>(1 - I)\,A</span>.</span></p>
-            <p class="hiw-note">Equations are written in SI units; in US customary units Manning's equation carries the factor 1.49. <span data-cs-math>S</span> is the slope as a fraction (<span class="cs-mono">PercSlope</span> / 100).</p>
+            <p class="hiw-prose">Infiltration occurs exclusively on the pervious sub-area (<span data-cs-math>f = 0</span> on impervious surfaces). Sub-area <span data-cs-math>A_0</span> possesses zero depression storage (<span data-cs-math>d_s = 0</span>), generating immediate runoff from rainfall onset. Both impervious sub-areas utilize roughness <span data-cs-math>n_{\mathrm{imp}}</span> and total impervious area <span data-cs-math>I\,A</span> within coefficient <span data-cs-math>\alpha</span>; the pervious sub-area utilizes <span data-cs-math>n_{\mathrm{perv}}</span> and area <span data-cs-math>(1 - I)\,A</span>.</p>
+            <p class="hiw-note">Formulations are presented in SI units (in US customary units, Manning's equation includes the 1.49 conversion factor). Slope <span data-cs-math>S</span> is expressed as a dimensionless gradient (<span class="cs-mono">PercSlope</span> / 100).</p>
 
             <h3 class="hiw-subtitle" id="symbols-title">Symbols</h3>
             <div class="hiw-table-wrap" data-hiw-scroll>
@@ -204,20 +204,20 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr><th scope="row"><span data-cs-math>d</span></th><td>Depth of water ponded on a sub-area</td><td><span data-cs-math>\mathrm{m}</span></td><td>—</td></tr>
-                        <tr><th scope="row"><span data-cs-math>d_s</span></th><td>Depression storage: the depth held back before runoff starts</td><td><span data-cs-math>\mathrm{m}</span></td><td><span class="cs-mono">S-Imperv</span>, <span class="cs-mono">S-Perv</span> (mm)</td></tr>
-                        <tr><th scope="row"><span data-cs-math>i</span></th><td>Rainfall intensity</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>—</td></tr>
-                        <tr><th scope="row"><span data-cs-math>e</span></th><td>Evaporation rate</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>—</td></tr>
-                        <tr><th scope="row"><span data-cs-math>f</span></th><td>Infiltration rate</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>—</td></tr>
-                        <tr><th scope="row"><span data-cs-math>q</span></th><td>Runoff rate per unit of area</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>—</td></tr>
-                        <tr><th scope="row"><span data-cs-math>Q</span></th><td>Runoff rate</td><td><span data-cs-math>\mathrm{m^3/s}</span></td><td>—</td></tr>
-                        <tr><th scope="row"><span data-cs-math>W</span></th><td>Characteristic width of the overland flow</td><td><span data-cs-math>\mathrm{m}</span></td><td><span class="cs-mono">Width</span> (m)</td></tr>
-                        <tr><th scope="row"><span data-cs-math>S</span></th><td>Average slope of the surface</td><td><span data-cs-math>\mathrm{m/m}</span></td><td><span class="cs-mono">PercSlope</span> (%)</td></tr>
-                        <tr><th scope="row"><span data-cs-math>A</span></th><td>Area of the subcatchment</td><td><span data-cs-math>\mathrm{m^2}</span></td><td><span class="cs-mono">Area</span> (ha)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>d</span></th><td>Depth of water ponded on a sub-area</td><td><span data-cs-math>\mathrm{m}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>d_s</span></th><td>Depression storage: depth retained prior to runoff initiation</td><td><span data-cs-math>\mathrm{m}</span></td><td><span class="cs-mono">S-Imperv</span>, <span class="cs-mono">S-Perv</span> (mm)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>i</span></th><td>Rainfall intensity</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>e</span></th><td>Evaporation rate</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>f</span></th><td>Infiltration rate</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>q</span></th><td>Runoff rate per unit area</td><td><span data-cs-math>\mathrm{m/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>Q</span></th><td>Volumetric runoff rate</td><td><span data-cs-math>\mathrm{m^3/s}</span></td><td>N/A</td></tr>
+                        <tr><th scope="row"><span data-cs-math>W</span></th><td>Characteristic overland flow width</td><td><span data-cs-math>\mathrm{m}</span></td><td><span class="cs-mono">Width</span> (m)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>S</span></th><td>Average surface slope</td><td><span data-cs-math>\mathrm{m/m}</span></td><td><span class="cs-mono">PercSlope</span> (%)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>A</span></th><td>Subcatchment surface area</td><td><span data-cs-math>\mathrm{m^2}</span></td><td><span class="cs-mono">Area</span> (ha)</td></tr>
                         <tr><th scope="row"><span data-cs-math>n</span></th><td>Manning's roughness coefficient</td><td><span data-cs-math>\mathrm{s/m^{1/3}}</span></td><td><span class="cs-mono">N-Imperv</span>, <span class="cs-mono">N-Perv</span></td></tr>
-                        <tr><th scope="row"><span data-cs-math>I</span></th><td>Impervious fraction of the area</td><td>—</td><td><span class="cs-mono">PercImperv</span> (%)</td></tr>
-                        <tr><th scope="row"><span data-cs-math>z</span></th><td>Fraction of the impervious area without depression storage</td><td>—</td><td><span class="cs-mono">PctZero</span> (%)</td></tr>
-                        <tr><th scope="row"><span data-cs-math>\alpha</span></th><td>Outflow coefficient of a sub-area</td><td><span data-cs-math>\mathrm{m^{-2/3}/s}</span></td><td>—</td></tr>
+                        <tr><th scope="row"><span data-cs-math>I</span></th><td>Impervious area fraction</td><td>[-]</td><td><span class="cs-mono">PercImperv</span> (%)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>z</span></th><td>Fraction of impervious area without depression storage</td><td>[-]</td><td><span class="cs-mono">PctZero</span> (%)</td></tr>
+                        <tr><th scope="row"><span data-cs-math>\alpha</span></th><td>Overland flow routing coefficient</td><td><span data-cs-math>\mathrm{m^{-2/3}/s}</span></td><td>N/A</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -228,10 +228,10 @@
         <section class="hiw-section" id="lab" aria-labelledby="lab-title">
             <p class="cs-eyebrow">Interactive model</p>
             <h2 id="lab-title">Try it: the interactive model</h2>
-            <p class="hiw-prose">This is the model above, solved in your browser: the same equations and the same solution procedure as the SWMM engine, for one subcatchment under a design storm. Move a slider and watch the three reservoirs and the hydrograph respond. It starts from subcatchment <span class="cs-mono">S1</span> of the example model.</p>
+            <p class="hiw-prose">An in-browser implementation of the governing SWMM equations, executing the fifth-order Runge-Kutta Cash-Karp solver in real time for a single subcatchment under synthetic design storms. Adjusting parameter sliders dynamically updates storage states across all three sub-areas and recalculates the resulting outflow hydrograph. Baseline parameters correspond to subcatchment <span class="cs-mono">S1</span> of the example model.</p>
 
             <noscript>
-                <p class="cs-hint cs-hint--note hiw-lab__noscript">The interactive model runs in your browser and needs JavaScript. Everything else on this page reads without it.</p>
+                <p class="cs-hint cs-hint--note hiw-lab__noscript">The interactive numerical solver runs client-side and needs JavaScript. Theoretical equations and documentation remain accessible without scripts.</p>
             </noscript>
 
             <div class="hiw-lab" id="hiw-lab" hidden>
@@ -320,7 +320,7 @@
 
                     <div class="hiw-lab__reset">
                         <button type="button" class="btn btn-outline-secondary btn-sm" id="lab-reset">Reset to starting values</button>
-                        <p class="hiw-lab__reset-hint" id="lab-start-note">The tick on each slider marks its starting value.</p>
+                        <p class="hiw-lab__reset-hint" id="lab-start-note">Tick marks indicate baseline parameter values.</p>
                     </div>
                     </div>
                 </div>
@@ -329,7 +329,7 @@
                     <figure class="hiw-panel hiw-reservoirs">
                         <figcaption class="hiw-panel__header">
                             <h3 class="hiw-panel__title">The three sub-areas</h3>
-                            <p class="hiw-panel__meta">Depths on a square-root scale</p>
+                            <p class="hiw-panel__meta">Storage depths displayed on a square-root scale</p>
                         </figcaption>
                         <div class="hiw-reservoirs__canvas" id="lab-reservoirs" role="img" aria-label="The three sub-areas"></div>
                         <div class="hiw-time">
@@ -359,7 +359,7 @@
                             </ul>
                         </figcaption>
                         <div class="hiw-hydrograph" id="lab-hydrograph" role="img" aria-label="Hydrograph"></div>
-                        <p class="hiw-panel__hint" id="lab-hydrograph-hint">Drag across the chart, or use the time slider above it, to move through the storm.</p>
+                        <p class="hiw-panel__hint" id="lab-hydrograph-hint">Drag horizontally across the chart or adjust the time slider to inspect hydrologic conditions throughout the event.</p>
                     </figure>
                 </div>
 
@@ -409,7 +409,7 @@
                 <section class="hiw-lab__sweep hiw-sweep" aria-labelledby="lab-sweep-title">
                     <div class="hiw-sweep__controls">
                         <h3 class="hiw-sweep__title" id="lab-sweep-title">See a sweep</h3>
-                        <p class="hiw-sweep__lead">Run the model once for each of nine values of one parameter, spread over its slider.</p>
+                        <p class="hiw-sweep__lead">Execute nine sequential simulations across the parameter range while holding other inputs constant.</p>
                         <label class="form-label" for="lab-sweep-parameter">Parameter</label>
                         <select class="form-select" id="lab-sweep-parameter">
                             {% for guide in guides %}{% if guide.lab_key %}
@@ -451,9 +451,9 @@
                     </p>
                 </div>
             </div>
-            <p class="hiw-note hiw-lab__footnote">SI units. The interactive model covers one subcatchment draining to its outlet, without snow, groundwater or LID controls.</p>
+            <p class="hiw-note hiw-lab__footnote">Calculations in SI units. The interactive model simulates an isolated subcatchment discharging to an outfall, excluding snowpack, groundwater interaction, and LID controls.</p>
             <template id="lab-sweep-done">
-                <p class="hiw-sweep__done">This is a parameter sweep: one run per value, everything else unchanged. The <a href="{% url 'main:simulation' %}">Simulation tool</a> does the same with the SWMM engine on your own model.</p>
+                <p class="hiw-sweep__done">Parameter sweep complete: each run evaluates one perturbed value with all other parameters fixed. The <a href="{% url 'main:simulation' %}">Simulation tool</a> executes this workflow directly with the full EPA SWMM engine on custom models.</p>
             </template>
         </section>
 
@@ -461,7 +461,7 @@
         <section class="hiw-section" id="parameters" aria-labelledby="parameters-title">
             <p class="cs-eyebrow">Parameters</p>
             <h2 id="parameters-title">What each parameter does</h2>
-            <p class="hiw-prose">Each sweep in the tools changes one of these columns of the input file and leaves the rest of the model as it is. The interactive model above can vary all of them except the curb length, which does not enter the runoff equations.</p>
+            <p class="hiw-prose">A parameter sweep systematically perturbs a single attribute in the SWMM input file while holding remaining model parameters fixed. The interactive model above simulates all parameters except curb length, which is solely reserved for water quality and pollutant wash-off.</p>
             <div class="hiw-params">
                 {% for guide in guides %}
                 <article class="hiw-param" id="{{ guide.anchor }}" aria-labelledby="{{ guide.anchor }}-title">
@@ -490,17 +490,17 @@
         <section class="hiw-section" id="infiltration" aria-labelledby="infiltration-title">
             <p class="cs-eyebrow">Infiltration</p>
             <h2 id="infiltration-title">Infiltration</h2>
-            <p class="hiw-prose">On the pervious sub-area part of the water infiltrates into the soil. The example model uses the Modified Green–Ampt method; SWMM also offers Horton and Curve Number infiltration, and the tools run whichever method your model names in its <span class="cs-mono">INFILTRATION</span> option.</p>
+            <p class="hiw-prose">Precipitation falling on the pervious sub-area infiltrates into the unsaturated soil zone. The baseline example model applies the Modified Green-Ampt infiltration method; SWMM also supports Horton and SCS Curve Number models as specified in the <span class="cs-mono">INFILTRATION</span> section of the input file.</p>
             <div class="hiw-equation" id="eq-7">
                 <div class="hiw-equation__body" data-cs-math="display">f = K_s \left( 1 + \frac{(\psi + d)\,\theta_d}{F} \right)</div>
                 <span class="hiw-equation__number">(7)</span>
             </div>
-            <p class="hiw-prose"><span data-cs-math>K_s</span> is the saturated hydraulic conductivity, <span data-cs-math>\psi</span> the suction head at the wetting front, <span data-cs-math>\theta_d</span> the initial moisture deficit, <span data-cs-math>F</span> the infiltration accumulated so far and <span data-cs-math>d</span> the ponded depth. Until the surface layer saturates, everything that arrives infiltrates. For rain heavier than <span data-cs-math>K_s</span> that happens once <span data-cs-math>F</span> reaches</p>
+            <p class="hiw-prose"><span data-cs-math>K_s</span> is saturated hydraulic conductivity, <span data-cs-math>\psi</span> is suction head at the wetting front, <span data-cs-math>\theta_d</span> is initial moisture deficit, <span data-cs-math>F</span> is cumulative infiltration volume, and <span data-cs-math>d</span> is ponded surface depth. Prior to upper soil layer saturation, potential infiltration capacity exceeds precipitation, so all incoming rainfall infiltrates. When rainfall intensity exceeds hydraulic conductivity (<span data-cs-math>i > K_s</span>), surface saturation occurs once cumulative infiltration reaches:</p>
             <div class="hiw-equation" id="eq-8">
                 <div class="hiw-equation__body" data-cs-math="display">F_s = \frac{K_s\,(\psi + d)\,\theta_d}{i - K_s}</div>
                 <span class="hiw-equation__number">(8)</span>
             </div>
-            <p class="hiw-prose">From then on SWMM advances <span data-cs-math>F</span> over each time step <span data-cs-math>\Delta t</span> with the integrated form of (7), solved by Newton's method, and takes <span class="hiw-nobreak"><span data-cs-math>f = (F_2 - F_1) / \Delta t</span>:</span></p>
+            <p class="hiw-prose">From saturation onset, SWMM advances cumulative infiltration <span data-cs-math>F</span> over each time step <span data-cs-math>\Delta t</span> using the integrated formulation of equation (7) solved via Newton-Raphson iteration, yielding infiltration rate <span class="hiw-nobreak"><span data-cs-math>f = (F_2 - F_1) / \Delta t</span>:</span></p>
             <div class="hiw-equation" id="eq-9">
                 <div class="hiw-equation__body" data-cs-math="display">F_2 - F_1 - c\,\ln\frac{F_2 + c}{F_1 + c} = K_s\,\Delta t, \qquad c = (\psi + d)\,\theta_d</div>
                 <span class="hiw-equation__number">(9)</span>
@@ -510,33 +510,33 @@
         <section class="hiw-section" id="numerics" aria-labelledby="numerics-title">
             <p class="cs-eyebrow">Numerical solution</p>
             <h2 id="numerics-title">How the equations are solved</h2>
-            <p class="hiw-prose">Equation (4) has no closed-form solution. Over each runoff time step (<span class="cs-mono">WET_STEP</span> while it rains or water is ponded, <span class="cs-mono">DRY_STEP</span> otherwise) SWMM takes evaporation and infiltration from the available water, fills the depression storage, and then advances the depth with a fifth-order Runge–Kutta method (Cash–Karp) that adapts its internal step to keep the error below <span class="hiw-nobreak"><span data-cs-math>10^{-4}</span>.</span> The runoff rate of the step is <span data-cs-math>\alpha\,(d - d_s)^{5/3}</span> at its end.</p>
+            <p class="hiw-prose">Equation (4) has no closed-form solution. Across each hydrologic time step (<span class="cs-mono">WET_STEP</span> during precipitation or active ponding, <span class="cs-mono">DRY_STEP</span> during dry periods), SWMM evaluates evaporation and infiltration abstractions, satisfies depression storage thresholds, and integrates depth using a fifth-order Cash-Karp adaptive Runge-Kutta scheme with a local error tolerance of <span class="hiw-nobreak"><span data-cs-math>10^{-4}</span>.</span> Instantaneous runoff rate at step completion is computed as <span data-cs-math>\alpha\,(d - d_s)^{5/3}</span>.</p>
             <div class="hiw-equation" id="eq-10">
                 <div class="hiw-equation__body" data-cs-math="display">d(t + \Delta t) = d(t) + \int_{t}^{t + \Delta t} \left[\, i - e - f - \alpha\,(d - d_s)^{5/3} \right] \mathrm{d}\tau</div>
                 <span class="hiw-equation__number">(10)</span>
             </div>
-            <p class="hiw-prose">The interactive model above follows the same procedure step by step. With the example model's settings it reproduces the engine's runoff volume, peak rate and infiltration to within 0.02&nbsp;%; the test suite checks this against SWMM itself.</p>
+            <p class="hiw-prose">The in-browser interactive simulator executes this identical numerical integration procedure. Benchmarked against the EPA SWMM computational engine on the baseline model, numerical agreement for cumulative runoff, peak discharge, and infiltration falls within a 0.02% error margin; the test suite verifies this directly against SWMM.</p>
         </section>
 
         <section class="hiw-section" id="sweep" aria-labelledby="sweep-title">
             <p class="cs-eyebrow">Parameter sweep</p>
             <h2 id="sweep-title">What a sweep measures</h2>
-            <p class="hiw-prose">A parameter sweep repeats the simulation with one parameter <span data-cs-math>p</span> changed and everything else fixed:</p>
+            <p class="hiw-prose">A parameter sweep iteratively executes hydrodynamic simulations while systematically perturbing a single target parameter <span data-cs-math>p</span> across a defined interval:</p>
             <div class="hiw-equation" id="eq-11">
                 <div class="hiw-equation__body" data-cs-math="display">y_j = \mathcal{M}(p_j), \qquad p_j = p_{\mathrm{start}} + j\,\Delta p, \qquad j = 0, \dots, N - 1</div>
                 <span class="hiw-equation__number">(11)</span>
             </div>
-            <p class="hiw-prose">Each run is reduced to a few numbers:</p>
+            <p class="hiw-prose">Each simulation run is reduced to scalar diagnostic metrics:</p>
             <div class="hiw-equation" id="eq-12">
                 <div class="hiw-equation__body" data-cs-math="display">V = \int_0^T Q\,\mathrm{d}t, \qquad Q_p = \max_t Q(t)</div>
                 <span class="hiw-equation__number">(12)</span>
             </div>
-            <p class="hiw-prose">the runoff volume and the peak runoff rate, together with the infiltrated and evaporated volumes. The results summarise the response as the relative change between the first and the last value:</p>
+            <p class="hiw-prose">These metrics encompass total runoff volume, peak discharge rate, cumulative infiltration, and evaporative losses. Global sensitivity across the sampled range is quantified as relative percentage change between terminal and initial parameter states:</p>
             <div class="hiw-equation" id="eq-13">
                 <div class="hiw-equation__body" data-cs-math="display">\Delta = \frac{y_{N-1} - y_0}{\lvert y_0 \rvert} \cdot 100\,\%</div>
                 <span class="hiw-equation__number">(13)</span>
             </div>
-            <p class="hiw-prose">The timeseries tool reports the time to peak and integrates the hydrograph with the trapezoidal rule:</p>
+            <p class="hiw-prose">The hydrograph analysis tool computes time to peak and evaluates total event volume via numerical trapezoidal integration:</p>
             <div class="hiw-equation" id="eq-14">
                 <div class="hiw-equation__body" data-cs-math="display">t_p = \operatorname*{arg\,max}_t Q(t) - t_0, \qquad V \approx \sum_k \tfrac{1}{2}\,(Q_k + Q_{k+1})\,(t_{k+1} - t_k)</div>
                 <span class="hiw-equation__number">(14)</span>
@@ -553,12 +553,12 @@
         <section class="hiw-section" id="network" aria-labelledby="network-title">
             <p class="cs-eyebrow">Neural network</p>
             <h2 id="network-title">The neural network</h2>
-            <p class="hiw-prose">The comparison tool estimates the runoff volume of each subcatchment with a small fully connected network instead of a simulation. It reads eight properties of the subcatchment:</p>
+            <p class="hiw-prose">The surrogate modeling module estimates subcatchment runoff volume using a multilayer perceptron (MLP) as a fast alternative to full hydrodynamic simulation. The network ingests eight subcatchment parameters:</p>
             <div class="hiw-equation" id="eq-15">
                 <div class="hiw-equation__body" data-cs-math="display">x = \left( I,\; W,\; S,\; n_{\mathrm{imp}},\; n_{\mathrm{perv}},\; d_{s,\mathrm{imp}},\; d_{s,\mathrm{perv}},\; z \right)</div>
                 <span class="hiw-equation__number">(15)</span>
             </div>
-            <p class="hiw-prose">standardises them with the mean <span data-cs-math>\mu</span> and standard deviation <span data-cs-math>\sigma</span> of its training data and passes them through two hidden layers of eight neurons:</p>
+            <p class="hiw-prose">Input features are standardized using the empirical mean <span data-cs-math>\mu</span> and standard deviation <span data-cs-math>\sigma</span> from the training set, followed by forward propagation through two hidden layers of eight neurons each:</p>
             <div class="hiw-equation" id="eq-16">
                 <div class="hiw-equation__body" data-cs-math="display">\tilde{x} = \frac{x - \mu}{\sigma}, \qquad h^{(1)} = \mathrm{ReLU}\!\left(W_1 \tilde{x} + b_1\right), \qquad h^{(2)} = \mathrm{ReLU}\!\left(W_2 h^{(1)} + b_2\right)</div>
                 <span class="hiw-equation__number">(16)</span>
@@ -600,10 +600,10 @@
                         <text x="452" y="282">Output</text>
                     </g>
                 </svg>
-                <figcaption class="hiw-figure__caption">The 8–8–8–1 network: every neuron is connected to every neuron of the next layer.</figcaption>
+                <figcaption class="hiw-figure__caption">Architecture of the 8-8-8-1 neural network: fully connected topology across input, hidden, and output layers.</figcaption>
             </figure>
 
-            <p class="hiw-prose">The weights were fitted with the Adam optimiser to minimise the mean squared error against SWMM runs of the example model. The network therefore knows nothing about the rainfall or the area: it is reliable only for subcatchments and storms close to the ones it was trained on. The comparison reports how far it is from SWMM:</p>
+            <p class="hiw-prose">Network weights were trained via the Adam optimizer to minimize mean squared error (MSE) relative to reference SWMM simulation runs. The surrogate model assumes a fixed precipitation event and uniform 5 ha subcatchment areas, making predictions valid strictly within the training domain. Model fidelity is assessed through standard error metrics:</p>
             <div class="hiw-equation" id="eq-18">
                 <div class="hiw-equation__body" data-cs-math="display">\begin{gathered} \mathrm{MAE} = \frac{1}{N} \sum_k \lvert \hat{V}_k - V_k \rvert, \qquad \mathrm{RMSE} = \sqrt{\frac{1}{N} \sum_k (\hat{V}_k - V_k)^2}, \\[0.5em] \mathrm{MAPE} = \frac{100\,\%}{N} \sum_k \left\lvert \frac{\hat{V}_k - V_k}{V_k} \right\rvert \end{gathered}</div>
                 <span class="hiw-equation__number">(18)</span>

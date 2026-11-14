@@ -19,7 +19,7 @@
 <header class="cs-page-header">
     <p class="cs-eyebrow">Simulation</p>
     <h1 class="cs-page-header__title">Parameter sweep</h1>
-    <p class="cs-page-header__lead">See how runoff responds when you vary one subcatchment parameter — SWMM runs once for every value you choose.</p>
+    <p class="cs-page-header__lead">Analyze runoff sensitivity across a range of values for any subcatchment parameter in SWMM.</p>
 </header>
 
 <div class="cs-workbench">
@@ -70,7 +70,7 @@
                     <p class="cs-hint cs-suggestion mb-0" id="simulation-range-suggestion" hidden></p>
                 </fieldset>
                 <p class="cs-hint" id="simulation-literature-note" hidden>
-                    Uses literature values — no range needed. SWMM runs once for each tabulated value.
+                    Uses standard literature values. SWMM runs once for each tabulated entry without requiring a range.
                 </p>
 
                 <button type="submit" class="btn btn-primary w-100" id="run-simulation-button"
@@ -79,7 +79,7 @@
                 <div class="cs-progress" id="simulation-loading-state" hidden>
                     <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
                     <span class="cs-progress__elapsed" data-cs-elapsed aria-hidden="true"></span>
-                    <span role="status">Running SWMM for each value… this can take a while for long ranges.</span>
+                    <span role="status">Running SWMM simulations across the parameter range...</span>
                 </div>
             </form>
         </section>
