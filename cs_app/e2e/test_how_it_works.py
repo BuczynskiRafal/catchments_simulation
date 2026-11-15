@@ -159,7 +159,7 @@ class TestInteractiveModel:
     def test_sweep_draws_one_line_per_value_and_the_response(self, hiw: HowItWorksPage) -> None:
         hiw.sweep_parameter.select_option("PercSlope")
         hiw.sweep_button.click()
-        expect(hiw.sweep_status).to_contain_text("This is a parameter sweep", timeout=10_000)
+        expect(hiw.sweep_status).to_contain_text("Parameter sweep complete", timeout=10_000)
         expect(hiw.drawn_sweep_lines()).to_have_count(9)
         expect(hiw.response_points()).to_have_count(9)
         expect(hiw.page.locator("#lab-response-table tbody tr")).to_have_count(9)
@@ -315,7 +315,7 @@ class TestQuality:
         hp.navigate_to()
         hp.nudge("width", 5)
         hp.sweep_button.click()
-        expect(hp.sweep_status).to_contain_text("This is a parameter sweep", timeout=10_000)
+        expect(hp.sweep_status).to_contain_text("Parameter sweep complete", timeout=10_000)
         assert messages == []
 
     def test_reduced_motion_does_not_animate(self, browser: Browser, live_server) -> None:
@@ -331,7 +331,7 @@ class TestQuality:
             # The sweep is drawn at once.
             hp.sweep_button.click()
             expect(hp.drawn_sweep_lines()).to_have_count(9)
-            expect(hp.sweep_status).to_contain_text("This is a parameter sweep")
+            expect(hp.sweep_status).to_contain_text("Parameter sweep complete")
             # Playing is the reader's choice; the rain then stands still.
             hp.play_button.click()
             expect(hp.play_button).to_have_accessible_name("Pause")
