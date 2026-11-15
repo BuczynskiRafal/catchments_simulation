@@ -54,6 +54,12 @@ class TestNavbarLinksAnonymous:
         nav.click_calculations()
         expect(page).to_have_url(re.compile(r".*/calculations$"))
 
+    def test_how_it_works_link(self, page: Page, live_server) -> None:
+        page.goto(f"{live_server.url}/")
+        nav = NavComponent(page)
+        nav.click_how_it_works()
+        expect(page).to_have_url(re.compile(r".*/how-it-works$"))
+
     def test_about_link(self, page: Page, live_server) -> None:
         page.goto(f"{live_server.url}/")
         nav = NavComponent(page)
@@ -136,7 +142,12 @@ class TestActivePage:
 
     @pytest.mark.parametrize(
         ("path", "name"),
-        [("/", "Home"), ("/about", "About"), ("/calculations", "Calculations")],
+        [
+            ("/", "Home"),
+            ("/about", "About"),
+            ("/calculations", "Calculations"),
+            ("/how-it-works", "How it works"),
+        ],
     )
     def test_current_link_is_marked(self, page: Page, live_server, path: str, name: str) -> None:
         page.goto(f"{live_server.url}{path}")

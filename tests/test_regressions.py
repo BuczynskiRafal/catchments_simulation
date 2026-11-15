@@ -9,6 +9,7 @@ import os
 import pickle
 import stat
 import tempfile
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 
 import pandas as pd
@@ -289,6 +290,35 @@ def test_ps6_swmm_failure_raises_simulation_error_with_report_errors(
     assert files_under(broken.parent) == {"example.inp"}
     # The engine was released: the next run in this process works.
     assert FeaturesSimulation("S1", model_path).calculate()["runoff"] > 0
+
+
+@pytest.mark.parametrize(
+    ("installed", "expected"),
+    [
+        ("1.5.1", False),
+        ("2.1.0", False),
+        ("2.2.0", True),
+        ("2.10.0", True),
+        ("3.0.0rc1", True),
+        ("unknown", False),
+    ],
+)
+def test_ps6_pyswmm_version_decides_who_closes_a_failed_open(
+    monkeypatch: pytest.MonkeyPatch, installed: str, expected: bool
+) -> None:
+    # pyswmm >= 2.2 closes the engine after a failed open; closing it again aborts the process.
+    monkeypatch.setattr(cfs_module, "version", lambda _name: installed)
+    assert cfs_module._pyswmm_closes_failed_open() is expected
+
+
+def test_ps6_engine_is_closed_when_the_pyswmm_version_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(_name: str) -> str:
+        raise PackageNotFoundError
+
+    monkeypatch.setattr(cfs_module, "version", missing)
+    assert cfs_module._pyswmm_closes_failed_open() is False
 
 
 def test_ps6_refused_open_leaves_the_running_simulation_alone(model_path: Path) -> None:

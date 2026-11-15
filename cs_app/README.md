@@ -20,29 +20,60 @@ package. Its dependencies are the `web` dependency group of the root
 
 ## Features
 
+Every tool works on one SWMM model per session: upload an `.inp` file or load
+the bundled sample. The pages lead from the model to the result: a model with
+a single subcatchment selects it, the chosen parameter is explained and shown
+with its value in the model, a sweep range around that value is suggested, and
+a status panel reports the run.
+
 ### Simulations
 
-The *Simulations* tab takes an uploaded `.inp` file and the features to sweep.
-After the run it shows an interactive plot of the results and a button to
-download them as an Excel spreadsheet.
+The *Simulation* page sweeps one subcatchment parameter: SWMM runs once for
+every value. The results show the key figures and a sentence that reads them,
+a chart of every output with the model's own value marked, where the rain of
+each run went (runoff, infiltration, evaporation, water left on the surface),
+a sortable table and an Excel download.
 
 <div align="center">
-    <img src="../img/simulation_start.png" alt="Simulation form">
-    <img src="../img/simulation_after.png" alt="Simulation results">
+    <img src="../img/simulation_start.png" alt="Simulation form with the parameter explained">
+    <img src="../img/simulation_after.png" alt="Simulation results with the water balance">
 </div>
+
+### Timeseries
+
+The *Timeseries* page plots rainfall against runoff for one run, with the peak,
+the time to peak and the runoff volume, or overlays the hydrographs of a
+parameter sweep. Results download as Excel or CSV.
 
 ### Calculations: SWMM and ANN
 
-The *Calculations* tab runs the uploaded model in SWMM and predicts the
-subcatchment runoff with a neural network trained for that purpose, so both
-results can be compared.
+The *Calculations* page runs the model in SWMM and predicts the runoff of
+every subcatchment with a small neural network, then compares both. The
+network is drawn from its weights: tracing a subcatchment shows which neurons
+fire and what each connection contributes, and marks the inputs that lie
+outside the data the network was trained on.
 
 <div align="center">
-    <img src="../img/calculations.png" alt="Calculations page">
-    <img src="../img/ann_model.png" alt="ANN model results">
+    <img src="../img/calculations.png" alt="Comparison of SWMM and the neural network">
+    <img src="../img/ann_model.png" alt="The neural network traced for one subcatchment">
 </div>
 
 You need to register and log in before running simulations or calculations.
+
+### How it works
+
+The public *How it works* page explains the model behind the numbers: the
+nonlinear reservoir equation SWMM solves for a subcatchment, Green–Ampt
+infiltration, the numerical solution, what a sweep measures and how the neural
+network computes its estimate. Its interactive model solves the same equations
+in the browser (`main/static/main/js/model/runoff-model.js`): move a slider and
+the three sub-area reservoirs, the hydrograph and the water balance respond.
+The end-to-end suite checks that model against the SWMM engine; on the example
+model the runoff volume, the peak rate and the infiltration agree within 0.1 %.
+
+<div align="center">
+    <img src="../img/how_it_works.png" alt="The interactive runoff model on the How it works page">
+</div>
 
 ### Model and static data artifacts
 
@@ -208,7 +239,7 @@ cs_app/
 ├── main/             # main application (simulations, calculations, ANN)
 ├── register/         # user registration
 ├── e2e/              # Playwright end-to-end tests
-├── static/           # static files (CSS, JS)
+├── static/           # shared images (logo)
 ├── data/             # static chart data in JSON format
 ├── swmm_model/       # ANN runtime artifact (weights.npz)
 └── manage.py
@@ -218,3 +249,11 @@ cs_app/
   `src/catchment_simulation/schemas.py`.
 - Web-only payload schemas (for example the contact form) live in
   `cs_app/main/schemas.py`.
+- What the pages tell the user about a model (values of a subcatchment, range
+  suggestions, the water balance of a sweep) is computed in
+  `cs_app/main/insights.py`; the description of every sweepable parameter is
+  in `cs_app/main/guide.py`.
+- The front end has no build step: templates in `main/templates/`, plain
+  scripts and styles in `main/static/main/`. Its design system and interaction
+  contracts are documented in
+  [`docs/design/design-system.md`](../docs/design/design-system.md).

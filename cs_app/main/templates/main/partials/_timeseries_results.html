@@ -15,23 +15,23 @@
                 {% if metrics.peak is not None %}
                 <p class="cs-metric__value">{{ metrics.peak|floatformat:"3g" }}<span class="cs-metric__unit">{{ units.flow }}</span></p>
                 {% else %}
-                <p class="cs-metric__value">—</p>
+                <p class="cs-metric__value">N/A</p>
                 {% endif %}
                 {% if metrics.peak_at %}<p class="ts-metric__note">At {{ metrics.peak_at }}</p>{% endif %}
             </div>
             <div class="cs-metric">
                 <p class="cs-metric__label">Time to peak</p>
-                <p class="cs-metric__value">{{ metrics.time_to_peak|default:"—" }}</p>
-                <p class="ts-metric__note">{% if metrics.time_to_peak %}From simulation start{% else %}No runoff in this run{% endif %}</p>
+                <p class="cs-metric__value">{{ metrics.time_to_peak|default:"N/A" }}</p>
+                <p class="ts-metric__note">{% if metrics.time_to_peak %}Measured from simulation start{% else %}No runoff in this run{% endif %}</p>
             </div>
             <div class="cs-metric">
                 <p class="cs-metric__label">Runoff volume</p>
                 {% if metrics.volume is not None %}
                 <p class="cs-metric__value">{{ metrics.volume|floatformat:"2g" }}<span class="cs-metric__unit">{{ units.volume }}</span></p>
                 {% else %}
-                <p class="cs-metric__value">—</p>
+                <p class="cs-metric__value">N/A</p>
                 {% endif %}
-                <p class="ts-metric__note">Integrated over the whole run</p>
+                <p class="ts-metric__note">Integrated over simulation duration</p>
             </div>
         </div>
         {% endif %}
@@ -59,7 +59,7 @@
             </div>
             <p id="timeseries-export-feedback" class="ts-export-feedback" role="status"></p>
             {% if config.mode != "sweep" %}
-            <p class="ts-chart-note">Rainfall hangs from the top axis and infiltration loss shares its rate scale. Evaporation loss is reported per day, so it opens a panel of its own below. Select a legend entry to show them or runon.</p>
+            <p class="ts-chart-note">Hyetograph rainfall is plotted inverted from the top axis and shares the intensity scale with infiltration loss. Daily evaporation loss and runon can be toggled via the legend.</p>
             {% endif %}
         </section>
 
@@ -81,9 +81,9 @@
                         {% for row in ts_sweep_summary %}
                         <tr>
                             <th scope="row" class="cs-num">{{ row.value }}</th>
-                            <td class="cs-num">{{ row.peak|floatformat:"3g"|default:"—" }}</td>
-                            <td class="cs-num" data-sort-value="{{ row.time_to_peak_seconds|default_if_none:'' }}">{{ row.time_to_peak|default:"—" }}</td>
-                            <td class="cs-num">{{ row.volume|floatformat:"2g"|default:"—" }}</td>
+                            <td class="cs-num">{{ row.peak|floatformat:"3g"|default:"N/A" }}</td>
+                            <td class="cs-num" data-sort-value="{{ row.time_to_peak_seconds|default_if_none:'' }}">{{ row.time_to_peak|default:"N/A" }}</td>
+                            <td class="cs-num">{{ row.volume|floatformat:"2g"|default:"N/A" }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -116,7 +116,8 @@
     <div class="cs-empty-state">
         <svg class="cs-empty-state__icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h32M9 4v6M14 4v10M19 4v5M24 4v3"/><path d="M4 36h32M4 34c6 0 8-14 13-14s8 12 19 14"/></svg>
         <h2 class="cs-empty-state__title">No results yet</h2>
-        <p class="cs-empty-state__text">Load a model, choose a subcatchment and run the analysis. The rainfall and runoff chart appears here.</p>
+        {% include 'main/partials/_workbench_checklist.html' with run_label="Run the analysis" run_next="Next: pick a single run or a sweep and select Run Timeseries Analysis." %}
+        <p class="cs-empty-state__text">Hyetographs, hydrographs, and timeseries tables will appear here.</p>
     </div>
     {% endif %}
 </div>

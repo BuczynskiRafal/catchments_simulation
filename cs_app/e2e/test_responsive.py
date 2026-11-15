@@ -1,7 +1,7 @@
 """Responsive layout tests.
 
 Verifies that the app works correctly at different viewport sizes.
-The navbar is ``navbar-expand-lg``: below 992px the links collapse behind a
+The navbar is ``navbar-expand-xl``: below 1200px the links collapse behind a
 toggler, at and above it they are always visible.
 
 Simulation/Timeseries pages require @login_required, so responsive tests
@@ -24,9 +24,10 @@ VIEWPORTS = {
     "mobile": {"width": 375, "height": 667},
     "tablet": {"width": 768, "height": 1024},
     "desktop": {"width": 1920, "height": 1080},
-    "bootstrap_breakpoint": {"width": 992, "height": 768},
+    "below_breakpoint": {"width": 1199, "height": 768},
+    "bootstrap_breakpoint": {"width": 1200, "height": 768},
 }
-COLLAPSED = {"mobile", "tablet"}
+COLLAPSED = {"mobile", "tablet", "below_breakpoint"}
 
 
 class TestResponsiveHome:
@@ -53,7 +54,7 @@ class TestResponsiveHome:
     def test_nav_links_reachable_at_all_viewports(
         self, page: Page, live_server, viewport_name: str, viewport: dict
     ) -> None:
-        """Links are visible on lg+, and one toggler click away below it."""
+        """Links are visible on xl+, and one toggler click away below it."""
         page.set_viewport_size(viewport)
         page.goto(f"{live_server.url}/")
         nav = NavComponent(page)
@@ -67,7 +68,15 @@ class TestResponsiveHome:
         else:
             expect(nav.toggler).to_be_hidden()
 
-        for name in ("Home", "Simulation", "Timeseries", "Calculations", "About", "Log in"):
+        for name in (
+            "Home",
+            "Simulation",
+            "Timeseries",
+            "Calculations",
+            "How it works",
+            "About",
+            "Log in",
+        ):
             expect(nav.link(name)).to_be_visible()
 
     def test_no_horizontal_overflow_mobile(self, page: Page, live_server) -> None:
@@ -108,12 +117,12 @@ class TestResponsiveHome:
 
 
 class TestNavLayout:
-    """On lg+ the links sit on the page's centre line and nothing in the bar wraps."""
+    """On xl+ the links sit on the page's centre line and nothing in the bar wraps."""
 
     # Two lines of the auth buttons (or of anything else) would make the bar taller.
     MAX_HEADER_HEIGHT = 66
 
-    @pytest.mark.parametrize("width", [992, 1024, 1199, 1200, 1440, 1920])
+    @pytest.mark.parametrize("width", [1200, 1280, 1399, 1400, 1440, 1920])
     @pytest.mark.parametrize("signed_in", [False, True], ids=["anonymous", "signed-in"])
     def test_links_are_centred(
         self, page: Page, live_server, request, width: int, signed_in: bool
@@ -136,10 +145,8 @@ class TestNavLayout:
                 };
             }"""
         )
-        # From xl the side columns have room to spare, so centring is exact; below it the
-        # tools column can be at its content width, which depends on font metrics.
-        tolerance = 2 if width >= 1200 else 8
-        assert abs(box["offset"]) <= tolerance, f"links are {box['offset']:.1f}px off centre"
+        # The side columns share the free space equally, so centring is exact.
+        assert abs(box["offset"]) <= 2, f"links are {box['offset']:.1f}px off centre"
         assert box["header"] <= self.MAX_HEADER_HEIGHT
         assert min(box["gaps"]) >= 8, f"nav items crowd each other: {box['gaps']}"
 

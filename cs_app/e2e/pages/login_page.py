@@ -58,5 +58,10 @@ class LoginPage(BasePage):
         return self.username_input.is_visible() and self.password_input.is_visible()
 
     def get_error_messages(self) -> list[str]:
-        """Return the non-field error messages (wrong credentials) shown above the fields."""
-        return self.page.locator("form .alert-danger li").all_inner_texts()
+        """
+        Return the non-field error messages (wrong credentials) shown above the fields,
+        once the page that carries them has arrived.
+        """
+        alert = self.page.locator("form .alert-danger")
+        alert.wait_for()
+        return alert.locator("li").all_inner_texts()

@@ -8,10 +8,12 @@ subcatchment's runoff statistics or hydrographs.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 import warnings
 from contextlib import ExitStack, contextmanager
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, get_args
 from uuid import uuid4
@@ -37,6 +39,18 @@ except ImportError:
     # pyswmm < 2.0, which swmmio 0.8.x requires, has no MultiSimulationError: it never
     # refuses to open a second simulation, which silently takes over the engine instead.
     _ENGINE_BUSY_ERRORS = ()
+
+
+def _pyswmm_closes_failed_open() -> bool:
+    """Whether the installed pyswmm closes the engine itself when an open fails (>= 2.2)."""
+    try:
+        release = re.match(r"(\d+)\.(\d+)", version("pyswmm"))
+    except PackageNotFoundError:
+        return False
+    return release is not None and (int(release[1]), int(release[2])) >= (2, 2)
+
+
+_PYSWMM_CLOSES_FAILED_OPEN = _pyswmm_closes_failed_open()
 
 T = TypeVar("T")
 
@@ -828,8 +842,11 @@ def _open_simulation(inp: Path, report: Path) -> Simulation:
         raise
     except Exception:
         # A failed swmm_open leaves the engine half-open with the report unflushed.
-        # Closing it writes the report and frees its files.
-        PySWMM().swmm_close()
+        # Closing it writes the report and frees its files. pyswmm >= 2.2 closes it
+        # before raising, and a second close frees the engine twice and aborts the
+        # process.
+        if not _PYSWMM_CLOSES_FAILED_OPEN:
+            PySWMM().swmm_close()
         raise
 
 

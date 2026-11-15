@@ -38,6 +38,17 @@ def test_open_source_links(about: AboutPage) -> None:
         )
 
 
+def test_links_to_how_it_works(about: AboutPage) -> None:
+    section = about.page.locator("section", has=about.page.locator("#about-how"))
+    expect(section).to_contain_text(
+        "shows the equations SWMM solves and lets you run them in your browser"
+    )
+
+    section.get_by_role("link", name="How it works page", exact=True).click()
+
+    expect(about.page).to_have_url(re.compile(r".*/how-it-works$"))
+
+
 def test_contact_call_to_action(about: AboutPage) -> None:
     about.page.locator("main").get_by_role("link", name="Get in touch", exact=True).click()
     expect(about.page).to_have_url(re.compile(r".*/contact$"))

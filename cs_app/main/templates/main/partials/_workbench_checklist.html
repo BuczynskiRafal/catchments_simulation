@@ -1,0 +1,26 @@
+{% comment %}
+The empty results state's checklist on the sweep pages: load a model, choose a
+subcatchment, run. Rendered from the page's has_model and form; core/steps.js checks
+the items off as the user goes and keeps [data-cs-next] on the first open one.
+Takes run_label ("Run the simulation") and run_next (the sentence for the last step).
+{% endcomment %}
+{% with catchment=form.catchment_name.value %}
+<ol class="cs-checklist" data-cs-checklist aria-label="Before the first run">
+    <li class="cs-checklist__item" data-check="model" data-state="{% if has_model %}done{% else %}current{% endif %}"
+        data-next="Next: load a model in step 1. Drop an .inp file there or try the sample data.">
+        <span class="cs-checklist__mark" aria-hidden="true"></span>
+        <span class="cs-checklist__label">Load a model<span class="visually-hidden" data-check-status>{% if has_model %} (done){% else %} (next){% endif %}</span></span>
+    </li>
+    <li class="cs-checklist__item" data-check="catchment" data-state="{% if has_model and catchment %}done{% elif has_model %}current{% else %}todo{% endif %}"
+        data-next="Next: choose the subcatchment to analyse.">
+        <span class="cs-checklist__mark" aria-hidden="true"></span>
+        <span class="cs-checklist__label">Choose a subcatchment<span class="visually-hidden" data-check-status>{% if has_model and catchment %} (done){% elif has_model %} (next){% endif %}</span></span>
+    </li>
+    <li class="cs-checklist__item" data-check="run" data-state="{% if has_model and catchment %}current{% else %}todo{% endif %}"
+        data-next="{{ run_next }}">
+        <span class="cs-checklist__mark" aria-hidden="true"></span>
+        <span class="cs-checklist__label">{{ run_label }}<span class="visually-hidden" data-check-status>{% if has_model and catchment %} (next){% endif %}</span></span>
+    </li>
+</ol>
+<p class="cs-checklist__next" data-cs-next>{% if not has_model %}Next: load a model in step 1. Drop an .inp file there or try the sample data.{% elif not catchment %}Next: choose the subcatchment to analyse.{% else %}{{ run_next }}{% endif %}</p>
+{% endwith %}

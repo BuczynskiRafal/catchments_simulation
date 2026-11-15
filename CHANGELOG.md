@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 While the major version is 0, a minor release (0.x.0) may contain breaking
 changes; they are listed under **Changed** and **Removed**.
 
+## [Unreleased]
+
+### Fixed
+
+- With pyswmm 2.2, a model that SWMM refuses to open (for example one whose
+  rain file is missing) aborted the Python process instead of raising
+  `SimulationError`. pyswmm 2.2 closes the engine itself after a failed open,
+  and the close this package added for older versions then freed it a second
+  time. The package now closes the engine only where pyswmm does not.
+
 ## [0.1.0] - 2026-10-19
 
 This release fixes results that could be silently wrong in 0.0.7. Single
@@ -165,6 +175,7 @@ without git tags. They introduced `FeaturesSimulation` with sweeps of area,
 imperviousness, slope, width, curb length, Manning's n, depression storage
 and the percentage of impervious area without depression storage.
 
+[Unreleased]: https://github.com/BuczynskiRafal/catchments_simulation/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/BuczynskiRafal/catchments_simulation/compare/v0.0.7...v0.1.0
 [0.0.7]: https://github.com/BuczynskiRafal/catchments_simulation/releases/tag/v0.0.7
 [0.0.6]: https://pypi.org/project/catchment-simulation/0.0.6/

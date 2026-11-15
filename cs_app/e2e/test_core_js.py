@@ -1,7 +1,7 @@
 """Contract tests for the shared core scripts (static/main/js/core/*).
 
 The run endpoints are mocked with Playwright routing so the client side of the
-AJAX contract (DESIGN_SPEC §4) is exercised in isolation from the views.
+AJAX contract (docs/design/design-system.md §4) is exercised in isolation from the views.
 """
 
 from __future__ import annotations
@@ -396,6 +396,35 @@ class TestTableAndFormat:
         assert page.evaluate("CS.format.number(1234.5, 1)") == "1,234.5"
         assert page.evaluate("CS.format.number('3.14159')") == "3.14"
         assert page.evaluate("CS.format.number(null)") == "—"
+
+    def test_parameter_and_run_count(self, page: Page, live_server) -> None:
+        """Swept values print as the server's f"{value:.10g}"; runs as build_range counts them."""
+        page.goto(f"{live_server.url}/about")
+        assert page.evaluate("[0.1 + 0.2, 5, 0.011, 2.5].map(CS.format.parameter)") == [
+            "0.3",
+            "5",
+            "0.011",
+            "2.5",
+        ]
+        assert page.evaluate("CS.format.runCount(0, 100, 10)") == 11
+        assert page.evaluate("CS.format.runCount(0, 11, 4)") == 3
+        assert page.evaluate("CS.format.runCount(0, 0.3, 0.1)") == 4
+        assert page.evaluate(
+            "[CS.format.runCount(5, 1, 1), CS.format.runCount(1, 2, 0)].map(Number.isNaN)"
+        ) == [
+            True,
+            True,
+        ]
+
+    def test_read_json(self, page: Page, live_server) -> None:
+        page.goto(f"{live_server.url}/about")
+        page.evaluate(
+            """() => document.body.insertAdjacentHTML("beforeend",
+                '<script type="application/json" id="t-data">{"a": 1}</script>' +
+                '<script type="application/json" id="t-bad">{</script>')"""
+        )
+        assert page.evaluate("CS.readJson('t-data')") == {"a": 1}
+        assert page.evaluate("[CS.readJson('t-bad'), CS.readJson('t-missing')]") == [None, None]
 
 
 class TestClipboard:

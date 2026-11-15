@@ -20,6 +20,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from catchment_simulation import FeaturesSimulation, example_model_path
+from main.predictor import REQUIRED_SUBCATCHMENT_COLUMNS
 from main.views import (
     MODEL_DIGEST_SESSION_KEY,
     RESULT_SESSION_KEYS,
@@ -42,6 +43,9 @@ from main.views import (
     upload_sample,
     upload_status,
 )
+
+# A subcatchment row that carries every input of the network.
+NETWORK_INPUT_COLUMNS = {column: [1.0] for column in REQUIRED_SUBCATCHMENT_COLUMNS}
 
 
 def _sweep_frame(feature: str, values) -> pd.DataFrame:
@@ -583,7 +587,7 @@ def test_calculations_uses_model_after_simulation(monkeypatch, user):
 
     class FakeModel:
         def __init__(self, _path):
-            base = pd.DataFrame(index=["S1"], data={"PercImperv": [10.0]})
+            base = pd.DataFrame(index=["S1"], data={**NETWORK_INPUT_COLUMNS, "PercImperv": [10.0]})
             if state["report_ready"]:
                 base["TotalRunoffMG"] = [12.34]
             self.subcatchments = SimpleNamespace(dataframe=base)

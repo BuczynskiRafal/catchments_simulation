@@ -84,6 +84,22 @@ class UploadComponent:
         # Wait for the status bar to become visible (sample loaded)
         self.upload_status.wait_for(state="visible", timeout=15_000)
 
+    def ensure_sample_loaded(self) -> None:
+        """Load the sample unless it is the session's model already (its button is then hidden)."""
+        self.page.wait_for_function(
+            """() => {
+                const button = document.getElementById('load-sample-data-button');
+                const status = document.getElementById('upload-status');
+                const text = document.getElementById('upload-status-text');
+                const sampleShown = status && status.style.display !== 'none'
+                    && text && text.textContent.includes('example.inp') && button && button.hidden;
+                return (button && !button.hidden) || sampleShown;
+            }""",
+            timeout=15_000,
+        )
+        if self.sample_button.is_visible():
+            self.click_sample_data()
+
     def upload_file(self, path: str) -> None:
         """Upload a file by setting it on the hidden input.
 

@@ -231,6 +231,10 @@
     color: var(--cs-ink-muted);
 }
 
+.about-section__more {
+    margin: 1.75rem 0 0;
+}
+
 .about-links {
     display: grid;
     gap: 1rem;

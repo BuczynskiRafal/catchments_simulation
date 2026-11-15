@@ -56,6 +56,63 @@ class TestHomeContent:
         expect(home.tool_link(name)).to_have_attribute("href", path)
 
 
+class TestHowItWorksEntryPoints:
+    def test_hero_actions_navigate(self, home: HomePage) -> None:
+        hero = home.page.locator(".home-hero")
+        expect(hero.get_by_role("link", name="Run a simulation", exact=True)).to_have_attribute(
+            "href", "/simulation"
+        )
+
+        hero.get_by_role("link", name="See how it works", exact=True).click()
+
+        expect(home.page).to_have_url(re.compile(r"/how-it-works$"))
+
+    def test_docs_link_jumps_to_the_package(self, home: HomePage) -> None:
+        home.page.get_by_role("link", name="read the package documentation").click()
+
+        expect(home.page).to_have_url(re.compile(r"#overview$"))
+        expect(home.page.locator("#overview-title")).to_be_in_viewport()
+
+    def test_rain_to_runoff_section(self, home: HomePage) -> None:
+        section = home.page.locator("#how")
+        expect(section.get_by_role("heading", level=2)).to_have_text("From rain to runoff")
+        expect(section.get_by_role("heading", level=3)).to_have_text(
+            [
+                "Rain falls on the subcatchment",
+                "Water ponds, soaks in and drains",
+                "SWMM adds it up into a hydrograph",
+            ]
+        )
+        expect(section.locator(".home-equation")).to_contain_text("= i − e − f − α")
+        # Between the tools and the documentation.
+        order = home.page.evaluate(
+            "() => ['.home-tools', '#how', '.home-docs'].map("
+            "s => document.querySelector(s).getBoundingClientRect().top)"
+        )
+        assert order == sorted(order)
+
+    def test_rain_to_runoff_links_open_the_interactive_model(self, home: HomePage) -> None:
+        section = home.page.locator("#how")
+        expect(section.get_by_role("link", name="See the equations", exact=True)).to_have_attribute(
+            "href", "/how-it-works"
+        )
+
+        section.get_by_role("link", name="Open the interactive model").click()
+
+        expect(home.page).to_have_url(re.compile(r"/how-it-works#lab$"))
+
+    def test_rain_to_runoff_stacks_on_phones(self, page: Page, live_server) -> None:
+        page.set_viewport_size(PHONE)
+        home = HomePage(page, live_server.url)
+        home.navigate_to()
+        steps = page.locator("#how .home-how__step")
+
+        boxes = [steps.nth(i).bounding_box() for i in range(3)]
+
+        assert boxes[0]["y"] < boxes[1]["y"] < boxes[2]["y"]
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
 class TestHeroChart:
     def test_hydrograph_draws_rainfall_and_runoff(self, home: HomePage) -> None:
         home.wait_for_chart(home.hydrograph)

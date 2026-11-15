@@ -21,6 +21,7 @@ from django.urls import reverse
 
 from catchment_simulation import FeaturesSimulation, build_range
 from main.models import UserProfile
+from main.predictor import REQUIRED_SUBCATCHMENT_COLUMNS
 from main.views import (
     CALC_RESULT_TOKEN_SESSION_KEY,
     FORM_INVALID_MESSAGE,
@@ -32,6 +33,8 @@ from main.views import (
 )
 
 AJAX = {"HTTP_X_REQUESTED_WITH": "XMLHttpRequest"}
+# A subcatchment row that carries every input of the network.
+NETWORK_INPUT_COLUMNS = {column: [1.0] for column in REQUIRED_SUBCATCHMENT_COLUMNS}
 SIMULATION_PARTIAL = "main/partials/_simulation_results.html"
 TIMESERIES_PARTIAL = "main/partials/_timeseries_results.html"
 CALCULATIONS_PARTIAL = "main/partials/_calculations_results.html"
@@ -138,7 +141,9 @@ def fake_calculations(monkeypatch):
 
     class FakeModel:
         def __init__(self, _path):
-            dataframe = pd.DataFrame(index=["S1"], data={"TotalRunoffMG": [12.34]})
+            dataframe = pd.DataFrame(
+                index=["S1"], data={**NETWORK_INPUT_COLUMNS, "TotalRunoffMG": [12.34]}
+            )
             self.subcatchments = SimpleNamespace(dataframe=dataframe)
             options = pd.DataFrame(index=["FLOW_UNITS"], data={"Value": ["CMS"]})
             self.inp = SimpleNamespace(options=options)

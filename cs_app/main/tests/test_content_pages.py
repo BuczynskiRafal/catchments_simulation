@@ -266,3 +266,53 @@ def test_register_invalid_logs_field_names_but_not_values(client, caplog, capsys
     assert password1 not in caplog.text
     assert password2 not in caplog.text
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# Entry points to "How it works"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_home_hero_offers_a_run_the_explanation_and_the_docs(client, fresh_home_cache):
+    html = client.get(reverse("main:main_view")).content.decode()
+
+    hero = html[html.index('class="home-hero__actions"') : html.index('class="cs-chart-card')]
+    assert (
+        f'<a class="btn btn-primary" href="{reverse("main:simulation")}">Run a simulation</a>'
+        in hero
+    )
+    assert (
+        f'<a class="btn btn-outline-primary" href="{reverse("main:how_it_works")}">'
+        "See how it works</a>"
+    ) in hero
+    assert '<a href="#overview">read the package documentation</a>' in hero
+
+
+@pytest.mark.django_db
+def test_home_explains_rain_to_runoff_between_tools_and_docs(client, fresh_home_cache):
+    html = client.get(reverse("main:main_view")).content.decode()
+
+    section = html[html.index('id="how"') : html.index('class="home-docs"')]
+    assert html.index('class="home-tools"') < html.index('id="how"')
+    assert "From rain to runoff" in section
+    for beat in (
+        "Rain falls on the subcatchment",
+        "Water ponds, soaks in and drains",
+        "SWMM adds it up into a hydrograph",
+    ):
+        assert beat in section
+    # The reservoir equation is typeset in HTML: no maths library on the home page.
+    assert '<p class="home-equation"' in section
+    assert "<var>d</var><sub>s</sub>)<sup>5/3</sup>" in section
+    assert "katex" not in html.lower()
+    how = reverse("main:how_it_works")
+    assert f'<a class="btn btn-outline-primary" href="{how}">See the equations</a>' in section
+    assert f'<a href="{how}#lab">Open the interactive model</a>' in section
+
+
+def test_about_links_to_how_it_works(client):
+    html = client.get(reverse("main:about")).content.decode()
+
+    assert f'<a href="{reverse("main:how_it_works")}">How it works page</a>' in html
+    assert "shows the equations SWMM solves and lets you run them in your browser" in html

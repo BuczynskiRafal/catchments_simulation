@@ -19,15 +19,16 @@
 <header class="cs-page-header">
     <p class="cs-eyebrow">Simulation</p>
     <h1 class="cs-page-header__title">Parameter sweep</h1>
-    <p class="cs-page-header__lead">See how runoff responds when you vary one subcatchment parameter — SWMM runs once for every value you choose.</p>
+    <p class="cs-page-header__lead">Analyze runoff sensitivity across a range of values for any subcatchment parameter in SWMM.</p>
 </header>
 
 <div class="cs-workbench">
     <div class="cs-panel">
-        <section class="cs-step" aria-labelledby="simulation-step-model">
+        {# data-state: core/steps.js keeps it current as models are loaded and removed. #}
+        <section class="cs-step" data-cs-step="model" data-state="{% if has_model %}done{% else %}active{% endif %}" aria-labelledby="simulation-step-model">
             <div class="cs-step__header">
                 <span class="cs-step__num" aria-hidden="true">1</span>
-                <h2 class="cs-step__title" id="simulation-step-model"><span class="visually-hidden">Step 1: </span>Model</h2>
+                <h2 class="cs-step__title" id="simulation-step-model"><span class="visually-hidden">Step 1: </span>Model<span class="visually-hidden" data-cs-step-status>{% if has_model %} (completed){% endif %}</span></h2>
             </div>
             {% include 'main/_upload_zone.html' with compact=True %}
             <p class="cs-hint cs-hint--note mt-3 mb-0" id="simulation-model-hint"{% if form.catchment_name.field.widget.choices|length > 1 %} hidden{% endif %}>
@@ -35,21 +36,27 @@
             </p>
         </section>
 
-        <section class="cs-step" aria-labelledby="simulation-step-parameters">
+        <section class="cs-step" data-cs-step="run" data-state="{% if has_model %}active{% else %}todo{% endif %}" aria-labelledby="simulation-step-parameters">
             <div class="cs-step__header">
                 <span class="cs-step__num" aria-hidden="true">2</span>
-                <h2 class="cs-step__title" id="simulation-step-parameters"><span class="visually-hidden">Step 2: </span>Parameters</h2>
+                <h2 class="cs-step__title" id="simulation-step-parameters"><span class="visually-hidden">Step 2: </span>Parameters<span class="visually-hidden" data-cs-step-status>{% if not has_model %} (load a model first){% endif %}</span></h2>
             </div>
             {# The header sits outside the form so async error summaries (prepended to the form) appear below it. #}
-            <form id="simulation-form" method="post" action="{% url 'main:simulation' %}"
+            <form id="simulation-form" method="post" action="{% url 'main:simulation' %}" data-cs-run-form
                   data-max-runs="{{ form.MAX_SWEEP_RUNS }}"
-                  data-predefined-methods="{{ form.PREDEFINED_METHODS|join:' ' }}">
+                  data-predefined-methods="{{ form.PREDEFINED_METHODS|join:' ' }}"
+                  data-values-url="{% url 'main:subcatchment_values' %}"
+                  data-how-it-works-url="{% url 'main:how_it_works' %}"{% if form_restored %}
+                  data-restored="true"{% endif %}>
                 {% csrf_token %}
                 {% if form.non_field_errors %}
                 <div class="alert alert-danger" role="alert">{{ form.non_field_errors|join:" " }}</div>
                 {% endif %}
                 {{ form.catchment_name|as_crispy_field }}
+                <p class="form-text cs-field-hint" data-cs-catchment-hint hidden></p>
                 {{ form.option|as_crispy_field }}
+                {# What the chosen parameter does and its value in this model; filled by core/sweep-assist.js. #}
+                <div class="cs-insight" id="simulation-insight" hidden></div>
 
                 <fieldset class="sim-range" id="simulation-range">
                     <legend class="visually-hidden">Sweep range</legend>
@@ -60,9 +67,10 @@
                     </div>
                     {# Filled by simulation.js: run count and the server's step limit. #}
                     <p class="cs-hint cs-hint--count mt-2 mb-0" id="simulation-range-hint" aria-live="polite" aria-atomic="true" hidden></p>
+                    <p class="cs-hint cs-suggestion mb-0" id="simulation-range-suggestion" hidden></p>
                 </fieldset>
                 <p class="cs-hint" id="simulation-literature-note" hidden>
-                    Uses literature values — no range needed. SWMM runs once for each tabulated value.
+                    Uses standard literature values. SWMM runs once for each tabulated entry without requiring a range.
                 </p>
 
                 <button type="submit" class="btn btn-primary w-100" id="run-simulation-button"
@@ -71,7 +79,7 @@
                 <div class="cs-progress" id="simulation-loading-state" hidden>
                     <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
                     <span class="cs-progress__elapsed" data-cs-elapsed aria-hidden="true"></span>
-                    <span role="status">Running SWMM for each value… this can take a while for long ranges.</span>
+                    <span role="status">Running SWMM simulations across the parameter range...</span>
                 </div>
             </form>
         </section>
@@ -81,6 +89,9 @@
         {% include 'main/partials/_simulation_results.html' %}
     </section>
 </div>
+
+{{ sweep_guide|json_script:"sweep-guide" }}
+{{ method_features|json_script:"method-features" }}
 
 {# Target of the results' download button: outside the run form, so downloads never start a run. #}
 <form id="simulation-download-form" method="post" action="{% url 'main:download_simulation_results' %}">

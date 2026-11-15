@@ -72,6 +72,9 @@ class NavComponent:
     def click_calculations(self) -> None:
         self._click_link("Calculations")
 
+    def click_how_it_works(self) -> None:
+        self._click_link("How it works")
+
     def click_about(self) -> None:
         self._click_link("About")
 

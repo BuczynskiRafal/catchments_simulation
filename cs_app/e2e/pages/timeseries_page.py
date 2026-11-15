@@ -137,8 +137,8 @@ class TimeseriesPage(BasePage):
         self.chart.locator(".main-svg").first.wait_for(state="attached", timeout=timeout)
 
     def load_sample_and_pick_catchment(self) -> str:
-        """Load the bundled sample model and select its first subcatchment."""
-        self.upload.click_sample_data()
+        """Load the bundled sample model (unless loaded already) and select its first subcatchment."""
+        self.upload.ensure_sample_loaded()
         self.wait_for_catchment_options()
         options = [o for o in self.get_catchment_options() if o]
         assert options, "sample model has no subcatchments"
